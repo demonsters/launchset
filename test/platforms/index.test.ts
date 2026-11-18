@@ -105,6 +105,9 @@ describe("stampForBuild", () => {
     expect(gradle).toContain('versionName "1.5.0-pr.12.3"');
     expect(gradle).toContain("versionCode 217000123");
     expect(await read("package.json")).toContain('"version": "1.5.0-pr.12.3"');
+    // The npm lockfile follows the version file in CI too (spec 6.6).
+    const lock = await read("package-lock.json");
+    expect(lock.match(/"version": "1\.5\.0-pr\.12\.3"/g)).toHaveLength(2);
     // Other targets' files are untouched.
     expect(await read("apps/mobile/ios/App/App.xcodeproj/project.pbxproj")).toContain(
       "MARKETING_VERSION = 1.0;",

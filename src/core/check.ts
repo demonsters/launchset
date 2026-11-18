@@ -34,7 +34,7 @@ import {
 
 /** Docs page linked from the sticky comment when a PR has no changeset. */
 export const DEFAULT_DOCS_URL =
-  "https://github.com/demonsters/launchset/blob/main/docs/changesets.md";
+  "https://github.com/demonsters/launchset/blob/main/docs/src/content/docs/changesets.md";
 
 /** Sticky comment id (`<!-- launchset:check -->`, see `github.upsertStickyComment`). */
 export const CHECK_COMMENT_ID = "check";

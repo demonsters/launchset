@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { type CheckInput, evaluateCheck, evaluatePushCheck } from "../../src/core/check.ts";
 import { readChangesetFile } from "../../src/core/plan-common.ts";
@@ -71,6 +73,12 @@ describe("PR check (9.2)", () => {
     expect(result.comment).toContain("npx @demonsters/launchset add");
     expect(result.comment).toContain("bump: patch");
     expect(result.comment).toContain("launchset docs");
+    // The link points at a page that exists in this repo.
+    const link = result.comment.match(
+      /https:\/\/github\.com\/demonsters\/launchset\/blob\/main\/(\S+?\.md)/,
+    );
+    expect(link?.[1]).toBeDefined();
+    expect(existsSync(join(import.meta.dirname, "../..", link?.[1] ?? "missing"))).toBe(true);
   });
 
   it("passes for bot authors (case-insensitive)", () => {

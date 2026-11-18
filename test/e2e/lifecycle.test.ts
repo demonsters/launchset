@@ -58,6 +58,12 @@ describe("full lifecycle", () => {
       await world.devAddChangeset("minor", "Add offline mode.");
       await world.devAddChangeset("patch", "Fix the login crash.");
 
+      // --- a developer previews the release commit locally (CLI `version --dry-run`)
+      const dryRun = await world.devCli(["version", "--dry-run", "--no-fetch"]);
+      expect(dryRun.code).toBe(0);
+      expect(dryRun.stdout).toContain('+  "version": "1.5.0"');
+      expect(world.dev.git("status", "--porcelain")).toBe("");
+
       // --- the push runs `release`: pending changesets -> release PR
       const first = world.pushJob("main");
       const pr = await first.actionOk("release");
@@ -142,6 +148,15 @@ describe("full lifecycle", () => {
       expect(JSON.parse(publish.outputs.matrix ?? "")).toEqual(["docker", "android", "web"]);
       const plan = publish.outputs.plan as string;
       const planJson = JSON.parse(plan) as PlanJson;
+      // The CLI's `plan` on the same checkout decides the same (mode, matrix, version, sha).
+      const cliPlan = await publishJob.cli(["plan", "--no-fetch"]);
+      expect(cliPlan.code).toBe(0);
+      expect(JSON.parse(cliPlan.stdout)).toMatchObject({
+        mode: "publish",
+        version: "1.5.0",
+        releaseSha: merged,
+        matrix: ["docker", "android", "web"],
+      });
       expect(planJson.buildNumber).toBeGreaterThan(217_000_000);
 
       // --- one build job per target, each in its own checkout at release-sha
