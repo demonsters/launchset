@@ -105,11 +105,19 @@ async function isVersionChange(git: Git, sha: string, readVersion: ReadVersion):
   return version !== parentVersion;
 }
 
-/** True when `ref` (default HEAD) changed the root version compared with its first parent. */
+/**
+ * True when `ref` (default HEAD) changed the root version compared with its first parent.
+ * A commit whose first parent has no root version (the version file appears, e.g. the merge
+ * that adopts launchset, or a root commit) is not a release commit: it starts the version
+ * line, it doesn't release it. `findReleaseCommit` still counts it, for explicit retries.
+ */
 export async function headIsReleaseCommit(
   git: Git,
   readVersion: ReadVersion,
   ref = "HEAD",
 ): Promise<boolean> {
-  return isVersionChange(git, await git.revParse(ref), readVersion);
+  const sha = await git.revParse(ref);
+  const [firstParent] = await git.parents(sha);
+  if (firstParent === undefined || (await readVersion(firstParent)) === undefined) return false;
+  return isVersionChange(git, sha, readVersion);
 }

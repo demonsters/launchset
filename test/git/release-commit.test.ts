@@ -122,12 +122,13 @@ describe.each<[string, FindReleaseCommitOptions]>([
     expect(await findReleaseCommit(git, "main", read, options)).toBe(release);
   });
 
-  it("root commit counts as a change", async () => {
+  it("root commit counts as a change for findReleaseCommit, but isn't a release commit", async () => {
     const repo = initRepo();
     const root = repo.version("0.1.0");
     const { git, read } = setup(repo);
     expect(await findReleaseCommit(git, "HEAD", read, options)).toBe(root);
-    expect(await headIsReleaseCommit(git, read)).toBe(true);
+    // The version line starts here; nothing was released by this push.
+    expect(await headIsReleaseCommit(git, read)).toBe(false);
     repo.commit("next");
     expect(await findReleaseCommit(git, "HEAD", read, options)).toBe(root);
   });
@@ -138,6 +139,8 @@ describe.each<[string, FindReleaseCommitOptions]>([
     const { git, read } = setup(repo);
     expect(await findReleaseCommit(git, "HEAD", read, options)).toBeUndefined();
     const added = repo.version("1.0.0");
+    // Adopting launchset (the version file appears) doesn't publish on that push.
+    expect(await headIsReleaseCommit(git, read)).toBe(false);
     repo.commit("more");
     expect(await findReleaseCommit(git, "HEAD", read, options)).toBe(added);
   });
