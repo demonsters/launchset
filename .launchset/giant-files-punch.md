@@ -2,4 +2,4 @@
 bump: none
 ---
 
-Add the launchset logo (repo, docs and action README).
+Add the launchset logo: a rocket with three exhaust trails (repo, docs and action README).
