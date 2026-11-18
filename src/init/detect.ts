@@ -542,11 +542,76 @@ function dockerName(dockerfile: string): string {
 
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// detect(): one section per part of the Detection, in this order (notes are collected in it)
+
 export async function detect(root: string, options: { now?: Date } = {}): Promise<DetectContext> {
   const now = options.now ?? new Date();
   const notes: Note[] = [];
 
-  // Git
+  const { gitInfo, tagNames } = await detectGit(root, notes);
+  const existingConfig = await findExistingConfig(root);
+  const { pkg, packageJson } = await readRootPackage(root);
+  const workspaces = await workspaceDirs(root, pkg?.tree, notes);
+  const { tags, gitTagPrefix } = classifyTags(tagNames);
+  const { workflows, builds } = await readWorkflows(root, gitInfo, gitTagPrefix, notes);
+
+  /** Target names taken so far (Docker first, then native, then web). */
+  const used = new Set<string>();
+  const targets = await detectDockerTargets(root, builds, used, notes);
+  const searchDirs = [...new Set([".", ...workspaces])];
+  const native = await detectNativeTargets(root, searchDirs, workflows, used, notes);
+  targets.push(...native.targets);
+  if (pkg) targets.push(webTarget(targets, used));
+
+  const versions = await collectVersions(root, packageJson, targets, tags);
+  const canonical = pickCanonical(versions);
+  const buildNumbers = buildNumberInfo(targets, now);
+  const imagePins = await detectImagePins(root, targets, notes);
+  const machinery = await detectProjectMachinery(root, {
+    searchDirs,
+    workflows,
+    builds,
+    gitlabText: native.gitlabText,
+    tags,
+    targets,
+  });
+  await releaseToolNotes(root, pkg, notes);
+
+  const detection: Detection = {
+    root,
+    git: gitInfo,
+    workspaces,
+    versions,
+    tags,
+    canonical,
+    targets,
+    workflows: workflowSummaries(native.ciFiles, native.signals, builds),
+    machinery: machinery.map((m) => m.item),
+    imagePins,
+    buildNumbers,
+    existingFiles: await existingGeneratedFiles(root),
+    changesets: await findChangesets(root),
+    hooks: await detectHooks(root),
+    notes,
+  };
+  if (existingConfig) detection.existingConfig = existingConfig;
+  if (packageJson) detection.packageJson = packageJson;
+  return {
+    detection,
+    workflows,
+    dockerBuilds: builds,
+    machinery,
+    packageJsonText: pkg?.text ?? null,
+    tagNames,
+  };
+}
+
+/** The repo: HEAD, branch, GitHub repository and tag names. */
+async function detectGit(
+  root: string,
+  notes: Note[],
+): Promise<{ gitInfo: Detection["git"]; tagNames: string[] }> {
   const git = new Git({ cwd: root });
   const inside = await git.exec(["rev-parse", "--is-inside-work-tree"]);
   const gitInfo: Detection["git"] = { repo: inside.code === 0 && inside.stdout.trim() === "true" };
@@ -565,16 +630,22 @@ export async function detect(root: string, options: { now?: Date } = {}): Promis
       message: "not a git repository: tags can't be read and no baseline tag can be created",
     });
   }
+  return { gitInfo, tagNames };
+}
 
-  let existingConfig: string | undefined;
+/** The launchset config file already in `root`, if any. */
+async function findExistingConfig(root: string): Promise<string | undefined> {
   for (const name of CONFIG_FILE_NAMES) {
-    if (await isFile(absolute(root, name))) {
-      existingConfig = name;
-      break;
-    }
+    if (await isFile(absolute(root, name))) return name;
   }
+  return undefined;
+}
 
-  // Root package.json
+/** The root package.json: its text and tree, and name, version and version line. */
+async function readRootPackage(root: string): Promise<{
+  pkg: { text: string; tree?: JsonNode } | null;
+  packageJson: Detection["packageJson"];
+}> {
   const pkg = await readJson(root, "package.json");
   const packageJson: Detection["packageJson"] = pkg ? { path: "package.json" } : undefined;
   if (pkg && packageJson) {
@@ -586,15 +657,24 @@ export async function detect(root: string, options: { now?: Date } = {}): Promis
       packageJson.line = lineOf(pkg.text, versionNode.offset);
     }
   }
-  const workspaces = await workspaceDirs(root, pkg?.tree, notes);
+  return { pkg, packageJson };
+}
 
-  // Tags
+/** The repo's version tags, and the tag prefix most of them use (`v` unless bare wins). */
+function classifyTags(tagNames: readonly string[]): { tags: FoundTag[]; gitTagPrefix: string } {
   const tags = tagNames.map(classifyTag).filter((t): t is FoundTag => t !== null);
   const vTags = tags.filter((t) => t.format === "v{version}").length;
   const bareTags = tags.filter((t) => t.format === "{version}").length;
-  const gitTagPrefix = bareTags > vTags ? "" : "v";
+  return { tags, gitTagPrefix: bareTags > vTags ? "" : "v" };
+}
 
-  // Workflows
+/** The GitHub workflows (launchset's own left out) and the Docker builds in them. */
+async function readWorkflows(
+  root: string,
+  gitInfo: Detection["git"],
+  gitTagPrefix: string,
+  notes: Note[],
+): Promise<{ workflows: Workflow[]; builds: DockerBuild[] }> {
   const workflowFiles = (
     await globRel(root, [".github/workflows/*.yml", ".github/workflows/*.yaml"])
   ).filter((p) => !/^launchset-/.test(baseName(p)));
@@ -626,8 +706,16 @@ export async function detect(root: string, options: { now?: Date } = {}): Promis
       }),
     );
   }
+  return { workflows, builds };
+}
 
-  // Dockerfiles
+/** A Docker target per Dockerfile, with what the workflows' builds say about it. */
+async function detectDockerTargets(
+  root: string,
+  builds: readonly DockerBuild[],
+  used: Set<string>,
+  notes: Note[],
+): Promise<DetectedTarget[]> {
   const allDockerfiles = (await globRel(root, ["**/Dockerfile*", "**/*.Dockerfile"])).filter(
     (p) => !p.endsWith(".dockerignore") && !p.startsWith(".github/"),
   );
@@ -639,7 +727,6 @@ export async function detect(root: string, options: { now?: Date } = {}): Promis
       message: `skipped Dockerfiles in dev container, test, example and docs folders: ${stray.join(", ")}`,
     });
   }
-  const used = new Set<string>();
   const targets: DetectedTarget[] = [];
   const matchedBuilds = new Set<DockerBuild>();
   const buildsFor = new Map<string, DockerBuild[]>();
@@ -744,9 +831,25 @@ export async function detect(root: string, options: { now?: Date } = {}): Promis
       docker,
     });
   }
+  return targets;
+}
 
-  // Native projects
-  const searchDirs = [...new Set([".", ...workspaces])];
+/**
+ * Android and iOS targets in the search dirs, proposed `auto` when a CI file builds the
+ * platform. Also returns the CI files (GitHub workflows, `.gitlab-ci.yml`) and their signals.
+ */
+async function detectNativeTargets(
+  root: string,
+  searchDirs: readonly string[],
+  workflows: readonly Workflow[],
+  used: Set<string>,
+  notes: Note[],
+): Promise<{
+  targets: DetectedTarget[];
+  ciFiles: { path: string; text: string }[];
+  signals: Map<string, ReturnType<typeof platformBuildSignals>>;
+  gitlabText: string | null;
+}> {
   const native: NativeFound["targets"] = [];
   for (const dir of searchDirs) native.push(...(await detectNative(root, dir, notes)).targets);
   const signals = new Map<string, ReturnType<typeof platformBuildSignals>>();
@@ -755,6 +858,7 @@ export async function detect(root: string, options: { now?: Date } = {}): Promis
   if (gitlabText !== null) ciFiles.push({ path: ".gitlab-ci.yml", text: gitlabText });
   for (const f of ciFiles) signals.set(f.path, platformBuildSignals(f.text));
   const count = (type: string) => native.filter((t) => t.type === type).length;
+  const targets: DetectedTarget[] = [];
   for (const t of native) {
     const builtBy: Evidence[] = [];
     for (const [path, list] of signals) {
@@ -775,22 +879,36 @@ export async function detect(root: string, options: { now?: Date } = {}): Promis
         : 'no workflow builds it, so it\'s shipped on demand (release: "manual")',
     });
   }
-  if (pkg) {
-    const otherAuto = targets.some((t) => t.proposed === "auto");
-    targets.push({
-      name: uniqueName("web", used),
-      type: "web",
-      dir: ".",
-      files: [],
-      builtBy: [],
-      proposed: otherAuto ? "none" : "auto",
-      reason: otherAuto
-        ? "other targets already ship this repo"
-        : "no other target is released automatically; a web target runs your own build steps for every release",
-    });
-  }
+  return { targets, ciFiles, signals, gitlabText };
+}
 
-  // Versions
+/** The web target of a repo with a package.json: `auto` unless another target ships it. */
+function webTarget(targets: readonly DetectedTarget[], used: Set<string>): DetectedTarget {
+  const otherAuto = targets.some((t) => t.proposed === "auto");
+  return {
+    name: uniqueName("web", used),
+    type: "web",
+    dir: ".",
+    files: [],
+    builtBy: [],
+    proposed: otherAuto ? "none" : "auto",
+    reason: otherAuto
+      ? "other targets already ship this repo"
+      : "no other target is released automatically; a web target runs your own build steps for every release",
+  };
+}
+
+/**
+ * Every version found: the root package.json, Docker targets' package.json files, native
+ * marketing versions (each place once), then the tags. Tags of other packages are marked
+ * `counted: false` (on `tags` too).
+ */
+async function collectVersions(
+  root: string,
+  packageJson: Detection["packageJson"],
+  targets: readonly DetectedTarget[],
+  tags: FoundTag[],
+): Promise<FoundVersion[]> {
   const versions: FoundVersion[] = [];
   if (packageJson?.version !== undefined) {
     const v: FoundVersion = {
@@ -839,8 +957,6 @@ export async function detect(root: string, options: { now?: Date } = {}): Promis
     seen.add(k);
     return true;
   });
-  versions.length = 0;
-  versions.push(...unique);
   // `name@1.2.3` tags count only for this repo's own packages.
   const ownPackages = new Set<string>();
   if (packageJson?.name) ownPackages.add(packageJson.name);
@@ -865,10 +981,13 @@ export async function detect(root: string, options: { now?: Date } = {}): Promis
       plain: t.prerelease ? null : t.version,
     };
     if (!t.counted) v.ignored = `tag of another package (${t.package}), not this repo's version`;
-    versions.push(v);
+    unique.push(v);
   }
+  return unique;
+}
 
-  // Canonical version: the highest plain version found.
+/** The canonical version: the highest plain version found (a prerelease file counts as its release). */
+function pickCanonical(versions: readonly FoundVersion[]): Detection["canonical"] {
   const candidates: { version: string; from: FoundVersion }[] = [];
   for (const v of versions) {
     if (v.ignored) continue;
@@ -881,7 +1000,7 @@ export async function detect(root: string, options: { now?: Date } = {}): Promis
   }
   candidates.sort((a, b) => semver.rcompare(a.version, b.version));
   const winner = candidates[0];
-  const canonical: Detection["canonical"] = winner
+  return winner
     ? {
         version: winner.version,
         reason: `highest version found (${candidates
@@ -895,8 +1014,10 @@ export async function detect(root: string, options: { now?: Date } = {}): Promis
           .map((c) => evidenceOf(c.from, "highest version")),
       }
     : { version: "0.1.0", reason: "no version found anywhere; starting at 0.1.0", evidence: [] };
+}
 
-  // Build numbers
+/** The timestamp strategy's number now, the highest committed build number and the offset. */
+function buildNumberInfo(targets: readonly DetectedTarget[], now: Date): Detection["buildNumbers"] {
   const strategyNow = computeBuildNumber(
     { strategy: "timestamp", epoch: DEFAULT_EPOCH, offset: 0 },
     { now },
@@ -916,13 +1037,23 @@ export async function detect(root: string, options: { now?: Date } = {}): Promis
     highest && highest.value >= strategyNow ? roundUpOffset(highest.value - strategyNow + 1) : 0;
   const buildNumbers: Detection["buildNumbers"] = { strategyNow, offset };
   if (highest) buildNumbers.highest = highest;
+  return buildNumbers;
+}
 
-  // Image pins
-  const imagePins = await detectImagePins(root, targets, notes);
-
-  // Machinery
+/** Release machinery: package scripts, script files, workflows, GitLab CI, Fastfiles, docs. */
+async function detectProjectMachinery(
+  root: string,
+  input: {
+    searchDirs: readonly string[];
+    workflows: Workflow[];
+    builds: DockerBuild[];
+    gitlabText: string | null;
+    tags: readonly FoundTag[];
+    targets: readonly DetectedTarget[];
+  },
+): Promise<MachineryFinding[]> {
   const packages: PackageScripts[] = [];
-  for (const dir of searchDirs) {
+  for (const dir of input.searchDirs) {
     const path = joinRel(dir, "package.json");
     const p = await readJson(root, path);
     const scripts = p?.tree ? findNodeAtLocation(p.tree, ["scripts"]) : undefined;
@@ -937,8 +1068,8 @@ export async function detect(root: string, options: { now?: Date } = {}): Promis
     }
     packages.push(entry);
   }
-  const scriptCandidates = new Set(referencedScriptFiles(packages, workflows));
-  for (const dir of searchDirs) {
+  const scriptCandidates = new Set(referencedScriptFiles(packages, input.workflows));
+  for (const dir of input.searchDirs) {
     for (const p of await globRel(
       root,
       ["{scripts,bin,tools}/**/*.{js,mjs,cjs,ts,mts,cts,sh,bash,rb,py}"],
@@ -968,9 +1099,10 @@ export async function detect(root: string, options: { now?: Date } = {}): Promis
   )) {
     docs.push({ path, text: (await readTextOrNull(absolute(root, path))) ?? "" });
   }
-  const machinery = detectMachinery({
-    workflows,
-    dockerBuilds: builds,
+  const { gitlabText, tags } = input;
+  return detectMachinery({
+    workflows: input.workflows,
+    dockerBuilds: input.builds,
     packages,
     scriptFiles,
     ...(gitlabText !== null ? { gitlab: { path: ".gitlab-ci.yml", text: gitlabText } } : {}),
@@ -978,11 +1110,17 @@ export async function detect(root: string, options: { now?: Date } = {}): Promis
     docs,
     samples: sampleTags(
       [...new Set(tags.filter((t) => t.counted && !t.prerelease).map((t) => t.format))],
-      targets.map((t) => t.name),
+      input.targets.map((t) => t.name),
     ),
   });
+}
 
-  // Release tool configuration (the invocations are machinery items).
+/** Notes for release tool configuration (the invocations are machinery items). */
+async function releaseToolNotes(
+  root: string,
+  pkg: { text: string; tree?: JsonNode } | null,
+  notes: Note[],
+): Promise<void> {
   for (const path of await globRel(root, RELEASE_TOOL_CONFIGS, { deep: 1 })) {
     notes.push({
       level: "warning",
@@ -1004,13 +1142,24 @@ export async function detect(root: string, options: { now?: Date } = {}): Promis
       });
     }
   }
+}
 
-  const existingFiles: string[] = [];
+/** Files init generates that already exist. */
+async function existingGeneratedFiles(root: string): Promise<string[]> {
+  const existing: string[] = [];
   for (const path of GENERATED_FILES) {
-    if (await isFile(absolute(root, path))) existingFiles.push(path);
+    if (await isFile(absolute(root, path))) existing.push(path);
   }
+  return existing;
+}
 
-  const workflowsOut: Detection["workflows"] = ciFiles.map((f) => ({
+/** Per CI file: the platform builds and Docker builds found in it. */
+function workflowSummaries(
+  ciFiles: readonly { path: string; text: string }[],
+  signals: ReadonlyMap<string, ReturnType<typeof platformBuildSignals>>,
+  builds: readonly DockerBuild[],
+): Detection["workflows"] {
+  return ciFiles.map((f) => ({
     path: f.path,
     builds: [
       ...(signals.get(f.path) ?? []),
@@ -1023,37 +1172,6 @@ export async function detect(root: string, options: { now?: Date } = {}): Promis
         })),
     ],
   }));
-
-  const changesets = await findChangesets(root);
-  const hooks = await detectHooks(root);
-
-  const detection: Detection = {
-    root,
-    git: gitInfo,
-    workspaces,
-    versions,
-    tags,
-    canonical,
-    targets,
-    workflows: workflowsOut,
-    machinery: machinery.map((m) => m.item),
-    imagePins,
-    buildNumbers,
-    existingFiles,
-    changesets,
-    hooks,
-    notes,
-  };
-  if (existingConfig) detection.existingConfig = existingConfig;
-  if (packageJson) detection.packageJson = packageJson;
-  return {
-    detection,
-    workflows,
-    dockerBuilds: builds,
-    machinery,
-    packageJsonText: pkg?.text ?? null,
-    tagNames,
-  };
 }
 
 function describeVersion(v: FoundVersion): string {
