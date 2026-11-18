@@ -1,0 +1,14 @@
+{
+  "expo": {
+    "name": "Example",
+    "slug": "example",
+    "version": "1.4.0",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.example.app"
+    },
+    "android": {
+      "package": "com.example.app"
+    }
+  }
+}

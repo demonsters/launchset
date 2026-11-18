@@ -1,0 +1,9 @@
+apply plugin: 'com.android.application'
+
+android {
+    defaultConfig {
+        applicationId "com.example.dynamic"
+        versionCode rootProject.ext.versionCode
+        versionName "1.0"
+    }
+}

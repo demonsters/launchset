@@ -1,0 +1,5 @@
+# plain scalar and single-quoted variants
+meta:
+  plain: 1.4.0 # plain
+  single: '1.4.0'
+  double: "1.4.0"

@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, "release/*.x"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Lint, typecheck, test, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      # Node 24 is the GitHub Actions runtime of the bundled action: the smoke test runs the
+      # bundle with it (LAUNCHSET_NODE24). Node 26 runs everything else.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - run: echo "LAUNCHSET_NODE24=$(command -v node)" >> "$GITHUB_ENV"
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 26
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - name: Test
+        run: pnpm test
+        env:
+          # The end-to-end tests create commits in temporary repos.
+          GIT_AUTHOR_NAME: ci
+          GIT_AUTHOR_EMAIL: ci@example.com
+          GIT_COMMITTER_NAME: ci
+          GIT_COMMITTER_EMAIL: ci@example.com
+      - run: pnpm build
+      - name: Docs build
+        run: pnpm --filter docs check:generated && pnpm --filter docs build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: action-bundle
+          path: action/dist/
+          if-no-files-found: error
+
+  action-smoke:
+    name: Run the local action
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: action-bundle
+          path: action/dist/
+      # `add` needs no token: it writes a changeset into this checkout.
+      - id: add
+        uses: ./action
+        with:
+          command: add
+          bump: none
+          message: CI smoke test
+      - name: Check the action's output
+        env:
+          CHANGESET: ${{ steps.add.outputs.path }}
+        run: |
+          test -n "$CHANGESET"
+          test -f "$CHANGESET"
+          grep -q "bump: none" "$CHANGESET"

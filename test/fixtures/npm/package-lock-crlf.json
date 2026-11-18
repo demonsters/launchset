@@ -1,0 +1,11 @@
+{
+  "name": "example",
+  "version": "1.4.0",
+  "lockfileVersion": 3,
+  "packages": {
+    "": {
+      "name": "example",
+      "version": "1.4.0"
+    }
+  }
+}

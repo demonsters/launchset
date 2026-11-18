@@ -1,0 +1,10 @@
+{
+  "name": "app",
+  "version": "1.0.1",
+  "private": true,
+  "scripts": {
+    "build": "vite build",
+    "ios:sync": "node scripts/sync-version.mjs && cap sync ios",
+    "android:bundle": "node scripts/sync-version.mjs && cd android && ./gradlew bundleRelease"
+  }
+}

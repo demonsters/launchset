@@ -1,0 +1,25 @@
+apply plugin: 'com.android.application'
+
+android {
+    namespace "com.example.flavors"
+    compileSdkVersion 35
+
+    defaultConfig {
+        applicationId "com.example.flavors"
+        versionCode 5
+        versionName "2.0.0"
+    }
+
+    flavorDimensions "tier"
+    productFlavors {
+        free {
+            dimension "tier"
+            applicationIdSuffix ".free"
+        }
+        paid {
+            dimension "tier"
+            versionCode 105
+            versionName "2.0.0-paid"
+        }
+    }
+}

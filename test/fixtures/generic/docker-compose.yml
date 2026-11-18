@@ -1,0 +1,14 @@
+services:
+  app:
+    image: ghcr.io/org/app:v1.4.0
+    ports:
+      - "3000:3000"
+    environment:
+      - SENTRY_RELEASE=v1.4.0
+  worker:
+    image: 'ghcr.io/org/app-worker:v1.4.0'
+    command: node worker.js
+  api:
+    image: ghcr.io/org/api:1.4.0-rc.1 # second stamped image
+  db:
+    image: postgres:16

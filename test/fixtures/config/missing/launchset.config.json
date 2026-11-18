@@ -1,0 +1,22 @@
+{
+  "version": { "file": "nope/package.json" },
+  "targets": {
+    "api": {
+      "type": "docker",
+      "image": "ghcr.io/demonsters/api",
+      "files": [
+        { "path": "deploy/k8s/*.yaml", "kind": "image" },
+        { "path": "deploy/compose.yaml", "kind": "image" },
+        { "path": "chart/Chart.yaml", "kind": "yaml", "key": "appVersion" }
+      ]
+    },
+    "android": { "type": "android", "source": { "kind": "capacitor", "dir": "apps/mobile" } },
+    "gradle": { "type": "android", "source": { "kind": "gradle", "file": "android/app/build.gradle" } },
+    "ios": { "type": "ios", "source": { "kind": "capacitor", "dir": "apps/mobile" } },
+    "ios-proj": { "type": "ios", "source": { "kind": "xcodeproj", "file": "ios/Fake.xcodeproj" } },
+    "ios-file": { "type": "ios", "source": { "kind": "xcodeproj", "file": "README.txt" } },
+    "plist": { "type": "ios", "source": { "kind": "plist", "files": ["README.txt", "ios/Info.plist"] } },
+    "expo": { "type": "ios", "source": { "kind": "expo" } },
+    "npm": { "type": "custom", "npm": {} }
+  }
+}

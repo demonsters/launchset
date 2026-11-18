@@ -1,0 +1,72 @@
+{
+  "name": "@demonsters/launchset",
+  "version": "0.0.0",
+  "description": "Changesets-style releases for lock-step monorepos: one version, many targets (Docker, Android, iOS, web).",
+  "type": "module",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/demonsters/launchset.git"
+  },
+  "publishConfig": {
+    "access": "restricted"
+  },
+  "engines": {
+    "node": ">=26"
+  },
+  "bin": {
+    "launchset": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./schema.json": "./dist/launchset.schema.json",
+    "./package.json": "./package.json"
+  },
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "templates",
+    "skills/launchset",
+    "skills/launchset-adopt",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsdown && node scripts/build-schema.ts && pnpm build:action",
+    "build:action": "node scripts/build-action.ts",
+    "prepack": "pnpm build",
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "packageManager": "pnpm@12.16.1",
+  "dependencies": {
+    "@actions/core": "^3.0.1",
+    "@clack/prompts": "^1.9.0",
+    "@octokit/rest": "^22.0.1",
+    "commander": "^15.1.0",
+    "jiti": "^2.7.0",
+    "jose": "^6.2.17",
+    "jsonc-parser": "^3.3.1",
+    "picomatch": "^4.0.7",
+    "semver": "^7.8.6",
+    "tinyglobby": "^0.2.17",
+    "yaml": "^2.9.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.6.8",
+    "@types/node": "^26.6.6",
+    "@types/picomatch": "^4.0.3",
+    "@types/semver": "^7.8.0",
+    "esbuild": "^0.28.2",
+    "msw": "^3.0.6",
+    "tsdown": "^0.23.7",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  }
+}

@@ -1,0 +1,12 @@
+// Version.xcconfig
+// Shared by all targets. Included from Release.xcconfig and Debug.xcconfig.
+
+#include "Base.xcconfig"
+
+PRODUCT_BUNDLE_IDENTIFIER = com.example.app
+MARKETING_VERSION = 1.4.0 // set by launchset
+CURRENT_PROJECT_VERSION = 12
+
+// Debug builds keep their own build number.
+CURRENT_PROJECT_VERSION[config=Debug] = 1
+SWIFT_VERSION = 5.0
