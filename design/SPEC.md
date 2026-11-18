@@ -263,11 +263,14 @@ These are code and can't be safely rewritten. launchset doesn't edit them. `init
 ### 6.6 `custom` and extra `files`
 
 For anything else (an npm package, a Helm chart, a version file a web app reads):
+- `files` is **optional** on a `custom` target. Without files, the target is just a matrix entry plus a marker: the release PR already bumped the root version, and the team's build step does the rest. launchset's own `npm` and `action` targets work this way (section 15).
 - `{ path, kind: "json", key: "version" }`: dotted key path into a JSON file; text-preserving edit of that value only.
 - `{ path, kind: "yaml", key: "appVersion" }`: same for YAML (e.g. `Chart.yaml`). Text-preserving.
 - `{ path, kind: "regex", pattern: "...", replace: "...{version}..." }`: pattern must match exactly once, or error.
 - Placeholders in `replace`: `{version}`, `{major}`, `{minor}`, `{patch}`, `{buildNumber}` (CI only).
 - `{ path, kind: "image" }` (only in `docker` targets, opt-in): stamps image references in deploy manifests (k8s, Compose, Helm values). Every occurrence of `<image>:<tag>` for this target's `image` in the file gets the target's verify tag (6.1, 7.4), e.g. `image: ghcr.io/org/app:v1.5.0`. Text-preserving; error if the file has no reference to the image. `path` may be a glob (`deploy/k8s/*.yaml`); files in the glob without a reference are skipped, but the glob must match at least one reference. 6.7 checks that every reference equals the release tag. Stamped by the release PR like other files, so the committed manifests point at the release. Leave out manifests that hold per-environment deploy state (for example a production overlay that is promoted by hand). Kustomize `images[].newTag` (tag without the image name) isn't covered in v1.
+
+**npm lockfile.** When `version.file` is a `package.json` and a `package-lock.json` or `npm-shrinkwrap.json` sits next to it, launchset also updates the root version in that lockfile: the top-level `"version"` and `packages[""].version`. This happens everywhere the version file is written (release PR, previews and prereleases in CI), with the same text-preserving edit, so the lockfile never drifts the way it would without `npm version`. If either value is missing, it's skipped silently. pnpm, Yarn and Bun lockfiles don't store the root version and need nothing.
 
 ### 6.7 Version consistency
 
@@ -308,6 +311,16 @@ The store is not a source of numbers, only a safety check. `launchset verify --t
 For `docker` targets: check if the **verify tag** already exists. That is the first template in the run's tag list (6.1) that contains `{version}`, rendered: `image:1.5.0` with the defaults, `image:v1.5.0` with `tags: ["v{version}", …]`. The check uses the registry HTTP API (OCI distribution spec, `HEAD /v2/<name>/manifests/<tag>` with token auth). Support at least ghcr.io and Docker Hub; generic registries with basic auth. Credentials from env (`LAUNCHSET_REGISTRY_USERNAME` / `LAUNCHSET_REGISTRY_PASSWORD`) or the standard Docker config file. If it exists: `already-published=true`. This replaces the team's old "ask the Docker API whether the image exists" workflow, but only as a safety net: the source of truth is the marker tags. With private GHCR packages, `verify` needs read access before it runs: `packages: read` plus the registry env variables, or a `docker/login-action` step placed **before** `verify`. The generated workflow template does this.
 
 ---
+
+### 7.5 npm verification (`verify: ["npm"]`)
+
+For `custom` targets that publish an npm package:
+- Config: `npm: { package: "package.json" }` (default: the root `package.json`). launchset reads the package name from that file, and the registry from `publishConfig.registry`, the repo's `.npmrc`, or `https://registry.npmjs.org`.
+- Check: fetch the package document from the registry (`GET <registry>/<name>`, with `NODE_AUTH_TOKEN` or `LAUNCHSET_NPM_TOKEN` for private packages) and look for the exact version.
+  - If it exists: `already-published=true`. The workflow skips `npm publish` and goes straight to `mark`. This covers "publish succeeded, but the job failed before marking".
+  - If it doesn't exist, or the package itself doesn't exist yet (404): `already-published=false`.
+- Any other error (auth, network) fails the step with a clear message. A failed check is never treated as "not published".
+- The `dist-tag` output (section 10) tells the workflow which npm tag to publish with, so a hotfix doesn't move `latest`.
 
 ## 8. Versions
 
@@ -613,6 +626,13 @@ Format, newest first, with a title line kept at the top:
 - With `changelog.github: true`, find the PR and author for each changeset (the commit that added the file → associated PR via the API), like `@changesets/changelog-github`. Without a token, or if not found, leave the links out (no failure).
 - Multi-line summaries: first line as the bullet, the rest indented under it.
 
+**Existing changelogs.** Repos that adopt launchset often already have a `CHANGELOG.md` in another format, for example Changesets (`## 0.18.0` without a date, `### Minor Changes`) or auto-changelog (`### Changelog`, a preamble, `#### [v3.5.6](url)`).
+- A **version heading** is any heading (any level) whose text starts with a semver version, optionally prefixed with `v`, optionally a markdown link, and optionally followed by a date. Examples: `## 1.5.0 (2026-11-18)`, `## 0.18.0`, `#### [v3.5.6](https://…) - 2023-01-02`.
+- New sections are inserted **directly before the first version heading**. Everything above it (title, badges, preamble) stays at the top unchanged. If there is no version heading, the new section goes after the first heading (the title), or at the very top if the file has no heading.
+- Old sections are never rewritten. A file with mixed styles (old Changesets sections below new launchset sections) is accepted.
+- The changelog backport (9.5) places a section by comparing versions with the parsed version headings; headings it can't parse are skipped when sorting. Prerelease headings sort before their release (`1.5.0-alpha.2` < `1.5.0`).
+- `init` doesn't convert or move an existing changelog. It only creates one if it's missing.
+
 ---
 
 ## 13. Tech stack and repo layout (launchset repo)
@@ -654,11 +674,12 @@ Keep `core/` free of I/O so it can be tested with plain inputs.
 
 ## 14. Testing
 
-- **Stampers**: fixtures for Groovy and KTS Gradle files (incl. flavors → error), `gradle.properties`, a pbxproj with several targets and configurations including an app extension, Info.plist with literal values and with `$(MARKETING_VERSION)`, `.xcconfig`, Capacitor layout, Expo `app.json`, bare RN layout, JSON/YAML/regex. Assert exact output text (only the values changed).
+- **Changelog**: inserting into existing Changesets-style and auto-changelog files (preamble kept, mixed styles), backport sorting with unparsable and prerelease headings.
+- **Stampers**: fixtures for Groovy and KTS Gradle files (incl. flavors → error), `gradle.properties`, a pbxproj with several targets and configurations including an app extension, Info.plist with literal values and with `$(MARKETING_VERSION)`, `.xcconfig`, Capacitor layout, Expo `app.json`, bare RN layout, JSON/YAML/regex, `package-lock.json` and `npm-shrinkwrap.json` root versions (incl. a lockfile without `packages[""]`). Assert exact output text (only the values changed).
 - **Core**: bump calculation, next-free version, maintenance restrictions, preview and prerelease versions (counter, gaps, prerelease tags never counted as releases), Docker tag template rendering (placeholders, skipped templates, maintenance filtering, 0.x major, validation errors), build-number strategies incl. limits and the semver+preview rejection, changelog rendering, config validation messages.
 - **Plan/state**: every mode (`publish`, `ship`, `release-pr`, `none`), markers present/missing, release-sha detection, superseding, `workflow_dispatch` retry. Manual targets: left out of the publish matrix, not needed for `v{version}`, ignored by superseding; `ship` of the latest and an older version, refusal to go backwards, already-marked version.
 - **GitHub**: mocked HTTP (msw): release PR create/update/close, sticky comments, tags, releases, bot-PR detection, changelog backport PR.
-- **Verify**: mocked Play, App Store Connect and registry responses incl. "already published" and "store is ahead"; registry verify uses the rendered verify tag (`v{version}` templates).
+- **Verify**: mocked Play, App Store Connect, OCI registry and npm registry responses incl. "already published", "store is ahead", npm 404 and npm auth errors; registry verify uses the rendered verify tag (`v{version}` templates).
 - **init detection**: fixture repos with tag-triggered workflows, a Changesets pipeline, a version-sync script, a `v`-prefixed `docker/build-push-action`, mismatched versions where the root is lower (no lowering by default), and an unreleased root version (no baseline by default).
 - **End to end**: real temporary git repos with a local bare remote, running the CLI through a full lifecycle: init → add → version → plan → stamp → mark → finalize; a hotfix line; a superseded partial release; a preview; a manual target shipped by hand two releases later (`ship` → `mark --version`); a prerelease branch with two concurrent pushes (tag reservation retry) and its merge into main; `init --detect --json` followed by `init --yes --decide …` on fixture repos.
 - **launchset's own CI**: lint, typecheck, tests, action bundle builds and a smoke test that runs the local action (`uses: ./action`), docs build.
@@ -668,7 +689,7 @@ Keep `core/` free of I/O so it can be tested with plain inputs.
 ## 15. launchset releases itself
 
 launchset uses launchset (dogfooding):
-- Targets: `npm` (custom, root `package.json`; the workflow runs `npm publish` to the private `@demonsters` scope) and `action` (custom; the workflow builds the bundle and publishes it to `demonsters/launchset-action`: commit, tag `v{version}`, move `v1`. It needs a token with write access to that repo, from the launchset App installed there).
+- Targets: `npm` (custom, no files, `verify: ["npm"]`; the workflow runs `npm publish` to the private `@demonsters` scope unless `already-published`) and `action` (custom; the workflow builds the bundle and publishes it to `demonsters/launchset-action`: commit, tag `v{version}`, move `v1`. It needs a token with write access to that repo, from the launchset App installed there).
 - npm auth for publishing: prefer npm trusted publishing (OIDC from GitHub Actions) if it works for a private package from a private repo; otherwise an `NPM_TOKEN` secret. Document which one was chosen.
 
 ---
@@ -769,4 +790,5 @@ These weren't discussed explicitly; they follow from the agreed design. Change t
 - Prereleases are tagged previews (9.9): a stable `X.Y.Z-<preid>.N` version, a tag and a GitHub pre-release, but nothing committed and no changesets consumed. This replaces Changesets pre mode without its state file.
 - Build services outside GitHub Actions (Xcode Cloud) are out of scope for v1.
 - The action is published to a separate public repo (`demonsters/launchset-action`), so other orgs can use it with their own GitHub App and no org access settings are needed.
+- `custom` targets may have no `files`; npm packages get `verify: ["npm"]` so re-runs never fail on an already published version; npm lockfiles get their root version updated with the version file; existing changelogs keep their preamble and old sections, and new sections go before the first version heading.
 - Direct pushes to the base branch are fine. There's no per-commit check; launchset only warns when commits exist since the last release and no changeset is pending at all.
