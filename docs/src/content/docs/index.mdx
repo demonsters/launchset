@@ -2,30 +2,19 @@
 title: launchset
 description: Changesets-style releases for repos where one version drives many targets.
 template: splash
+tableOfContents: false
+editUrl: false
 hero:
-  tagline: One version. Many targets. Docker, Android, iOS and web, released together.
+  title: One version. Every target.
+  tagline: Changesets-style releases for repos that ship a backend, a web app and mobile apps together. Every PR adds a changeset. Merging the release PR ships every target at the same version.
   actions:
     - text: Get started
       link: getting-started/
-      icon: right-arrow
     - text: How it works
       link: concepts/
       variant: minimal
 ---
 
-import { Card, CardGrid } from '@astrojs/starlight/components';
+import Home from '../../components/Home.astro';
 
-<CardGrid stagger>
-	<Card title="Describe a change in a small file" icon="pencil">
-		Every PR adds a changeset: a bump and one line for the changelog. Commit messages don't matter.
-	</Card>
-	<Card title="Merge the release PR to release" icon="rocket">
-		launchset collects the changesets into a release PR. Merging it builds every target at the same version.
-	</Card>
-	<Card title="You keep your build steps" icon="setting">
-		launchset builds nothing. It picks the version and build number, writes them into your files and records what shipped as git tags.
-	</Card>
-	<Card title="Safe to re-run" icon="approve-check">
-		State lives in git tags. A failed job can be re-run, and nothing is published twice.
-	</Card>
-</CardGrid>
+<Home />

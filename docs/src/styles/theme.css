@@ -1,0 +1,83 @@
+/*
+ * The docs theme, taken from the logo: the badge's night navy, the rocket's hull white and the
+ * three exhaust trails (sky, flame, violet). Archivo carries the type; headings use its expanded
+ * width, like the lettering on a launch vehicle.
+ */
+
+:root {
+  /* Logo colours. These don't change with the theme. */
+  --ls-night: #0b1220;
+  --ls-deep: #1e293b;
+  --ls-hull: #f1f5f9;
+  --ls-nozzle: #94a3b8;
+  --ls-sky: #38bdf8;
+  --ls-flame: #fb923c;
+  --ls-violet: #a78bfa;
+
+  /* The same trails, dark enough to read on a light page. */
+  --ls-sky-ink: #0369a1;
+  --ls-flame-ink: #c2410c;
+  --ls-violet-ink: #6d28d9;
+
+  --sl-font: "Archivo Variable", "Archivo", sans-serif;
+  --sl-font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --ls-stretch-display: 125%;
+  --ls-stretch-heading: 112%;
+
+  /* Dark: slate greys on the badge's night. */
+  --sl-color-white: #f8fafc;
+  --sl-color-gray-1: #e2e8f0;
+  --sl-color-gray-2: #cbd5e1;
+  --sl-color-gray-3: #94a3b8;
+  --sl-color-gray-4: #64748b;
+  --sl-color-gray-5: #334155;
+  --sl-color-gray-6: #1e293b;
+  --sl-color-black: #0b1220;
+
+  --sl-color-accent-low: #0c3550;
+  --sl-color-accent: #38bdf8;
+  --sl-color-accent-high: #bae6fd;
+
+  /* Per-theme trail colours for text and marks on the page itself. */
+  --ls-trail-sky: var(--ls-sky);
+  --ls-trail-flame: var(--ls-flame);
+  --ls-trail-violet: var(--ls-violet);
+  --ls-trail-hull: var(--ls-hull);
+}
+
+:root[data-theme="light"] {
+  --sl-color-white: #0b1220;
+  --sl-color-gray-1: #1e293b;
+  --sl-color-gray-2: #334155;
+  --sl-color-gray-3: #475569;
+  --sl-color-gray-4: #94a3b8;
+  --sl-color-gray-5: #cbd5e1;
+  --sl-color-gray-6: #e2e8f0;
+  --sl-color-gray-7: #f1f5f9;
+  --sl-color-black: #ffffff;
+
+  --sl-color-accent-low: #e0f2fe;
+  --sl-color-accent: #0369a1;
+  --sl-color-accent-high: #0c4a6e;
+
+  --ls-trail-sky: var(--ls-sky-ink);
+  --ls-trail-flame: var(--ls-flame-ink);
+  --ls-trail-violet: var(--ls-violet-ink);
+  --ls-trail-hull: #475569;
+}
+
+/* Headings everywhere get the slightly expanded width. */
+.sl-markdown-content :is(h1, h2, h3, h4),
+h1#_top,
+.site-title {
+  font-stretch: var(--ls-stretch-heading);
+  letter-spacing: -0.005em;
+}
+
+h1#_top {
+  font-weight: 700;
+}
+
+.sl-markdown-content :is(h2, h3) {
+  font-weight: 650;
+}

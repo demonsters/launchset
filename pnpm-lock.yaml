@@ -239,6 +239,12 @@ importers:
       '@astrojs/starlight':
         specifier: ^0.43.1
         version: 0.43.1(@astrojs/markdown-remark@7.3.9)(astro@7.4.12(@astrojs/markdown-remark@7.3.9)(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))(typescript@7.0.2)
+      '@fontsource-variable/archivo':
+        specifier: ^5.3.0
+        version: 5.3.0
+      '@fontsource/ibm-plex-mono':
+        specifier: ^5.3.0
+        version: 5.3.0
       astro:
         specifier: ^7.3.6
         version: 7.4.12(@astrojs/markdown-remark@7.3.9)(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1)
@@ -783,6 +789,12 @@ packages:
 
   '@expressive-code/plugin-text-markers@0.44.3':
     resolution: {integrity: sha512-4Ae2xRSDV5kdWPsi40xWbOtoihbzM0zLVjQKkDAnD5KzFXl+6/kd+VhuWOlTRVaJ5cqGk++vCbAaf0MR1XbZlw==}
+
+  '@fontsource-variable/archivo@5.3.0':
+    resolution: {integrity: sha512-HogK8FJelrD1o7TlZlkIVtHgc20bO5PZRWE7mUeUTdMN055alznQV6/00J00IBeu8FQAH4s3zW9UJNvKExXf+g==}
+
+  '@fontsource/ibm-plex-mono@5.3.0':
+    resolution: {integrity: sha512-eTgnZjZEGk1QtD3ZstF+Vclo2HLAni8YMy34/DxllwZvyz1lR/1RF/xTiAquOBO7MvqBx8D2Ig2WCPMVfdZu7Q==}
 
   '@img/colour@1.1.0':
     resolution: {integrity: sha512-Td76q7j57o/tLVdgS746cYARfSyxk8iEfRxewL9h4OMzYhbW4TAcppl0mT4eyqXddh6L/jwoM75mo7ixa/pCeQ==}
@@ -3567,6 +3579,10 @@ snapshots:
   '@expressive-code/plugin-text-markers@0.44.3':
     dependencies:
       '@expressive-code/core': 0.44.3
+
+  '@fontsource-variable/archivo@5.3.0': {}
+
+  '@fontsource/ibm-plex-mono@5.3.0': {}
 
   '@img/colour@1.1.0': {}
 
