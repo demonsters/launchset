@@ -1,13 +1,13 @@
 /**
- * The launchset GitHub Action (spec 10): reads the inputs, runs one command from src/flow
+ * The launchset GitHub Action: reads the inputs, runs one command from src/flow
  * and reports the result as outputs, environment variables, a job summary and log lines.
  */
 
 import { resolve } from "node:path";
 import * as core from "@actions/core";
-import { isLaunchsetError } from "../../src/core/errors.ts";
 import { createContext, type FlowResult, type Logger } from "../../src/flow/index.ts";
 import { dispatch, outputsFor } from "./commands.ts";
+import { errorSummary, errorText, formatError } from "./errors.ts";
 import { readInputs } from "./inputs.ts";
 
 const log: Logger = {
@@ -35,15 +35,10 @@ function report(command: string, result: FlowResult, outputs: Record<string, str
 
 /** A failure the user can act on: message and hint, the stack only with step debugging. */
 async function reportError(command: string | undefined, error: unknown): Promise<void> {
-  const label = command ? `launchset ${command}` : "launchset";
-  const message = error instanceof Error ? error.message : String(error);
-  const hint = isLaunchsetError(error) ? error.hint : (error as { hint?: string } | null)?.hint;
-  const full = hint ? `${message}\n${hint}` : message;
-  core.setFailed(full);
+  const formatted = formatError(error);
+  core.setFailed(errorText(formatted));
   if (error instanceof Error && error.stack && core.isDebug()) core.debug(error.stack);
-  await writeSummary(
-    `## ${label} failed\n\n${message.split("\n").join("  \n")}${hint ? `\n\n> [!TIP]\n> ${hint.split("\n").join("\n> ")}` : ""}\n`,
-  );
+  await writeSummary(errorSummary(command ? `launchset ${command}` : "launchset", formatted));
 }
 
 async function main(): Promise<void> {
