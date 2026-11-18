@@ -18,7 +18,7 @@ Developers describe each change in a small changeset file in their PR. Commit me
 ### 1.1 Principles
 
 1. **One version per repo.** The root `package.json` `version` is the single source of truth.
-2. **Lock step, no partial releases.** Every release builds every target. A changeset never targets a subset.
+2. **Lock step, no partial releases.** Every release builds every target. A changeset never targets a subset. The one exception is a **manual target** (section 9.8): its version is still stamped by every release, but it's shipped on demand for an already released version.
 3. **No commit-message conventions.** Release intent lives in changeset files only.
 4. **Build numbers are assigned in CI at build time and never committed.** That makes build numbers independent of branches.
 5. **Idempotent.** Re-running any workflow never double-publishes. State lives in git tags, not in external systems.
@@ -41,7 +41,8 @@ Developers describe each change in a small changeset file in their PR. Commit me
 |---|---|
 | **Changeset** | A markdown file in `.launchset/` with a bump type and a summary. |
 | **Target** | One thing that gets built and shipped per release, e.g. `docker-api`, `android`, `ios`, `web`. Each target becomes one job in the GitHub Actions matrix. |
-| **Release** | Building and shipping every target for one version, from the release commit. |
+| **Release** | Building and shipping every auto target for one version, from the release commit. |
+| **Auto / manual target** | `release: "auto"` (default): built in every release's publish matrix, and required before the release tag. `release: "manual"`: stamped by every release PR, but shipped later on demand for a released version (section 9.8). |
 | **Release commit** | The commit where the root `package.json` version first became the version being released (normally the merge of the release PR). All release builds check out this exact commit. |
 | **Release PR** | The PR launchset opens and keeps updated, titled `Release vX.Y.Z`, that applies pending changesets. |
 | **Marker tag** | A git tag recording that one target shipped for one version: `launchset/<target>@<version>`. |
@@ -154,6 +155,7 @@ export default defineConfig({
       source: { kind: "xcodeproj", file: "apps/mobile/ios/App.xcodeproj" },
       verify: ["store"],
       store: { appId: "1234567890" },
+      release: "manual",                       // optional, default "auto"; see section 9.8
     },
     npm: {
       type: "custom",
@@ -163,10 +165,11 @@ export default defineConfig({
 });
 ```
 
-Any target may override `buildNumber`. Any target may have extra `files` entries (section 6.6) to stamp the marketing version into more files.
+Any target may override `buildNumber`. Any target may have extra `files` entries (section 6.6) to stamp the marketing version into more files. Any target may set `release: "manual"` (section 9.8).
 
 **Validation rules** (config load fails with a clear message):
 - At least one target. Target names: `[a-z0-9][a-z0-9-]*`.
+- At least one target with `release: "auto"` (otherwise no release would ever complete).
 - `buildNumber.strategy: "semver"` together with previews enabled is an error (section 7.2).
 - Source files referenced by targets must exist.
 - Unknown keys are errors (catches typos) except where noted.
@@ -323,30 +326,31 @@ It maintains **one sticky comment** per PR (found by a hidden HTML marker, updat
 
 ### 9.3 Release workflow (`launchset-release.yml`)
 
-Trigger: `push` to the base branch and maintenance branches, plus `workflow_dispatch` (for retrying a publish). Concurrency: `group: launchset-release-${{ github.ref }}`, `cancel-in-progress: false`.
+Trigger: `push` to the base branch and maintenance branches, plus `workflow_dispatch` (for retrying a publish, or with the inputs `target` and `version` for shipping a manual target, 9.8). Concurrency: `group: launchset-release-${{ github.ref }}`, `cancel-in-progress: false`.
 
 **Job `launchset`** runs the action with `command: release`, which decides the mode:
 
 1. **`publish`**: HEAD is the release commit for the current version (the version changed in this push), and `v{version}` doesn't exist yet. Also when started by `workflow_dispatch` with an unfinished release of the current version.
-   - Output: `matrix` (JSON list of targets that have **no marker** yet), `version`, `build-number`, `channel=release`, `release-sha`.
+   - Output: `matrix` (JSON list of **auto** targets that have **no marker** yet; manual targets are never in it), `version`, `build-number`, `channel=release`, `release-sha`.
    - Build jobs check out `release-sha`, never a later commit.
 2. **`release-pr`**: pending changesets exist (including generated bot changesets, 9.4), and it's not a publish. Create or update the release PR:
    - Branch `launchset/release/<base-branch>`, **rebuilt from the base branch on every run and force-pushed**, so it never has conflicts.
-   - The commit: deletes consumed changesets, bumps the root version, stamps every target's marketing version, prepends the changelog section.
+   - The commit: deletes consumed changesets, bumps the root version, stamps every target's marketing version (manual targets included), prepends the changelog section.
    - Title `Release v1.5.0`; body is the changelog section that will be added, plus a short "merging this releases all targets" note.
    - If the release PR is open and nothing is pending anymore, close it.
-3. **`none`**: nothing to do.
+3. **`ship`**: started by `workflow_dispatch` with a `target` input (9.8). Output: `matrix` with just that target, the `version` to ship (input, default the latest release on this branch), a fresh `build-number`, `channel=release`, and `release-sha` = the commit of `v{version}`. The `build` job runs as usual; `finalize` only updates the GitHub Release (9.8).
+4. **`none`**: nothing to do.
 
 Normally a push is never both: a publish push is the release PR merge, which used up all changesets. If changesets do exist at a publish commit (for example someone pushed one straight to main together with a version change), publish wins and release-pr runs on the next push.
 
 Pushes after the release commit **do not** auto-retry an unfinished release. If a target failed, the team re-runs the failed job, or starts `workflow_dispatch`, or ships a new version (which supersedes, 9.6).
 
-**Job `build`** (matrix, only when mode is `publish`): the team's own steps. A generated template looks like:
+**Job `build`** (matrix, only when mode is `publish` or `ship`): the team's own steps. A generated template looks like:
 
 ```yaml
 build:
   needs: launchset
-  if: needs.launchset.outputs.mode == 'publish'
+  if: contains(fromJSON('["publish","ship"]'), needs.launchset.outputs.mode)
   strategy:
     fail-fast: false
     matrix:
@@ -367,9 +371,10 @@ build:
 
 (Exact shape is up to the implementation. `plan` is a JSON output carrying version, build number, channel, release sha and per-target data, so later steps don't recompute anything.)
 
-**Job `finalize`** (`needs: build`, `if: always() && needs.launchset.outputs.mode == 'publish'`): runs `command: finalize`:
-- If every target has a marker: create `v{version}` at `release-sha` and a GitHub Release with that version's changelog section. If this is the base branch, mark it "latest"; maintenance releases are not marked latest.
-- Otherwise: fail with a summary of which targets are missing (job summary + log).
+**Job `finalize`** (`needs: build`, `if: always()` and mode is `publish` or `ship`): runs `command: finalize`:
+- If every **auto** target has a marker: create `v{version}` at `release-sha` and a GitHub Release with that version's changelog section. If this is the base branch, mark it "latest"; maintenance releases are not marked latest. The Release body ends with a "Manual targets" list showing each manual target as "not shipped yet" (9.8).
+- Otherwise: fail with a summary of which auto targets are missing (job summary + log).
+- In `ship` mode: update the "Manual targets" list of `v{version}`'s GitHub Release (shipped, with build number and date). Never creates tags.
 - Also handles superseding (9.6) and the changelog backport (9.5).
 
 ### 9.4 Bot PRs
@@ -393,7 +398,8 @@ build:
 - Only the newest version is ever published. When a newer version reaches `finalize` and an older version has marker tags but no `v` tag, that older version is **superseded**:
   - Create tag `v{old}-partial` at the old release commit, and a GitHub Release for it marked **pre-release**, titled `v1.4.0 (partial, superseded by v1.4.1)`, listing which targets shipped and which didn't, plus the changelog section.
   - It never gets a `v{old}` tag.
-- `plan` only ever considers the current version.
+- Only auto targets count. An older version that has all its auto markers is a normal release, whether or not its manual targets were ever shipped.
+- `plan` only ever considers the current version (for `publish`; `ship` may target any released version, 9.8).
 
 ### 9.7 Previews (`launchset-preview.yml`)
 
@@ -408,6 +414,38 @@ Behavior:
 - `command: preview-plan` outputs the same shape as `plan` with `channel=preview`, the preview version (8.3), a build number, and the preview targets (`preview.targets`).
 - **No side effects**: no changesets consumed, nothing committed, no marker or release tags, no GitHub Releases.
 - `command: preview-comment` (final job, `if: always()`): one sticky PR comment with version, build number per platform, Docker image tags, and per-target success/failure with links to the jobs. Updated on each preview run.
+- Manual targets can be in `preview.targets` like any other target (for example TestFlight previews by label).
+
+### 9.8 Manual targets
+
+A target with `release: "manual"` is kept in version step with every release, but shipped on demand. Typical cases: a store app that isn't automated yet, or a platform that shouldn't get a store build for every web release (macOS minutes, upload limits, review cadence).
+
+| Step | Auto target | Manual target |
+|---|---|---|
+| Release PR | marketing version stamped | **same** (committed every release, so the native files never drift) |
+| PR check consistency (6.7) | checked | **same** |
+| Publish matrix | included | not included |
+| Release tag `v{version}` | needs this target's marker | doesn't wait for it |
+| Superseding (9.6) | counts | ignored |
+| Preview | per `preview.targets` | **same** |
+
+**Shipping** a manual target always ships an **already released** version (it has a `v{version}` tag). Unreleased commits are what previews are for.
+
+- **From CI**: `workflow_dispatch` on `launchset-release.yml` with `target` and optional `version` (default: the latest release on the branch it's started from). Mode `ship` (9.3): checks out the commit of `v{version}`, computes a fresh build number, and runs the normal `build` job (stamp → verify → the team's build steps → mark `launchset/<target>@<version>`).
+- **By hand** (for example an Xcode archive on a Mac): `launchset ship --target ios [--version 1.4.0]` checks that HEAD is at `v{version}` (error otherwise, with the `git checkout` command to run), computes a build number, and stamps the target's files. `--json` prints the version and build number. After the upload, `launchset mark --target ios --version 1.4.0` creates the marker and updates the GitHub Release. Both commands need a token for pushing and the Release update (`GITHUB_TOKEN` / `--token`).
+
+**Rules:**
+- **Never backwards**: shipping a version lower than the target's highest existing marker is an error (stores reject lower versions), unless `--force`.
+- **Idempotent**: if a marker for that target and version already exists, `ship` says so and stops.
+- **Build numbers**: computed at ship time with the target's strategy, so `timestamp` stays increasing. `semver` is fine as well; `run-number` only from CI.
+- **Store verification** (7.3) works the same as for auto targets.
+
+**Visibility:**
+- `launchset status` lists each manual target with its last shipped version and how many releases it is behind, e.g. `ios: 1.3.0 (9 releases behind)`.
+- The release PR body shows the same list, so the team sees the gap at every release.
+- (Later, issue #2) store release notes for a manual target can be built from every changelog section between its previous marker and the version being shipped.
+
+**Switching** a target between `manual` and `auto` is a one-line config change. It takes effect from the next release; existing markers stay valid.
 
 ---
 
@@ -416,8 +454,8 @@ Behavior:
 - Lives at `action/` in the launchset repo: `action/action.yml`, `runs.using: node24`, `main: dist/index.js`.
 - `dist/index.js` is a **single bundled file** that includes the CLI core and all dependencies, and is committed. CI in the launchset repo fails if `dist` is out of date. Consumer repos never install anything from npm.
 - Used as `demonsters/launchset/action@v1`.
-- Inputs: `command` (`check` | `release` | `stamp` | `verify` | `mark` | `finalize` | `preview-plan` | `preview-comment`), `token`, `target`, `plan`, `working-directory`.
-- Outputs (depending on command): `mode`, `matrix`, `plan`, `version`, `build-number`, `channel`, `release-sha`, `already-published`, `docker-tags`, `docker-labels`, `pr-number`.
+- Inputs: `command` (`check` | `release` | `stamp` | `verify` | `mark` | `finalize` | `preview-plan` | `preview-comment`), `token`, `target`, `version` (with `release` + `target`: ship a manual target, 9.8), `plan`, `working-directory`.
+- Outputs (depending on command): `mode` (`publish` | `ship` | `release-pr` | `none`), `matrix`, `plan`, `version`, `build-number`, `channel`, `release-sha`, `already-published`, `docker-tags`, `docker-labels`, `pr-number`.
 - Writes a readable job summary (`$GITHUB_STEP_SUMMARY`) for every command.
 - Versioning of launchset itself: tags `v1.2.3` plus a moving major tag `v1`.
 - Because the repo is private, other demonsters repos can only use the action after an org owner enables **Settings → Actions → General → Access → "Accessible from repositories in the 'demonsters' organization"**. Document this.
@@ -434,12 +472,13 @@ Rules for every command: no interactive prompt when stdin isn't a TTY or `--yes`
 |---|---|
 | `launchset init` | Set up a repo (11.1). |
 | `launchset add` | Create a changeset. Interactive (bump + summary), or `--bump <type> --message <text>`. `--empty` = `bump: none`. Prints the created path. |
-| `launchset status` | Pending changesets, bump, next version, consistency check, last release, unfinished releases. `--json`. Exit code 1 with `--require-changeset` if none pending vs a base ref (`--since <ref>`). |
+| `launchset status` | Pending changesets, bump, next version, consistency check, last release, unfinished releases, last shipped version per manual target (9.8). `--json`. Exit code 1 with `--require-changeset` if none pending vs a base ref (`--since <ref>`). |
 | `launchset version` | Apply pending changesets locally (what the release PR commit does). For debugging and manual use. `--dry-run` prints the diff. |
 | `launchset plan` | Print the release plan (mode, matrix, version, build number) as JSON. `--preview` for preview mode. |
 | `launchset stamp --target <name>` | Write version + build number into the target's files. Accepts `--plan <json>` or `--version`/`--build-number`/`--channel`. |
 | `launchset verify --target <name>` | Store/registry verification (7.3, 7.4). |
-| `launchset mark --target <name>` | Create and push the marker tag. |
+| `launchset mark --target <name>` | Create and push the marker tag. `--version <v>` for a manual target shipped by hand (9.8). |
+| `launchset ship --target <name>` | Prepare a manual target for a hand-made build of a released version: check HEAD is at `v{version}`, compute a build number, stamp (9.8). `--version` (default: latest release), `--force`, `--json`. |
 | `launchset finalize` | Create the release tag + GitHub Release when complete; handle supersede and backport. |
 | `launchset hotfix <major.minor>` | Create a maintenance branch (9.5). |
 | `launchset check` | Run the PR check logic (used by the action; also usable locally against a base ref). |
@@ -450,6 +489,7 @@ The GitHub-facing commands work from the CLI too when given `GITHUB_TOKEN`/`--to
 
 1. **Detect**: root `package.json`; Android (`android/app/build.gradle(.kts)`, `gradle.properties` version keys); iOS (`*.xcodeproj`, `Info.plist`, `.xcconfig`; choose `xcodeproj` when plists use `$(MARKETING_VERSION)`); Capacitor (`capacitor.config.*`); Expo (`app.json` with an `expo` key; for `app.config.*` print the advice from 6.5); Dockerfiles (suggest docker targets, ask for the image name).
 2. **Show versions** found per file. If they don't match, pick the canonical version (default: root `package.json`) and align the files.
+   - **Target kind**: for every detected platform, ask whether it is shipped by CI with every release (`auto`), shipped on demand (`manual`, 9.8), or not a target. Default: `auto` when an existing workflow already builds it, `manual` for native projects that no workflow builds.
 3. **Build numbers**: read the current highest `versionCode` / `CFBundleVersion` from the files (and, if credentials are present, from the stores). If any is higher than what the chosen strategy produces now, set `buildNumber.offset` so new numbers stay higher, and explain.
 4. **Write**: `launchset.config.ts`, `.launchset/README.md`, the three workflow files (with commented placeholders for the team's build steps, and example steps for docker/build-push-action and fastlane), `CHANGELOG.md` if missing.
 5. **Baseline**: offer to create the `v{version}` tag on HEAD so the current version counts as released (skip if it exists).
@@ -458,6 +498,13 @@ The GitHub-facing commands work from the CLI too when given `GITHUB_TOKEN`/`--to
 8. Print the manual steps that remain: GitHub App + secrets, store credential secrets, action access setting.
 
 `--yes` accepts all defaults; every question has a flag.
+
+**Agent-assisted adoption.** Repos will move to launchset one at a time, mostly done by an agent, so init has a detection-only mode for that:
+
+- `launchset init --detect --json` writes nothing. It prints everything from steps 1–3 (files, versions, build numbers, Dockerfiles, native projects, existing workflows) plus a list of **decisions**. Each decision has an `id`, the question, the options, the proposed default, and the evidence (`path:line`) behind the default.
+- Example decisions: the canonical version; which detected platforms become targets, and `auto` or `manual`; Docker image names; whether to create the baseline tag.
+- Every decision can be answered with `--decide <id>=<value>` (repeatable), besides the named flags.
+- The intended loop: the agent runs `--detect --json`, asks the human only the decisions where the default isn't obviously right, then runs `launchset init --yes --decide …`. The adoption skill (16.3) describes this loop.
 
 ---
 
@@ -513,7 +560,8 @@ action/
 templates/
   workflows/     # used by init
 skills/
-  launchset/SKILL.md
+  launchset/SKILL.md          # for repos that use launchset (16.2)
+  launchset-adopt/SKILL.md    # for migrating a repo onto launchset (16.3)
 docs/            # Astro Starlight site (own package.json)
 test/
   fixtures/      # real-world sample files per platform
@@ -529,10 +577,10 @@ Keep `core/` free of I/O so it can be tested with plain inputs.
 
 - **Stampers**: fixtures for Groovy and KTS Gradle files (incl. flavors → error), `gradle.properties`, a pbxproj with several targets and configurations including an app extension, Info.plist with literal values and with `$(MARKETING_VERSION)`, `.xcconfig`, Capacitor layout, Expo `app.json`, bare RN layout, JSON/YAML/regex. Assert exact output text (only the values changed).
 - **Core**: bump calculation, next-free version, maintenance restrictions, preview versions, build-number strategies incl. limits and the semver+preview rejection, changelog rendering, config validation messages.
-- **Plan/state**: every mode (`publish`, `release-pr`, `none`), markers present/missing, release-sha detection, superseding, `workflow_dispatch` retry.
+- **Plan/state**: every mode (`publish`, `ship`, `release-pr`, `none`), markers present/missing, release-sha detection, superseding, `workflow_dispatch` retry. Manual targets: left out of the publish matrix, not needed for `v{version}`, ignored by superseding; `ship` of the latest and an older version, refusal to go backwards, already-marked version.
 - **GitHub**: mocked HTTP (msw): release PR create/update/close, sticky comments, tags, releases, bot-PR detection, changelog backport PR.
 - **Verify**: mocked Play, App Store Connect and registry responses incl. "already published" and "store is ahead".
-- **End to end**: real temporary git repos with a local bare remote, running the CLI through a full lifecycle: init → add → version → plan → stamp → mark → finalize; a hotfix line; a superseded partial release; a preview.
+- **End to end**: real temporary git repos with a local bare remote, running the CLI through a full lifecycle: init → add → version → plan → stamp → mark → finalize; a hotfix line; a superseded partial release; a preview; a manual target shipped by hand two releases later (`ship` → `mark --version`); `init --detect --json` followed by `init --yes --decide …` on fixture repos.
 - **launchset's own CI**: lint, typecheck, tests, `action/dist` up to date, docs build.
 
 ---
@@ -561,9 +609,10 @@ For humans. Every command, flag, config option and output shown must match the c
 - Preview builds
 - Hotfixes and maintenance branches
 - Partial releases
+- Manual targets (shipping a store app on demand, `launchset ship`)
 - GitHub App setup (step by step, permissions, secrets, action access setting)
 - Workflow recipes (docker/build-push-action, fastlane for Play and TestFlight, Gradle, xcodebuild)
-- Migrating from Changesets / moving an existing repo (`init`)
+- Migrating from Changesets / moving an existing repo (`init`, `init --detect --json`, agent-assisted adoption with the adoption skill)
 - CLI reference
 - Troubleshooting / FAQ (e.g. "release PR has no CI runs" → App token missing)
 
@@ -580,8 +629,23 @@ For AI agents working **in repos that use launchset** (not in the launchset repo
 - On a `release/X.Y.x` branch only patch or none.
 - Preview builds: add the `launchset:preview` label.
 - `npx @demonsters/launchset status` to check pending changes and the next version.
+- Manual targets (9.8): never ship one unasked. When `status` shows one is behind, mention it to the human, and point to the `workflow_dispatch` ship run or `launchset ship`.
 
 The skill ships inside the npm package and is installed into consumer repos by `launchset init` (11.1 step 7), together with an equivalent short section for `AGENTS.md`.
+
+### 16.3 Adoption skill (`skills/launchset-adopt/SKILL.md`)
+
+For AI agents moving an **existing repo** onto launchset. Repos will be migrated one at a time, mostly by agents. This skill must be available **before** the repo has launchset, so it's meant to be installed at user level (or as a Claude Code plugin from the launchset repo), not by `init`. Its `description` makes agents load it when asked to set up or migrate a repo to launchset. Content:
+
+- Run `npx @demonsters/launchset init --detect --json` first; never write anything before the human has seen the decisions.
+- Present the decisions, grouped. Ask only the ones whose default isn't clearly right, with the evidence. Always ask about:
+  - lowering any version;
+  - a baseline tag for a version that has no release tag;
+  - native projects that no workflow builds. Suggest `release: "manual"` for those, and explain what it means (9.8).
+- Find and explain the existing release machinery that will conflict: tag-triggered workflows, Changesets workflows and scripts, scripts that write version or build numbers, release instructions in `CLAUDE.md`/`AGENTS.md`/`README`. Propose removing or adapting each one, and do it only after the human agrees.
+- Move the team's existing build and upload steps into the generated workflows (`docker/build-push-action` tags and file, signing, fastlane, deploy steps), keeping secrets and environments as they are.
+- Run `init --yes --decide …` with the answers, then open a single PR with everything. The PR body lists the decisions, what was removed or changed, and the manual steps that remain (GitHub App installation, secrets, store credentials).
+- Don't migrate repos that are out of scope (for example independently versioned npm packages, 1.2). Say why instead.
 
 ---
 
@@ -609,3 +673,5 @@ These weren't discussed explicitly; they follow from the agreed design. Change t
 - Store verification also detects "this build is already uploaded" so a re-run skips the upload instead of failing.
 - A `custom` target type covers npm packages, Helm charts etc., and lets launchset release itself.
 - The PR check also fails when version files don't match the root version.
+- Manual targets (9.8) only ship already released versions, never lower than their last shipped version, and don't block the release tag. Added after validating the spec against existing projects.
+- `init` has a detection-only JSON mode with explicit decisions, and a separate adoption skill exists, because most repos will be migrated one at a time by agents.
