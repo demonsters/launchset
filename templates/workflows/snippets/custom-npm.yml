@@ -14,5 +14,6 @@
   # does not move `latest`. Add --access public for a public scoped package.
   run: npm publish --tag ${{ steps.stamp.outputs.dist-tag }}
   env:
-    # Or use npm trusted publishing: give this job `id-token: write` and drop the token.
+    # Or use npm trusted publishing: give this job `id-token: write` and drop the token here.
+    # `verify` still needs a read token for a private package: trusted publishing can't read.
     NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

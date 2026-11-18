@@ -265,79 +265,57 @@ describe("verifyNpm", () => {
   });
 });
 
-describe("verifyNpm with trusted publishing (OIDC)", () => {
+describe("verifyNpm in a job with trusted publishing (OIDC)", () => {
+  // npm's trusted-publishing tokens can only publish, so verify never exchanges the OIDC token:
+  // npm answers a read with one with HTTP 400 "OIDC publish authorize: Invalid token".
   const OIDC_ENV = {
     ACTIONS_ID_TOKEN_REQUEST_URL: "https://pipelines.actions.example/token?api-version=2.0",
     ACTIONS_ID_TOKEN_REQUEST_TOKEN: "runner-request-token",
   };
-  const EXCHANGE =
-    "https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/@demonsters%2flaunchset";
 
-  function oidcProvider(seen: { audience?: string | null; auth?: string | null } = {}) {
+  function failOnOidc() {
+    const used = { oidc: false };
     server.use(
-      http.get("https://pipelines.actions.example/token", ({ request }) => {
-        seen.audience = new URL(request.url).searchParams.get("audience");
-        seen.auth = request.headers.get("authorization");
+      http.get("https://pipelines.actions.example/token", () => {
+        used.oidc = true;
         return HttpResponse.json({ value: "github-oidc-jwt" });
       }),
-    );
-    return seen;
-  }
-
-  it("exchanges the workflow's OIDC token and reads the private package with it", async () => {
-    const cwd = await repo({ "package.json": { name: "@demonsters/launchset" } });
-    const provider = oidcProvider();
-    const exchange: { auth?: string | null } = {};
-    server.use(
-      http.post(EXCHANGE, ({ request }) => {
-        exchange.auth = request.headers.get("authorization");
-        return HttpResponse.json({ token: "npm-short-lived" });
+      http.post("https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/:name", () => {
+        used.oidc = true;
+        return HttpResponse.json({ token: "npm-publish-only" });
       }),
     );
-    const seen = packument("https://registry.npmjs.org/@demonsters%2Flaunchset", ["1.0.0"]);
-    const result = await verifyNpm({ version: "1.0.0" }, makeCtx(OIDC_ENV, cwd));
-    expect(result.alreadyPublished).toBe(true);
-    expect(provider).toEqual({
-      audience: "npm:registry.npmjs.org",
-      auth: "Bearer runner-request-token",
-    });
-    expect(exchange.auth).toBe("Bearer github-oidc-jwt");
-    expect(seen.auth).toBe("Bearer npm-short-lived");
-  });
+    return used;
+  }
 
-  it("goes on without a token when npm has no trusted publisher (first publish), and says so", async () => {
+  it("doesn't exchange the OIDC token, and says a private package needs a read token", async () => {
     const cwd = await repo({ "package.json": { name: "@demonsters/launchset" } });
-    oidcProvider();
-    server.use(
-      http.post(EXCHANGE, () => HttpResponse.json({ error: "not found" }, { status: 404 })),
-    );
+    const used = failOnOidc();
     const seen = packument("https://registry.npmjs.org/@demonsters%2Flaunchset", 404);
     const result = await verifyNpm({ version: "1.0.0" }, makeCtx(OIDC_ENV, cwd));
     expect(result.alreadyPublished).toBe(false);
+    expect(used.oidc).toBe(false);
     expect(seen.auth).toBeNull();
-    expect(result.message).toContain("no trusted publisher");
+    expect(result.message).toContain("npm trusted publishing can't read packages");
   });
 
-  it("fails clearly when the job can't get an OIDC token", async () => {
+  it("reads with an explicit token", async () => {
     const cwd = await repo({ "package.json": { name: "@demonsters/launchset" } });
-    server.use(
-      http.get("https://pipelines.actions.example/token", () =>
-        HttpResponse.json({ message: "no" }, { status: 403 }),
-      ),
-    );
-    await expect(verifyNpm({ version: "1.0.0" }, makeCtx(OIDC_ENV, cwd))).rejects.toThrow(
-      /id-token: write/,
-    );
-  });
-
-  it("prefers an explicit token over OIDC", async () => {
-    const cwd = await repo({ "package.json": { name: "@demonsters/launchset" } });
+    const used = failOnOidc();
     const seen = packument("https://registry.npmjs.org/@demonsters%2Flaunchset", ["1.0.0"]);
     const result = await verifyNpm(
       { version: "1.0.0" },
-      makeCtx({ ...OIDC_ENV, NODE_AUTH_TOKEN: "classic" }, cwd),
+      makeCtx({ ...OIDC_ENV, LAUNCHSET_NPM_TOKEN: "read-only" }, cwd),
     );
     expect(result.alreadyPublished).toBe(true);
-    expect(seen.auth).toBe("Bearer classic");
+    expect(used.oidc).toBe(false);
+    expect(seen.auth).toBe("Bearer read-only");
+  });
+
+  it("outside such a job, the 404 note doesn't mention trusted publishing", async () => {
+    const cwd = await repo({ "package.json": { name: "@demonsters/launchset" } });
+    packument("https://registry.npmjs.org/@demonsters%2Flaunchset", 404);
+    const result = await verifyNpm({ version: "1.0.0" }, makeCtx({}, cwd));
+    expect(result.message).not.toContain("trusted publishing");
   });
 });

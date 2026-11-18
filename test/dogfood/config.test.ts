@@ -16,13 +16,15 @@ describe("launchset's own config (spec 15)", () => {
     expect(config.version.file).toBe("package.json");
   });
 
-  it("has an npm target (verified on the registry) and an action target, both auto, no files", async () => {
+  it("has an npm target and an action target, both auto, no files, no verify", async () => {
+    // No `verify` for npm: trusted-publishing tokens can't read the private package, so the
+    // workflow's publish step is idempotent instead.
     const { config } = await loadConfig(root);
     expect(Object.keys(config.targets)).toEqual(["npm", "action"]);
     expect(config.targets.npm).toMatchObject({
       type: "custom",
       release: "auto",
-      verify: ["npm"],
+      verify: [],
       npm: { package: "package.json" },
     });
     expect(config.targets.action).toMatchObject({ type: "custom", release: "auto", verify: [] });

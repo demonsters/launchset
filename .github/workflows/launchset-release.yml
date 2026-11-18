@@ -5,7 +5,7 @@
 #   action  the bundled GitHub Action, published to the public repo demonsters/launchset-action
 #
 #   launchset  decides the mode (publish, ship, release-pr, none) and the plan
-#   build      one job per target: stamp -> verify -> build and publish -> mark
+#   build      one job per target: stamp -> build and publish -> mark
 #   finalize   creates the release tag and the GitHub Release once both targets shipped
 #
 # Adapted from the generated template (`renderWorkflows` with actionRef "./action"):
@@ -20,10 +20,11 @@
 #
 # npm auth: trusted publishing (OIDC), no long-lived token. The `build` job has
 # `id-token: write`; `npm publish` exchanges the workflow's OIDC token for a short-lived npm
-# token, and `launchset verify` does the same exchange to read the private package. Set up once
-# on npmjs.com: package @demonsters/launchset → Settings → Trusted publishing → GitHub Actions,
-# repository demonsters/launchset, workflow launchset-release.yml (and launchset-preview.yml for
-# `next/*` prereleases). Needs npm >= 11.5.1 (Node 26 ships a newer one).
+# token. Set up once on npmjs.com: package @demonsters/launchset → Settings → Trusted publishing
+# → GitHub Actions, repository demonsters/launchset, workflow launchset-release.yml (and
+# launchset-preview.yml for `next/*` prereleases). Needs npm >= 11.5.1 (Node 26 ships a newer
+# one). Those tokens can only publish, not read, so there is no `verify` step: reading the
+# private package would need a separate read token. The publish step is idempotent instead.
 name: Launchset release
 
 on:
@@ -115,7 +116,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      # npm trusted publishing (OIDC): `npm publish` and `launchset verify` get short-lived tokens.
+      # npm trusted publishing (OIDC): `npm publish` gets a short-lived token.
       id-token: write
     strategy:
       # One failing target must not stop the others: re-run the failed job afterwards.
@@ -145,32 +146,44 @@ jobs:
           target: ${{ matrix.target }}
           plan: ${{ needs.launchset.outputs.plan }}
 
-      # Checks the registry for the npm target: has this version already been published?
-      # Sets `already-published`, which the npm steps below use to skip themselves. The action
-      # target has no check: scripts/publish-action.ts is idempotent by itself.
-      - id: verify
-        uses: ./action
-        with:
-          command: verify
-          target: ${{ matrix.target }}
-          plan: ${{ needs.launchset.outputs.plan }}
+      # No `verify` step: neither target has a check. Both publish steps below are idempotent,
+      # so a re-run after a publish that wasn't marked goes straight on to `mark`.
+      # (The steps run from this workflow file, while the code comes from the release commit,
+      # so a retry of an older release uses these steps too.)
 
       # ---------------------------------------------------------------------------------------
       # --- npm (npm package) ---
-      # Builds and publishes @demonsters/launchset (skipped when `verify` finds this version on
-      # the registry). The dist-tag is `latest` for base-branch releases, so a hotfix on a
-      # maintenance branch does not move `latest`. No --access flag: the package stays private.
+      # Builds and publishes @demonsters/launchset. The dist-tag is `latest` for base-branch
+      # releases, so a hotfix on a maintenance branch does not move `latest`. No --access flag:
+      # the package stays private.
       - run: pnpm build
-        if: matrix.target == 'npm' && steps.verify.outputs.already-published != 'true'
+        if: matrix.target == 'npm'
       # Set up after `pnpm install`: its .npmrc would send a placeholder token to the registry.
       - uses: actions/setup-node@v5
-        if: matrix.target == 'npm' && steps.verify.outputs.already-published != 'true'
+        if: matrix.target == 'npm'
         with:
           node-version: 26
           registry-url: https://registry.npmjs.org
+      # Idempotent: when this version is already on npm (published by an earlier attempt that
+      # failed before `mark`, or by hand), npm refuses to publish over it, and that counts as
+      # done. Versions on npm can't be replaced, so it is the same release.
       - name: Publish npm
-        if: matrix.target == 'npm' && steps.verify.outputs.already-published != 'true'
-        run: npm publish --tag ${{ steps.stamp.outputs.dist-tag }}
+        if: matrix.target == 'npm'
+        env:
+          DIST_TAG: ${{ steps.stamp.outputs.dist-tag }}
+        run: |
+          set +e
+          output=$(npm publish --tag "$DIST_TAG" 2>&1)
+          status=$?
+          set -e
+          echo "$output"
+          if [ "$status" -ne 0 ]; then
+            if grep -qiE "cannot publish over the previously published versions|EPUBLISHCONFLICT" <<<"$output"; then
+              echo "::notice::This version of @demonsters/launchset is already on npm; nothing to publish."
+              exit 0
+            fi
+            exit "$status"
+          fi
 
       # --- action (the bundled GitHub Action) ---
       # Publishes to the public repo demonsters/launchset-action: commit the bundle, tag

@@ -1,5 +1,7 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: the tests compare GitHub ${{ }} expressions
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -132,9 +134,10 @@ describe("launchset's own workflows", () => {
         const wanted = (template[name].jobs[id]?.steps ?? [])
           .filter((s) => s.uses === "./action")
           .map((s) => s.with?.command);
-        // Documented change: the preview also verifies, so a re-run doesn't publish twice.
-        if (name === "launchset-preview.yml" && id === "build") wanted.push("verify");
-        expect(actual, `${name} job ${id}`).toEqual(wanted);
+        // Documented change: no `verify` in the build jobs. npm trusted-publishing tokens can't
+        // read the private package, so the publish steps are idempotent instead.
+        const expected = id === "build" ? wanted.filter((c) => c !== "verify") : wanted;
+        expect(actual, `${name} job ${id}`).toEqual(expected);
       }
       expect(ours[name].text).not.toContain("demonsters/launchset-action@");
     }
@@ -172,32 +175,93 @@ describe("launchset's own workflows", () => {
   });
 });
 
+/**
+ * Runs a workflow's publish script with a fake `npm` that prints `output` and exits with
+ * `status`. Returns the script's exit status and output.
+ */
+function runPublish(script: string, npm: { output: string; status: number }) {
+  const dir = mkdtempSync(join(tmpdir(), "launchset-publish-"));
+  try {
+    const fake = join(dir, "npm");
+    writeFileSync(
+      fake,
+      `#!/usr/bin/env bash\necho "$*" >&2\nprintf '%s\\n' "$FAKE_OUTPUT"\nexit $FAKE_STATUS\n`,
+    );
+    chmodSync(fake, 0o755);
+    const result = spawnSync("bash", ["-e", "-c", script], {
+      encoding: "utf8",
+      env: {
+        PATH: `${dir}:${process.env.PATH}`,
+        DIST_TAG: "latest",
+        FAKE_OUTPUT: npm.output,
+        FAKE_STATUS: String(npm.status),
+      },
+    });
+    return { status: result.status, output: `${result.stdout}${result.stderr}` };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+const CONFLICT = [
+  "npm error code E403",
+  "npm error 403 403 Forbidden - PUT https://registry.npmjs.org/@demonsters%2flaunchset - You cannot publish over the previously published versions: 1.0.0.",
+].join("\n");
+
+function publishesIdempotently(step: () => Step | undefined) {
+  it("publishes with the dist-tag", () => {
+    const result = runPublish(step()?.run ?? "", {
+      output: "+ @demonsters/launchset@1.0.0",
+      status: 0,
+    });
+    expect(result.status).toBe(0);
+    expect(result.output).toContain("publish --tag latest");
+    expect(step()?.env?.DIST_TAG).toBe("${{ steps.stamp.outputs.dist-tag }}");
+  });
+
+  it("counts a version that is already on npm as done", () => {
+    const result = runPublish(step()?.run ?? "", { output: CONFLICT, status: 1 });
+    expect(result.status).toBe(0);
+    expect(result.output).toContain("::notice::");
+  });
+
+  it("fails on any other npm error, and shows it", () => {
+    const output =
+      "npm error code E404\nnpm error 404 Not Found - PUT https://registry.npmjs.org/x";
+    const result = runPublish(step()?.run ?? "", { output, status: 1 });
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("E404");
+  });
+}
+
 describe("release workflow: npm target", () => {
   const steps = () => jobOf("launchset-release.yml", "build").steps;
-  const publishGuard = "matrix.target == 'npm' && steps.verify.outputs.already-published != 'true'";
+  const publishGuard = "matrix.target == 'npm'";
+  const publishStep = () => steps().find((s) => s.name === "Publish npm");
 
-  it("verifies and publishes with npm trusted publishing (OIDC), no long-lived token", () => {
-    const verify = steps().find((s) => s.id === "verify");
-    expect(verify?.with?.command).toBe("verify");
-    expect(verify?.env?.NODE_AUTH_TOKEN).toBeUndefined();
+  it("publishes with npm trusted publishing (OIDC), no long-lived token and no verify", () => {
+    expect(steps().find((s) => s.with?.command === "verify")).toBeUndefined();
     const text = readFileSync(join(root, ".github/workflows/launchset-release.yml"), "utf8");
     expect(text).not.toContain("NPM_TOKEN");
     expect(text).toMatch(/\n {6}id-token: write\n/);
+    expect(publishStep()?.env?.NODE_AUTH_TOKEN).toBeUndefined();
   });
 
-  it("builds, then publishes with the dist-tag unless already published", () => {
+  it("builds after stamp, then publishes", () => {
     const list = steps();
     const build = list.findIndex((s) => s.run === "pnpm build");
-    const publish = list.findIndex((s) => s.run?.startsWith("npm publish"));
-    expect(build).toBeGreaterThan(list.findIndex((s) => s.id === "verify"));
+    const publish = list.indexOf(publishStep() as Step);
+    expect(build).toBeGreaterThan(list.findIndex((s) => s.id === "stamp"));
     expect(publish).toBeGreaterThan(build);
     expect(list[build]?.if).toBe(publishGuard);
     expect(list[publish]?.if).toBe(publishGuard);
-    expect(list[publish]?.run).toBe("npm publish --tag ${{ steps.stamp.outputs.dist-tag }}");
-    expect(list[publish]?.env?.NODE_AUTH_TOKEN).toBeUndefined();
     // The package stays private.
     expect(list[publish]?.run).not.toContain("--access");
+    // `mark` comes after the publish.
+    expect(list.findIndex((s) => s.with?.command === "mark")).toBeGreaterThan(publish);
   });
+
+  publishesIdempotently(publishStep);
 
   it("sets up the npm registry after the install, so pnpm never sends the placeholder token", () => {
     const list = steps();
@@ -270,14 +334,19 @@ describe("preview workflow", () => {
     expect(on.workflow_dispatch?.inputs).toHaveProperty("targets");
   });
 
-  it("publishes to npm only on the prerelease channel, under the preid dist-tag", () => {
+  it("publishes to npm only on the prerelease channel, without verify", () => {
     const steps = jobOf("launchset-preview.yml", "build").steps;
-    const guard =
-      "matrix.target == 'npm' && steps.stamp.outputs.channel == 'prerelease' && steps.verify.outputs.already-published != 'true'";
-    const publish = steps.find((s) => s.run?.startsWith("npm publish"));
+    const guard = "matrix.target == 'npm' && steps.stamp.outputs.channel == 'prerelease'";
+    const publish = steps.find((s) => s.name === "Publish npm");
     expect(publish?.if).toBe(guard);
-    expect(publish?.run).toBe("npm publish --tag ${{ steps.stamp.outputs.dist-tag }}");
     expect(steps.find((s) => s.run === "pnpm build")?.if).toBe(guard);
+    expect(steps.find((s) => s.with?.command === "verify")).toBeUndefined();
+  });
+
+  describe("its publish step", () => {
+    publishesIdempotently(() =>
+      jobOf("launchset-preview.yml", "build").steps.find((s) => s.name === "Publish npm"),
+    );
   });
 
   it("never cancels a prerelease build", () => {
