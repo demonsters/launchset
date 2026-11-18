@@ -74,11 +74,13 @@ describe("PR check (9.2)", () => {
     expect(result.comment).toContain("bump: patch");
     expect(result.comment).toContain("launchset docs");
     // The link points at a page that exists in this repo.
+    // The link points at a docs page that exists (docs/src/content/docs/<slug>.md).
     const link = result.comment.match(
-      /https:\/\/github\.com\/demonsters\/launchset\/blob\/main\/(\S+?\.md)/,
+      /https:\/\/demonsters\.github\.io\/launchset\/([\w/-]+?)\/?\)/,
     );
     expect(link?.[1]).toBeDefined();
-    expect(existsSync(join(import.meta.dirname, "../..", link?.[1] ?? "missing"))).toBe(true);
+    const page = join(import.meta.dirname, "../../docs/src/content/docs", `${link?.[1]}.md`);
+    expect(existsSync(page)).toBe(true);
   });
 
   it("passes for bot authors (case-insensitive)", () => {

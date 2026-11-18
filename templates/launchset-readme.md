@@ -1,6 +1,6 @@
 # .launchset
 
-This folder holds **changesets** for [launchset](https://github.com/demonsters/launchset), the tool that releases this repo. One version drives every build target (Docker images, Android, iOS, web), and they're released together.
+This folder holds **changesets** for [launchset](https://demonsters.github.io/launchset/), the tool that releases this repo. One version drives every build target (Docker images, Android, iOS, web), and they're released together.
 
 Every pull request adds a changeset: a small markdown file that says how big the change is and what to write in the changelog.
 
@@ -20,4 +20,4 @@ Create one with `npx @demonsters/launchset add`, or write the file by hand.
 
 launchset collects the changesets into a release PR (`Release vX.Y.Z`). Merging that PR releases every target. Don't edit version numbers, build numbers or `CHANGELOG.md` by hand, and don't create `v*` or `launchset/*` tags (or whatever `tags` in `launchset.config.*` sets).
 
-See the launchset docs for more: https://github.com/demonsters/launchset/tree/main/docs
+See the launchset docs for more: https://demonsters.github.io/launchset/

@@ -140,6 +140,25 @@ export class GitError extends Error {
   }
 }
 
+/**
+ * A `--force-with-lease` push was rejected: the remote branch moved since it was read (another
+ * run pushed it first).
+ */
+export class LeaseError extends GitError {
+  override name = "LeaseError";
+  readonly branch: string;
+  constructor(branch: string, command: string, stderr: string, exitCode: number | undefined) {
+    super(
+      `The remote branch ${branch} changed while it was being rebuilt (\`${command}\` was rejected).`,
+      command,
+      stderr,
+      exitCode,
+      "Another run pushed it first; that run's version wins.",
+    );
+    this.branch = branch;
+  }
+}
+
 /** `pushTag` was rejected because the remote already has that tag (spec 9.9 reservation). */
 export class TagExistsError extends GitError {
   override name = "TagExistsError";
@@ -919,14 +938,35 @@ export class Git {
   }
 
   /** Push local branch `name` to the remote branch of the same name. */
-  async pushBranch(name: string, options: { force?: boolean } = {}): Promise<PushResult> {
+  /**
+   * Push the local branch `name`. `force` overwrites; `expect` (a sha, or `null` for "the
+   * remote has no such branch") makes it a `--force-with-lease` push that throws `LeaseError`
+   * when the remote branch is no longer at that commit.
+   */
+  async pushBranch(
+    name: string,
+    options: { force?: boolean; expect?: string | null } = {},
+  ): Promise<PushResult> {
     assertRefName("branch", name);
     const ref = `refs/heads/${name}`;
     const args = ["push", "--porcelain"];
-    if (options.force) args.push("--force");
+    if (options.expect !== undefined) {
+      if (options.expect !== null) assertRefName("commit", options.expect);
+      args.push(`--force-with-lease=${ref}:${options.expect ?? ""}`);
+    } else if (options.force) {
+      args.push("--force");
+    }
     args.push(this.remote, `${ref}:${ref}`);
     const result = await this.exec(args, { auth: true });
-    if (result.code !== 0) throw this.error(args, result);
+    if (result.code !== 0) {
+      if (
+        options.expect !== undefined &&
+        /stale info|fetch first/.test(`${result.stdout}\n${result.stderr}`)
+      ) {
+        throw new LeaseError(name, ["git", ...args].join(" "), result.stderr, result.code);
+      }
+      throw this.error(args, result);
+    }
     return this.#pushStatus(result.stdout, ref) ?? "updated";
   }
 

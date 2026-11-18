@@ -5,7 +5,13 @@
  */
 
 import { errorMessage, LaunchsetError } from "../core/errors.ts";
-import { type Git, type PushResult, TagCleanupError, TagExistsError } from "../git/index.ts";
+import {
+  type Git,
+  LeaseError,
+  type PushResult,
+  TagCleanupError,
+  TagExistsError,
+} from "../git/index.ts";
 import type { GitHub, PullRequest } from "../github/index.ts";
 import type { FlowContext } from "./context.ts";
 
@@ -96,6 +102,14 @@ export async function requireCleanWorktree(git: Git, what: string): Promise<void
   );
 }
 
+export interface RebuildResult {
+  commit: string;
+  /** The branch was pushed (false when the remote already had the same content). */
+  pushed: boolean;
+  /** Another run pushed the branch while this one was building it: leave it to that run. */
+  superseded: boolean;
+}
+
 export interface RebuildBranchOptions {
   /** The branch to (re)build, e.g. `launchset/release/main`. */
   branch: string;
@@ -117,7 +131,7 @@ export interface RebuildBranchOptions {
 export async function rebuildBranch(
   context: FlowContext,
   options: RebuildBranchOptions,
-): Promise<{ commit: string; pushed: boolean }> {
+): Promise<RebuildResult> {
   const { git } = context;
   await requireCleanWorktree(git, options.what);
   const original = await currentCheckout(git);
@@ -127,10 +141,21 @@ export async function rebuildBranch(
     const commit = await git.commitAll(options.message, paths);
     const remote = await remoteBranchHead(context, options.branch);
     if (remote !== undefined && (await sameCommitContent(context, remote, commit))) {
-      return { commit, pushed: false };
+      return { commit, pushed: false, superseded: false };
     }
-    await git.pushBranch(options.branch, { force: true });
-    return { commit, pushed: true };
+    if (!(await git.hasRemote())) {
+      await git.pushBranch(options.branch, { force: true });
+      return { commit, pushed: true, superseded: false };
+    }
+    // Overwrite only the commit read above: when another run pushed the branch meanwhile,
+    // that run is newer, and its version wins.
+    try {
+      await git.pushBranch(options.branch, { expect: remote ?? null });
+    } catch (error) {
+      if (error instanceof LeaseError) return { commit, pushed: false, superseded: true };
+      throw error;
+    }
+    return { commit, pushed: true, superseded: false };
   } finally {
     await restoreCheckout(git, original);
   }

@@ -29,7 +29,7 @@ Mark the **Changeset check** job as required in your branch protection, and ever
 
 ## The release workflow
 
-`launchset-release.yml` has three jobs: `launchset` (decides), `build` (one job per target) and `finalize`. Concurrency is `launchset-release-<ref>` with `cancel-in-progress: false`, so runs on one branch don't overlap. GitHub keeps only one *waiting* run per group and cancels an older waiting one when a newer one arrives, so a run for the release commit can be dropped when pushes come in fast. See [Retrying](#retrying).
+`launchset-release.yml` has three jobs: `launchset` (decides), `build` (one job per target) and `finalize`. Concurrency is `launchset-release-<ref>-<sha>` with `cancel-in-progress: false`: every push gets its own run and none is cancelled, so the run for the release commit always builds. When pushes overlap, only the run for the branch's newest commit updates or closes the release PR (older runs say so in their summary), and the release branch is pushed with a lease, so overlapping runs can't overwrite each other.
 
 ### Job `launchset`: what mode are we in?
 
@@ -104,7 +104,6 @@ Pushes after the release commit **do not** retry an unfinished release. When a t
 - Start **Launchset release** by hand (`workflow_dispatch`) without inputs. launchset finds the release commit again and builds the targets that have no marker. Or
 - Release a new version. It supersedes the unfinished one.
 
-The same applies when the run for the release commit was dropped because newer pushes arrived while it waited: nothing was built, and later pushes warn `<version> is not released (missing ...)`. Start the workflow by hand.
 
 ## Try it on your machine
 

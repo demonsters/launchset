@@ -1,6 +1,6 @@
 ## Releases (launchset)
 
-This repo is released with [launchset](https://github.com/demonsters/launchset): one version for every target, driven by changeset files in `.launchset/`. The release PR (`Release vX.Y.Z`) collects them. Merging it is the release.
+This repo is released with [launchset](https://demonsters.github.io/launchset/): one version for every target, driven by changeset files in `.launchset/`. The release PR (`Release vX.Y.Z`) collects them. Merging it is the release.
 
 - **Every PR needs a changeset.** Create it with `npx @demonsters/launchset add --bump <major|minor|patch|none> --message "<summary>"`. Use `--empty` (`bump: none`) for docs, CI or test-only changes. If the CLI isn't available, write the file by hand in `.launchset/<three-words>.md`:
 

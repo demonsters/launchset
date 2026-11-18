@@ -202,9 +202,9 @@ describe("launchset-release.yml", () => {
     }
   });
 
-  it("serializes runs per ref without cancelling", () => {
+  it("serializes runs per pushed commit, never cancelling one", () => {
     expect(workflow.concurrency).toEqual({
-      group: "launchset-release-${{ github.ref }}",
+      group: "launchset-release-${{ github.ref }}-${{ github.sha }}",
       "cancel-in-progress": false,
     });
   });

@@ -137,7 +137,7 @@ async function backport(
   const current = (await git.showFile(base, repoPath)) ?? null;
   const updated = insertSectionSorted(current, action.section, action.version);
   if (current !== null && updated === current) return null;
-  await rebuildBranch(context, {
+  const rebuilt = await rebuildBranch(context, {
     branch: action.branch,
     from: base,
     message: action.commitMessage,
@@ -147,6 +147,8 @@ async function backport(
       return [repoPath];
     },
   });
+  // Another finalize run pushed the backport branch meanwhile: its PR update wins.
+  if (rebuilt.superseded) return null;
   return upsertPr(github, {
     head: action.branch,
     base: action.base,

@@ -70,7 +70,7 @@ The job only runs in `publish` and `ship` mode, and when the `matrix` isn't `[]`
 
 ## A release is unfinished and a push didn't retry it
 
-By design, pushes after the release commit don't retry. A run for the release commit can also be dropped when pushes arrive while it waits (GitHub keeps one waiting run per concurrency group), so nothing was built. Re-run the failed job, start **Launchset release** by hand without inputs, or release a new version. See [Release flow](/guides/release-flow/#retrying) and [Partial releases](/guides/partial-releases/).
+By design, pushes after the release commit don't retry. Re-run the failed job, start **Launchset release** by hand without inputs, or release a new version. See [Release flow](/guides/release-flow/#retrying) and [Partial releases](/guides/partial-releases/).
 
 ## `Google Play ... already has versionCode ... Raise buildNumber.offset`
 

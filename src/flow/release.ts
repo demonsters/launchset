@@ -27,7 +27,7 @@ import {
   releaseEventFor,
   releaseInputFor,
 } from "./gather.ts";
-import { rebuildBranch, upsertPr } from "./git-ops.ts";
+import { rebuildBranch, remoteBranchHead, upsertPr } from "./git-ops.ts";
 import { appendAlerts, appendParagraphs, noteLines, plain } from "./result.ts";
 
 export interface ReleaseOptions {
@@ -47,6 +47,11 @@ export interface ReleaseOptions {
   dryRun?: boolean;
 }
 
+interface ReleasePrSkipped {
+  skipped: true;
+  reason: string;
+}
+
 export interface ReleasePrResult {
   number: number;
   url: string;
@@ -63,6 +68,8 @@ export interface ReleaseData {
   notices: string[];
   warnings: string[];
   releasePr?: ReleasePrResult;
+  /** Why this run left the release PR alone (a newer run handles it). */
+  releasePrSkipped?: string;
   /** The open release PR that was closed because nothing is pending. */
   closedPr?: { number: number; url: string };
 }
@@ -108,20 +115,38 @@ export async function release(
     if (plan.buildNumber !== null) lines.push(`build-number: ${plan.buildNumber}`);
   }
 
-  if (!options.dryRun && plan.mode === "release-pr") {
+  // Every push gets its own run (no run is ever cancelled), so runs for older commits can
+  // still be going when the base branch has moved on: only the run for the branch's current
+  // tip touches the release PR.
+  const movedOn =
+    !options.dryRun && (plan.mode === "release-pr" || plan.mode === "none")
+      ? await baseMovedOn(context, plan.branch, state.headSha)
+      : undefined;
+  if (movedOn) {
+    const reason = `${plan.branch} has moved on to ${movedOn.slice(0, 7)}: the run for that commit updates the release PR.`;
+    if (plan.mode === "release-pr") data.releasePrSkipped = reason;
+    summary = appendParagraphs(summary, [reason]);
+    lines.push(`release PR left alone: ${reason}`);
+  } else if (!options.dryRun && plan.mode === "release-pr") {
     const pr = await openReleasePr(context, state, decision);
-    data.releasePr = pr;
-    outputs["pr-number"] = String(pr.number);
-    summary = appendParagraphs(summary, [
-      `Release PR [#${pr.number}](${pr.url}) ${pr.action}${pr.pushed ? "" : " (branch already up to date)"}.`,
-    ]);
-    lines.push(`release PR #${pr.number} ${pr.action}: ${pr.url}`);
+    if ("skipped" in pr) {
+      data.releasePrSkipped = pr.reason;
+      summary = appendParagraphs(summary, [pr.reason]);
+      lines.push(`release PR left alone: ${pr.reason}`);
+    } else {
+      data.releasePr = pr;
+      outputs["pr-number"] = String(pr.number);
+      summary = appendParagraphs(summary, [
+        `Release PR [#${pr.number}](${pr.url}) ${pr.action}${pr.pushed ? "" : " (branch already up to date)"}.`,
+      ]);
+      lines.push(`release PR #${pr.number} ${pr.action}: ${pr.url}`);
+    }
   }
   const nothingPending =
     releaseBump(state.changesets) === null &&
     state.botPrs.length === 0 &&
     state.invalidChangesets.length === 0;
-  if (!options.dryRun && plan.mode === "none" && nothingPending && context.github) {
+  if (!options.dryRun && !movedOn && plan.mode === "none" && nothingPending && context.github) {
     const branch = releasePrBranch(plan.branch);
     const open = await context.github.findOpenPrByHead(branch);
     if (open) {
@@ -138,6 +163,20 @@ export async function release(
 }
 
 /**
+ * The base branch's current tip on the remote when it's no longer `headSha` (a newer push
+ * exists), else undefined. Without a remote there's nothing to compare: undefined.
+ */
+async function baseMovedOn(
+  context: FlowContext,
+  branch: string,
+  headSha: string,
+): Promise<string | undefined> {
+  if (!(await context.git.hasRemote())) return undefined;
+  const tip = await remoteBranchHead(context, branch);
+  return tip !== undefined && tip !== headSha ? tip : undefined;
+}
+
+/**
  * Rebuild `launchset/release/<base>` from HEAD (the base branch), commit the release
  * changes as launchset, force-push it (skipped when the remote branch has the same content
  * on the same base) and create or update the PR. The original checkout is restored.
@@ -146,10 +185,10 @@ async function openReleasePr(
   context: FlowContext,
   state: ReleaseState,
   decision: ReleaseDecision,
-): Promise<ReleasePrResult> {
+): Promise<ReleasePrResult | ReleasePrSkipped> {
   const github = requireGitHub(context, "The release PR");
   const content = await releasePrContent(context, state, decision);
-  const { commit, pushed } = await rebuildBranch(context, {
+  const { commit, pushed, superseded } = await rebuildBranch(context, {
     branch: content.branch,
     from: state.headSha,
     message: content.commitMessage,
@@ -160,6 +199,12 @@ async function openReleasePr(
       return changes.map((c) => c.path);
     },
   });
+  if (superseded) {
+    return {
+      skipped: true,
+      reason: `${content.branch} was pushed by another run while this one built it: that run updates the release PR.`,
+    };
+  }
   const { pr, action } = await upsertPr(github, {
     head: content.branch,
     base: content.base,

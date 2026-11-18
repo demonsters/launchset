@@ -69,7 +69,7 @@ Commands:
   help [command]                  display help for command
 
 Every command works without prompts when stdin is not a terminal. Add --json for machine-readable output.
-Docs: https://github.com/demonsters/launchset
+Docs: https://demonsters.github.io/launchset/
 ```
 
 Rules that hold for every command:

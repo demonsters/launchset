@@ -10,6 +10,7 @@ import {
   Git,
   GitError,
   LAUNCHSET_IDENTITY,
+  LeaseError,
   normalizeServerUrl,
   parseGitHubRepo,
   TagExistsError,
@@ -268,6 +269,33 @@ describe("tags", () => {
 
     await expect(git.createTag("-bad", head)).rejects.toThrow(/Invalid tag name/);
     await expect(git.createTag("has space", head)).rejects.toThrow(/Invalid tag name/);
+  });
+
+  it("pushes a branch with a lease, and throws LeaseError when another clone moved it", async () => {
+    const { remote, repo } = repoWithRemote();
+    const git = new Git({ cwd: repo.dir });
+    repo.git("checkout", "--quiet", "-b", "launchset/release/main");
+    const ours = repo.commit("our rebuild");
+    // The branch doesn't exist yet: expect null creates it.
+    expect(await git.pushBranch("launchset/release/main", { expect: null })).toBe("created");
+    // Another run rebuilds and pushes it.
+    const other = cloneRepo(remote);
+    other.git(
+      "checkout",
+      "--quiet",
+      "-b",
+      "launchset/release/main",
+      "origin/launchset/release/main",
+    );
+    other.commit("newer run's rebuild");
+    other.git("push", "--quiet", "--force", "origin", "launchset/release/main");
+    // We still expect our old commit there: the lease fails, the newer push stays.
+    repo.commit("stale rebuild");
+    const error = await git
+      .pushBranch("launchset/release/main", { expect: ours })
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(LeaseError);
+    expect(sh(remote, "rev-parse", "refs/heads/launchset/release/main")).toBe(other.head());
   });
 
   it("throws TagExistsError when another clone pushed the same tag first", async () => {

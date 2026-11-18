@@ -8,6 +8,7 @@ import { isMaintenanceBranch } from "./branches.ts";
 import { isChangesetPath } from "./changesets.ts";
 import type { ResolvedConfig } from "./config/schema.ts";
 import { LaunchsetError } from "./errors.ts";
+import { docsPage } from "./links.ts";
 import {
   type ChangesetFile,
   type CommitInfo,
@@ -32,8 +33,7 @@ import {
 } from "./versions.ts";
 
 /** Docs page linked from the sticky comment when a PR has no changeset. */
-export const DEFAULT_DOCS_URL =
-  "https://github.com/demonsters/launchset/blob/main/docs/src/content/docs/changesets.md";
+export const DEFAULT_DOCS_URL = docsPage("changesets");
 
 /** Sticky comment id (`<!-- launchset:check -->`, see `github.upsertStickyComment`). */
 export const CHECK_COMMENT_ID = "check";

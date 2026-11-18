@@ -30,7 +30,7 @@ describe("action/README.md", () => {
   it("mentions every command, and the docs link", async () => {
     const readme = await read("README.md");
     for (const command of COMMANDS) expect(readme, command).toContain(`\`${command}\``);
-    expect(readme).toContain("https://github.com/demonsters/launchset/tree/main/docs");
+    expect(readme).toContain("https://demonsters.github.io/launchset/");
   });
 
   it("the generator escapes markdown and needs its markers", () => {

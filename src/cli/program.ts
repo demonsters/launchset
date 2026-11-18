@@ -6,6 +6,7 @@
 import { readFileSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { Command, CommanderError, InvalidArgumentError, Option } from "commander";
+import { DOCS_URL } from "../core/links.ts";
 import { BUMPS, type Bump, type Channel } from "../core/types.ts";
 import {
   add,
@@ -149,7 +150,7 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
   withGlobals(program, { json: true, yes: true });
   program.addHelpText(
     "after",
-    "\nEvery command works without prompts when stdin is not a terminal. Add --json for machine-readable output.\nDocs: https://github.com/demonsters/launchset\n",
+    `\nEvery command works without prompts when stdin is not a terminal. Add --json for machine-readable output.\nDocs: ${DOCS_URL}\n`,
   );
 
   /** Register a command whose action runs `handler`, turning failures into exit codes. */

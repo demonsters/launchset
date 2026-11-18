@@ -49,6 +49,25 @@ async function mergeReleasePr(project: Project, how: "merge" | "squash"): Promis
 }
 
 describe("release: release-pr mode", () => {
+  it("leaves the release PR to the newest run when the base branch moved on", async () => {
+    const { project } = withChangeset();
+    const { repo } = project;
+    const github = new FakeGitHub(project.remote);
+    const older = repo.head();
+    // A newer push lands on main while the run for `older` is still going.
+    project.push("Newer work", { "other.txt": "x\n" });
+    repo.git("checkout", "--quiet", "--detach", older);
+    const result = await release(
+      await contextFor(repo, { env: { GITHUB_REF: "refs/heads/main", GITHUB_SHA: older } }),
+    );
+    expect(result.ok).toBe(true);
+    expect(result.outputs.mode).toBe("release-pr");
+    expect(result.data.releasePr).toBeUndefined();
+    expect(result.data.releasePrSkipped).toContain("has moved on");
+    expect(github.openPrs()).toHaveLength(0);
+    expect(repo.git("ls-remote", "--heads", "origin", BRANCH)).toBe("");
+  });
+
   it("builds the release branch and PR, updates it, and closes it when nothing is pending", async () => {
     const { project, changesetSha } = withChangeset();
     const { repo } = project;

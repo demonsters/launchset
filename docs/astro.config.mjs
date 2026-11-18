@@ -2,9 +2,34 @@
 import starlight from "@astrojs/starlight";
 import { defineConfig } from "astro/config";
 
-// Hosting isn't decided yet, so there is no `site` option. Set it (and `base`, if the site
-// lives under a path) when the site gets a home.
+// Hosted on GitHub Pages (project site): https://demonsters.github.io/launchset/
+const site = "https://demonsters.github.io";
+const base = "/launchset";
+
+/**
+ * The pages link to each other with root-relative links (`/guides/previews/`). On a project
+ * site they live under `base`, so prefix those links at build time.
+ */
+function prefixBase() {
+  const walk = (node) => {
+    if ((node.type === "link" || node.type === "definition") && typeof node.url === "string") {
+      if (
+        node.url.startsWith("/") &&
+        !node.url.startsWith("//") &&
+        !node.url.startsWith(`${base}/`)
+      ) {
+        node.url = `${base}${node.url}`;
+      }
+    }
+    for (const child of node.children ?? []) walk(child);
+  };
+  return (tree) => walk(tree);
+}
+
 export default defineConfig({
+  site,
+  base,
+  markdown: { remarkPlugins: [prefixBase] },
   integrations: [
     starlight({
       title: "launchset",

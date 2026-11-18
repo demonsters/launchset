@@ -59,6 +59,6 @@ For simple-git-hooks run `npx simple-git-hooks` afterwards, to install the updat
 
 ## Staying safe without PRs
 
-- **Fast pushes can drop a release run.** The release workflow has `cancel-in-progress: false`, but GitHub keeps only **one pending run** per concurrency group and cancels an older pending one when a newer one arrives. If you merge the release PR and push again while an earlier run is still going, the run for the release commit can be dropped. The later push then shows a warning: `<version> is not released (missing ...); pushes don't retry it`. Nothing was built. Start **Launchset release** by hand (`workflow_dispatch` without inputs): it finds the release commit again and builds the targets that have no marker. Avoid pushing right after merging a release PR until its run has started.
+- **Fast pushes are fine.** Every push gets its own release run, and none is ever cancelled, so the run for the release commit always builds. Runs for older commits leave the release PR to the run for the newest commit.
 - Don't push `package.json` version changes by hand. A push that changes the root version is read as a release commit, and the build jobs run for it. Version numbers are written by the release PR only.
 - Require the release PR to be reviewed before it is merged if your team wants a gate. It is a normal PR.

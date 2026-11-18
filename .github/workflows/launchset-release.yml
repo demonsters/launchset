@@ -59,8 +59,12 @@ on:
         type: boolean
         default: false
 
+# One group per pushed commit, so GitHub never cancels a waiting run (it keeps only one
+# waiting run per group): a release-commit push always gets its publish run. Runs for older
+# commits leave the release PR to the run for the newest one, and the release branch is
+# pushed with a lease, so concurrent runs can't overwrite each other.
 concurrency:
-  group: launchset-release-${{ github.ref }}
+  group: launchset-release-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: false
 
 permissions:

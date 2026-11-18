@@ -2,7 +2,7 @@
 
 Changesets-style releases for lock-step monorepos: one version drives many targets (Docker, Android, iOS, web). The action decides what to release, writes version and build numbers into your files and records what shipped as git tags. It does not build anything: your own workflow steps do that.
 
-Documentation: <https://github.com/demonsters/launchset/tree/main/docs>
+Documentation: <https://demonsters.github.io/launchset/>
 
 This repository only holds the compiled action (`action.yml` and `dist/index.js`). It is published automatically with every launchset release. Don't send changes here.
 
