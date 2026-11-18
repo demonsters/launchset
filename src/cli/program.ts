@@ -604,13 +604,14 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
       cmd.option("--base <ref>", "compare against this ref (default: the PR's base commit)");
       cmd.option("--push", "pre-push hook mode: warn when a changeset is missing, never fail");
       cmd.option("--no-comment", "don't post the sticky PR comment");
-      cmd.option("--no-fetch", "don't fetch tags first");
+      cmd.option("--no-fetch", "don't fetch tags first (--push never fetches)");
       return examples(cmd, "launchset check --base origin/main", "launchset check --push");
     },
     async (opts) => {
       const context = await makeContext(io, opts);
       const common = {
-        fetch: opts.fetch !== false,
+        // `--push` (a pre-push hook) stays offline unless asked; the PR check fetches.
+        fetch: opts.push ? false : opts.fetch !== false,
         comment: opts.comment !== false,
         ...(opts.base ? { base: opts.base } : {}),
       };

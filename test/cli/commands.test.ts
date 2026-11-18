@@ -648,6 +648,14 @@ describe("verify, mark, finalize, ship, hotfix, check", () => {
     const r = await cli(["check", "--push"], { cwd: f.dir });
     expect(r.code).toBe(0);
   });
+
+  it("check --push stays offline (a pre-push hook must not fetch)", async () => {
+    const f = fixtureRepo();
+    f.repo.git("remote", "set-url", "origin", join(tempDir("gone"), "missing.git"));
+    const r = await cli(["check", "--push"], { cwd: f.dir });
+    expect(r.code).toBe(0);
+    expect(r.stderr).not.toMatch(/fetch/i);
+  });
 });
 
 describe("init", () => {
