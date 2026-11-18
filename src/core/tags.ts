@@ -6,6 +6,7 @@
 import semver from "semver";
 import type { ResolvedConfig } from "./config/schema.ts";
 import { LaunchsetError } from "./errors.ts";
+import { escapeRegExp } from "./regex.ts";
 import { isPlainVersion, type VersionLine, versionParts } from "./versions.ts";
 
 export type TagTemplates = ResolvedConfig["tags"];
@@ -30,10 +31,6 @@ export const markerTag = (tags: TagTemplates, target: string, version: string): 
   renderTag(tags.marker, { target, version });
 export const partialTag = (tags: TagTemplates, version: string): string =>
   renderTag(tags.partial, { version });
-
-function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
-}
 
 /** Semver with optional prerelease and build metadata; validated with `semver` afterwards. */
 const VERSION_SOURCE = "\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?";

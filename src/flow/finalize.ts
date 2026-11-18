@@ -17,6 +17,7 @@ import {
 } from "../core/finalize.ts";
 import { partialTag, releaseTag } from "../core/tags.ts";
 import type { Plan } from "../core/types.ts";
+import { mapLimit } from "../github/concurrency.ts";
 import type { GitHub } from "../github/index.ts";
 import { type FlowContext, type FlowResult, requireGitHub } from "./context.ts";
 import {
@@ -63,9 +64,11 @@ export async function existingReleases(
   github: GitHub,
   tags: Iterable<string>,
 ): Promise<Map<string, ExistingRelease>> {
+  const unique = [...new Set(tags)];
+  const found = await mapLimit(unique, 4, (tag) => github.getReleaseByTag(tag));
   const releases = new Map<string, ExistingRelease>();
-  for (const tag of new Set(tags)) {
-    const release = await github.getReleaseByTag(tag);
+  unique.forEach((tag, index) => {
+    const release = found[index];
     if (release) {
       releases.set(tag, {
         id: release.id,
@@ -74,7 +77,7 @@ export async function existingReleases(
         prerelease: release.prerelease,
       });
     }
-  }
+  });
   return releases;
 }
 

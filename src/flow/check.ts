@@ -231,7 +231,11 @@ export async function check(
     fork: options.pr?.fork ?? (payload ? isForkPr(payload) : false),
   };
   const changedFiles = await changedFilesBetween(context, base, headSha);
-  const changesets = await readChangesetFiles(context, { ref: headSha });
+  // Pending changesets, the version and the consistency check all describe the checked-out
+  // commit: in Actions that's the merge commit, i.e. what the base branch will contain after
+  // the merge (a changeset the base already released is gone there). Which changesets the PR
+  // itself adds comes from the diff above.
+  const changesets = await readChangesetFiles(context, { ref: "HEAD" });
   const result = evaluateCheck({
     config,
     pr,

@@ -28,6 +28,13 @@ on:
           this branch.
         required: false
         type: string
+      force:
+        description: >-
+          Ship the target even if it already shipped a higher version (stores usually reject
+          lower versions).
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   group: launchset-release-${{ github.ref }}

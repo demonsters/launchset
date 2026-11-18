@@ -194,10 +194,10 @@ describe("launchset-release.yml", () => {
   it("triggers on pushes to the base and maintenance branches and on workflow_dispatch", () => {
     expect(workflow.on.push?.branches).toEqual(["main", "release/*.x"]);
     const inputs = workflow.on.workflow_dispatch?.inputs ?? {};
-    expect(Object.keys(inputs)).toEqual(["target", "version"]);
-    for (const input of Object.values(inputs)) {
+    expect(Object.keys(inputs)).toEqual(["target", "version", "force"]);
+    for (const [name, input] of Object.entries(inputs)) {
       expect(input.required).toBe(false);
-      expect(input.type).toBe("string");
+      expect(input.type).toBe(name === "force" ? "boolean" : "string");
       expect(input.description).toBeTruthy();
     }
   });

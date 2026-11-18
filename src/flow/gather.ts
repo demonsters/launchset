@@ -27,7 +27,7 @@ import type { ReleaseEvent, ReleaseInput } from "../core/release.ts";
 import type { ChangesetOrigin } from "../core/release-pr.ts";
 import { releaseTag } from "../core/tags.ts";
 import type { Changeset } from "../core/types.ts";
-import type { Git, TagRef } from "../git/index.ts";
+import type { ChangedFile, Git, TagRef } from "../git/index.ts";
 import {
   findReleaseCommit,
   headIsReleaseCommit,
@@ -379,63 +379,13 @@ export async function unfinishedVersionsBefore(
   return result;
 }
 
-/** A changed file with git's rename similarity (`R100` → 100), for the PR check. */
-export interface ChangedFileWithSimilarity {
-  status: "A" | "M" | "D" | "R";
-  /** Repo-relative (new) path. */
-  path: string;
-  oldPath?: string;
-  similarity?: number;
-}
-
-/**
- * Files changed on `head` since it diverged from `base` (`git diff base...head`, renames
- * detected), with the similarity score of each rename. Paths are repo-relative.
- */
-export async function changedFilesBetween(
+/** Files changed between the merge base of `base` and `head`, with rename similarity. */
+export function changedFilesBetween(
   context: FlowContext,
   base: string,
   head: string,
-): Promise<ChangedFileWithSimilarity[]> {
-  const out = await context.git.run(
-    [
-      "diff",
-      "--name-status",
-      "-z",
-      "--find-renames",
-      "--no-ext-diff",
-      "--no-relative",
-      `${base}...${head}`,
-      "--",
-    ],
-    { raw: true },
-  );
-  const parts = out.split("\0");
-  const files: ChangedFileWithSimilarity[] = [];
-  for (let i = 0; i < parts.length; ) {
-    const code = parts[i++];
-    if (!code) continue;
-    const letter = code[0];
-    if (letter === "R" || letter === "C") {
-      const oldPath = parts[i++] ?? "";
-      const path = parts[i++] ?? "";
-      if (letter === "C") {
-        files.push({ status: "A", path });
-        continue;
-      }
-      const score = Number(code.slice(1));
-      files.push({
-        status: "R",
-        path,
-        oldPath,
-        ...(Number.isInteger(score) && code.length > 1 ? { similarity: score } : {}),
-      });
-    } else {
-      const path = parts[i++] ?? "";
-      files.push({ status: letter === "A" ? "A" : letter === "D" ? "D" : "M", path });
-    }
-  }
-  return files;
+): Promise<ChangedFile[]> {
+  return context.git.changedFiles(base, head);
 }
 
 // ---------------------------------------------------------------------------
@@ -530,7 +480,11 @@ export async function gatherReleaseState(
   const isRelease =
     (tagged === undefined || tagged === repo.headSha) &&
     (await headIsReleaseCommit(context.git, reader));
-  const releaseCommit = tagged ?? (await findReleaseCommitFor(context, repo.tags, repo.version));
+  const releaseCommit =
+    tagged ??
+    (await findReleaseCommit(context.git, "HEAD", reader, {
+      paths: [await versionFilePath(context)],
+    }));
   const wantBots = options.botPrs ?? context.github !== undefined;
   const since = releaseCommit ?? repo.lastReleaseTag ?? undefined;
   const botPrs = wantBots ? await botPrsSince(context, repo.branch, since) : [];

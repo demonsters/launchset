@@ -13,7 +13,7 @@ import type { Plan, TargetPlan } from "../core/types.ts";
 import { marketingVersion } from "../core/versions.ts";
 import { type FlowContext, type FlowResult, requireGitHub } from "./context.ts";
 import { type ExecutedAction, executeFinalizeActions, existingReleases } from "./finalize.ts";
-import { readTagSnapshot, syncTags, tryResolveBranch } from "./gather.ts";
+import { changelogFilePath, readTagSnapshot, syncTags, tryResolveBranch } from "./gather.ts";
 import { checkHeadAtPlan, ensureTag, type TagResult } from "./git-ops.ts";
 import { appendAlerts, plain, requireReleasePlan, resolvePlan } from "./result.ts";
 
@@ -129,7 +129,7 @@ export async function mark(
       targets: { [target.name]: targetPlan },
       createdAt: isoTime(context.now),
     };
-    const changelogPath = await context.git.toRepoPath(config.changelog.file);
+    const changelogPath = await changelogFilePath(context);
     const finalized = planFinalize({
       config,
       plan,

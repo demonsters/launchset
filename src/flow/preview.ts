@@ -39,6 +39,7 @@ import {
   type TargetResult,
   type TargetResultStatus,
 } from "../core/preview.ts";
+import { escapeRegExp } from "../core/regex.ts";
 import type { Plan } from "../core/types.ts";
 import { GitError, TagExistsError } from "../git/index.ts";
 import { createGitHub, type GitHub, type Job } from "../github/index.ts";
@@ -515,10 +516,6 @@ export function jobStatus(job: Job): TargetResultStatus {
     default:
       return "pending";
   }
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /**

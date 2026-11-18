@@ -19,7 +19,7 @@ import {
   manualTargetStatuses,
   type TagSnapshot,
 } from "./plan-common.ts";
-import { autoTargets } from "./tags.ts";
+import { autoTargets, releaseTag, type TagTemplates } from "./tags.ts";
 import type { Changeset, Plan } from "./types.ts";
 
 /** Prefix of every release PR branch (spec 9.2, 9.3). */
@@ -38,9 +38,9 @@ export function isReleasePrBranch(head: string): boolean {
   return head.startsWith(RELEASE_PR_BRANCH_PREFIX) && head.length > RELEASE_PR_BRANCH_PREFIX.length;
 }
 
-/** `Release v1.5.0`. */
-export function releasePrTitle(version: string): string {
-  return `Release v${version}`;
+/** `Release v1.5.0`: the release tag the PR will create (`tags.release`). */
+export function releasePrTitle(tags: TagTemplates, version: string): string {
+  return `Release ${releaseTag(tags, version)}`;
 }
 
 /** Where a changeset came from, for its changelog line (`changelog.github`, spec 12). */
@@ -148,7 +148,7 @@ export function buildReleasePr(input: ReleasePrInput): ReleasePrContent {
 
   const auto = autoTargets(config);
   const manual = manualTargetStatuses(config, input.tags.index);
-  const title = releasePrTitle(version);
+  const title = releasePrTitle(config.tags, version);
   const body = renderReleasePrBody({
     version,
     bump: plan.releasePr.bump,

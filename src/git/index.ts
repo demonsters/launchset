@@ -74,6 +74,8 @@ export interface ChangedFile {
   path: string;
   /** Old path, for renames. */
   oldPath?: string;
+  /** Rename similarity in percent (100 = identical content), for renames. */
+  similarity?: number;
 }
 
 export interface LogEntry {
@@ -544,7 +546,17 @@ export class Git {
       if (letter === "R" || letter === "C") {
         const oldPath = parts[i++] ?? "";
         const path = parts[i++] ?? "";
-        files.push(letter === "R" ? { status: "R", path, oldPath } : { status: "A", path });
+        if (letter === "C") {
+          files.push({ status: "A", path });
+          continue;
+        }
+        const score = Number(code.slice(1));
+        files.push({
+          status: "R",
+          path,
+          oldPath,
+          ...(code.length > 1 && Number.isInteger(score) ? { similarity: score } : {}),
+        });
       } else {
         const path = parts[i++] ?? "";
         const status: FileStatus = letter === "A" ? "A" : letter === "D" ? "D" : "M";

@@ -515,7 +515,7 @@ function planShip(
         "ship-backwards",
         `${targetName} already shipped ${highest}, which is higher than ${version}: shipping a lower version goes backwards (stores reject lower versions)`,
         {
-          hint: `Ship ${highest} or newer, or pass force to ship ${version} anyway.`,
+          hint: `Ship ${highest} or newer. To ship ${version} anyway: --force (CLI), or the force option when starting the release workflow by hand.`,
         },
       );
     }

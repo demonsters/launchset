@@ -451,6 +451,48 @@ describe("PR check diff range", () => {
     expect(result.ok).toBe(false);
     expect(result.data.result.failures.map((f) => f.code)).toEqual(["no-changeset"]);
   });
+
+  it("describes the merge result: changesets the base already released don't count", async () => {
+    const project = setupProject();
+    const { repo } = project;
+    project.push("Pending minor", {
+      ".launchset/big-dogs-run.md": changesetText("minor", "A feature."),
+    });
+    repo.checkout("-b", "feature");
+    const head = repo.commit("Fix with a changeset", {
+      ".launchset/small-cats-nap.md": changesetText("patch", "A fix."),
+    });
+    repo.git("push", "--quiet", "origin", "feature");
+    // Main releases 1.5.0 meanwhile: the minor changeset is consumed.
+    repo.checkout("main");
+    repo.git("rm", "--quiet", ".launchset/big-dogs-run.md");
+    project.push("Release v1.5.0", versionFiles("1.5.0"));
+    repo.git("tag", "v1.5.0");
+    repo.git("push", "--quiet", "origin", "v1.5.0");
+    // actions/checkout of refs/pull/N/merge.
+    repo.git("checkout", "--quiet", "--detach", "main");
+    repo.git("merge", "--quiet", "--no-ff", "-m", "Merge feature into main", "feature");
+    new FakeGitHub(project.remote);
+    const repoInfo = { full_name: "acme/app" };
+    const result = await check(
+      await contextFor(repo, {
+        event: {
+          name: "pull_request",
+          payload: {
+            pull_request: {
+              number: 8,
+              user: { login: "someone" },
+              head: { ref: "feature", sha: head, repo: repoInfo },
+              base: { ref: "main", sha: head, repo: repoInfo },
+            },
+          },
+        },
+      }),
+    );
+    expect(result.ok).toBe(true);
+    expect(result.data.result.bump).toBe("patch");
+    expect(result.data.result.nextVersion).toBe("1.5.1");
+  });
 });
 
 describe("preview-plan", () => {

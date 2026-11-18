@@ -106,7 +106,7 @@ describe("refs and history", () => {
       { status: "M", path: "edit.txt" },
       { status: "D", path: "gone.txt" },
       { status: "A", path: "new file.txt" },
-      { status: "R", path: "new-name.txt", oldPath: "old-name.txt" },
+      { status: "R", path: "new-name.txt", oldPath: "old-name.txt", similarity: 100 },
     ]);
     expect(await git.changedFiles("feature", "feature")).toEqual([]);
   });

@@ -325,7 +325,7 @@ function finalizePublish(input: FinalizeInput): FinalizeResult {
       completed: [],
       actions: [],
       failures: [
-        `${version} was superseded by a newer release (it has the partial tag ${ownPartial}), so it never gets ${tag} Release a new version instead.`,
+        `${version} was superseded by a newer release (it has the partial tag ${ownPartial}), so it never gets ${tag}. Release a new version instead.`,
       ],
       warnings,
       notices,

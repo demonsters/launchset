@@ -6,6 +6,7 @@
 import semver from "semver";
 import type { TargetType } from "./config/schema.ts";
 import { LaunchsetError } from "./errors.ts";
+import { escapeRegExp } from "./regex.ts";
 import { BUMPS, type Bump, type Changeset } from "./types.ts";
 
 /** A plain `X.Y.Z` version (no prerelease, no build metadata). */
@@ -114,10 +115,6 @@ export interface VersionLine {
 }
 
 export const DEFAULT_MAINTENANCE_PATTERN = "release/*.x";
-
-function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
-}
 
 /**
  * The version line of a maintenance branch, or `null` when `branch` isn't one. The single
