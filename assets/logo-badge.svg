@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
   <title>launchset</title>
-  <g transform="translate(256 256) rotate(45) scale(0.95) translate(-256 -300)">
+  <g transform="translate(256 256) rotate(45) scale(0.82) translate(-256 -300)">
     <g fill="none" stroke-width="22" stroke-linecap="round">
       <path d="M220 404 L220 486" stroke="#38BDF8"/>
       <path d="M256 404 L256 530" stroke="#FB923C"/>
