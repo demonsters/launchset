@@ -190,6 +190,13 @@ Any target may override `buildNumber`. Any target may have extra `files` entries
 
 All file edits are **text-preserving**: only the version values change. Never re-serialize a whole file (no JSON re-formatting, no plist re-ordering, no pbxproj rewriting). Keep indentation, quotes, comments and line endings. Tests assert exact output.
 
+**Rule: parse to find, splice to edit.** A stamper may parse a file only to find the exact character range of each value it changes. It then replaces those characters in the original text, and every other byte stays identical. It never writes a parsed structure back out.
+- **JSON**: `jsonc-parser` (from VS Code) gives the offsets of a value; replace only the value.
+- **YAML**: use the `yaml` library's node ranges to locate the scalar; replace only its text, keeping its quote style.
+- **pbxproj**: read the object graph (`PBXNativeTarget` → `buildConfigurationList` → `XCBuildConfiguration`) only to find which configuration blocks belong to the selected targets. Within those blocks, replace only the value in `MARKETING_VERSION = …;` / `CURRENT_PROJECT_VERSION = …;`, keeping quotes if present, plus tabs and line endings. The diff must contain nothing but those value changes. Xcode and CocoaPods reformat this file on their own; launchset must never add to that churn, and doesn't try to undo it either.
+- **Gradle, plist, xcconfig, gradle.properties**: small scanners scoped to the right block (`defaultConfig`, the key's `<string>` element, the key's line), with the same splice-only edit.
+- If a value can't be located unambiguously, fail with the file and the reason rather than guessing.
+
 Two kinds of stamping:
 - **Marketing version**: written by the release PR (committed) and by previews in CI (not committed).
 - **Build number**: written only in CI, by `launchset stamp` (never committed). The build-number values in the repo are placeholders; launchset doesn't care what they are, except `init` reading them for an offset (section 11).
@@ -533,7 +540,7 @@ A push to a matching branch runs the preview workflow (9.7), with these differen
 
 ## 11. CLI
 
-Binary: `launchset`. Package `@demonsters/launchset` (private on npm). Node ≥ 20.
+Binary: `launchset`. Package `@demonsters/launchset` (private on npm, demonsters org). Node ≥ 26 (the current Active LTS, "Lithium", since October 2026).
 
 Rules for every command: no interactive prompt when stdin isn't a TTY or `--yes`/flags are given; `--json` where output is data; non-zero exit on failure; no color when not a TTY or `NO_COLOR` is set; `--cwd <dir>`.
 
@@ -638,9 +645,9 @@ Format, newest first, with a title line kept at the top:
 
 ## 13. Tech stack and repo layout (launchset repo)
 
-- TypeScript (strict), ESM, Node ≥ 20 for the CLI; the action runs on `node24`.
+- TypeScript (strict), ESM. The CLI requires Node ≥ 26 (the current Active LTS). The action runs on `node24`, the newest runtime GitHub Actions offers; the action bundle targets Node 24, so the core must not use APIs newer than Node 24. Move the action to a newer runtime once GitHub supports one.
 - Package manager: pnpm. Tests: vitest. Lint/format: Biome.
-- Libraries (suggestions; use current maintained versions): `zod` (config), `jiti` (TS config loading), `semver`, `yaml`, `@clack/prompts` (interactive CLI), `@octokit/rest` (+ `@actions/core` for the action), `google-auth-library` or plain JWT for Play, `jose` for the App Store Connect JWT, `msw` for HTTP mocking in tests.
+- Libraries (use current maintained versions): `zod` (config schema; also generates the JSON Schema for `launchset.config.json` and the docs' config reference), `jiti` (loading `launchset.config.ts`; the same loader ESLint uses for `eslint.config.ts`), `semver`, `jsonc-parser` (JSON offsets for text-preserving edits), `yaml` (YAML node ranges), `@clack/prompts` (interactive CLI), `@octokit/rest` (+ `@actions/core` for the action), `jose` (signs the store JWTs: RS256 for the Google service account token exchange, ES256 for App Store Connect; plain `fetch` for the HTTP calls, no `google-auth-library`), `msw` (HTTP mocking in tests).
 - Bundling: a current bundler (e.g. tsdown or esbuild) for the npm package and a single-file bundle for the action.
 - Git: shell out to `git` (always available in CI) through one small wrapper module.
 
