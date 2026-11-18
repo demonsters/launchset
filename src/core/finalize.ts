@@ -325,7 +325,7 @@ function finalizePublish(input: FinalizeInput): FinalizeResult {
       completed: [],
       actions: [],
       failures: [
-        `${version} was superseded by a newer release (it has the partial tag ${ownPartial}), so it never gets ${tag} (spec 9.6). Release a new version instead.`,
+        `${version} was superseded by a newer release (it has the partial tag ${ownPartial}), so it never gets ${tag} Release a new version instead.`,
       ],
       warnings,
       notices,
@@ -405,7 +405,7 @@ function finalizePublish(input: FinalizeInput): FinalizeResult {
     release(version, plan.releaseSha);
   } else {
     failures.push(
-      `${tag} is not released: ${plural(missing.length, "auto target")} ${missing.length === 1 ? "has" : "have"} no marker for ${version} yet: ${joinWords(missing.map(code))}.\n\nRe-run the failed build jobs, or start the release workflow by hand (workflow_dispatch without inputs) to retry. A newer release supersedes this one (spec 9.6).`,
+      `${tag} is not released: ${plural(missing.length, "auto target")} ${missing.length === 1 ? "has" : "have"} no marker for ${version} yet: ${joinWords(missing.map(code))}.\n\nRe-run the failed build jobs, or start the release workflow by hand (workflow_dispatch without inputs) to retry. A newer release supersedes this one.`,
     );
   }
 
@@ -508,7 +508,7 @@ function planBackport(
     base: config.baseBranch,
     branch: backportBranch(tag),
     title,
-    body: `Adds the ${version} section, released from ${code(input.plan.branch)}, to ${code(config.changelog.file)}. It changes nothing else: no version files, no changesets (spec 9.5).\n\n${section.trimEnd()}\n`,
+    body: `Adds the ${version} section, released from ${code(input.plan.branch)}, to ${code(config.changelog.file)}. It changes nothing else: no version files, no changesets.\n\n${section.trimEnd()}\n`,
     commitMessage: title,
     file: config.changelog.file,
     changelog: updated,

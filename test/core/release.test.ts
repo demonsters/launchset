@@ -499,7 +499,7 @@ describe("review regressions: unfinished, superseded and lower versions", () => 
     );
     expect(decision.plan.mode).toBe("none");
     expect(decision.warnings[0]).toBe(
-      "1.5.0 is not released (missing `docker-api` and `android`); pushes don't retry it: re-run the failed jobs, or start the release workflow by hand (workflow_dispatch without inputs). A newer release supersedes it (spec 9.6).",
+      "1.5.0 is not released (missing `docker-api` and `android`); pushes don't retry it: re-run the failed jobs, or start the release workflow by hand (workflow_dispatch without inputs). A newer release supersedes it.",
     );
     // Only the commit after the release commit counts (the marker's commit is used).
     expect(decision.unreleasedCommits?.commits).toEqual([commits[0]]);

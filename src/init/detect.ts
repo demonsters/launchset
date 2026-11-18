@@ -1109,7 +1109,7 @@ async function detectImagePins(
         notes.push({
           level: "info",
           path,
-          message: `pins ${image} with images[].newTag, which launchset doesn't stamp (only <image>:<tag> references, spec 6.6)`,
+          message: `pins ${image} with images[].newTag, which launchset doesn't stamp (only <image>:<tag> references)`,
         });
       }
       if (!hasImageRef(text, [image])) continue;

@@ -57,7 +57,7 @@ export function requireReleasePlan(plan: Plan, command: string): Plan {
     {
       hint:
         plan.mode === "preview"
-          ? "Preview builds have no markers or releases (spec 9.7)."
+          ? "Preview builds have no markers or releases."
           : `Run ${command} only when the release job's mode output is publish or ship.`,
     },
   );

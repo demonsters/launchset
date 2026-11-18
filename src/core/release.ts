@@ -143,7 +143,7 @@ function assertPlainRoot(version: string, file: string): void {
       "invalid-version",
       `the root version "${version}" in ${file} is not a plain X.Y.Z version`,
       {
-        hint: "Releases need a plain version like 1.4.0. Prerelease versions are never committed (spec 9.9): set it back with a normal PR.",
+        hint: "Releases need a plain version like 1.4.0. Prerelease versions are never committed: set it back with a normal PR.",
       },
     );
   }
@@ -280,7 +280,7 @@ export function planRelease(input: ReleaseInput): ReleaseDecision {
   const pendingNote = (): string[] =>
     releaseBump(pending) !== null || input.botPrs.length > 0
       ? [
-          `${plural(pending.length, "pending changeset")}${input.botPrs.length > 0 ? ` and ${plural(input.botPrs.length, "bot PR")}` : ""} wait for the next release PR, which is opened on the next push (publish goes first, spec 9.3).`,
+          `${plural(pending.length, "pending changeset")}${input.botPrs.length > 0 ? ` and ${plural(input.botPrs.length, "bot PR")}` : ""} wait for the next release PR, which is opened on the next push (publish goes first).`,
         ]
       : [];
 
@@ -312,13 +312,13 @@ export function planRelease(input: ReleaseInput): ReleaseDecision {
   let commitsUsable = true;
   if (partial !== undefined) {
     warnings.push(
-      `${version} was superseded: it has the partial tag ${partial}, so it is never published and never gets ${releaseTag(config.tags, version)} (spec 9.6). Pending changesets release a newer version.`,
+      `${version} was superseded: it has the partial tag ${partial}, so it is never published and never gets ${releaseTag(config.tags, version)}. Pending changesets release a newer version.`,
     );
     currentReleaseCommit = input.tags.shas.get(partial) ?? input.releaseCommit;
   } else if (!released && event.kind === "push") {
     const missing = missingAutoTargets(index, config, version);
     warnings.push(
-      `${version} is not released (missing ${joinWords(missing.map(code))}); pushes don't retry it: re-run the failed jobs, or start the release workflow by hand (workflow_dispatch without inputs). A newer release supersedes it (spec 9.6).`,
+      `${version} is not released (missing ${joinWords(missing.map(code))}); pushes don't retry it: re-run the failed jobs, or start the release workflow by hand (workflow_dispatch without inputs). A newer release supersedes it.`,
     );
     currentReleaseCommit = input.releaseCommit ?? markerCommit(input, version);
     // Without the release commit the list would include the release itself.
@@ -373,7 +373,7 @@ export function planRelease(input: ReleaseInput): ReleaseDecision {
     });
     if (plainNext !== next) {
       notices.push(
-        `${plainNext} is already taken (released or partly shipped, for example from a maintenance branch), so the release PR uses ${next} (spec 8.1).`,
+        `${plainNext} is already taken (released or partly shipped, for example from a maintenance branch), so the release PR uses ${next}.`,
       );
     }
     return finish(plan, { notices, warnings });
@@ -483,7 +483,7 @@ function planShip(
         "no-release",
         `there is no release on ${input.branch} yet, so there is nothing to ship for ${targetName}`,
         {
-          hint: "Ship only released versions. For unreleased commits use a preview build (spec 9.7).",
+          hint: "Ship only released versions. For unreleased commits use a preview build.",
         },
       );
     }
@@ -495,7 +495,7 @@ function planShip(
       "not-released",
       `${version} isn't released (there is no ${tag} tag), so ${targetName} can't ship it`,
       {
-        hint: "Ship only released versions. For unreleased commits, use a preview build (spec 9.7).",
+        hint: "Ship only released versions. For unreleased commits, use a preview build.",
       },
     );
   }

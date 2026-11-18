@@ -89,7 +89,7 @@ export async function mark(
         "not-released",
         `${version} isn't released (there is no ${tag} tag), so ${options.target} can't be marked as shipped for it`,
         {
-          hint: "Only released versions are shipped by hand (spec 9.8). Fetch the tags if it was released elsewhere.",
+          hint: "Only released versions are shipped by hand. Fetch the tags if it was released elsewhere.",
         },
       );
     }
