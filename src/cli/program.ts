@@ -361,7 +361,7 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
       withGlobals(cmd, { json: true });
       cmd.option(
         "--preview",
-        "plan a preview build instead (reserves the tag on prerelease branches)",
+        "plan a preview build instead (a dry run: prerelease tags are not reserved)",
       );
       cmd.option(
         "--target <names>",

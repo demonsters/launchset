@@ -11,7 +11,13 @@ import { renderSummary } from "../core/plan-common.ts";
 import { computeStatus, renderStatus, type StatusData } from "../core/status.ts";
 import { checkConsistency } from "../platforms/index.ts";
 import type { FlowContext, FlowResult } from "./context.ts";
-import { botPrsSince, findReleaseCommitFor, gatherRepoState, hasRemote } from "./gather.ts";
+import {
+  botPrsSince,
+  findReleaseCommitFor,
+  gatherRepoState,
+  hasRemote,
+  tryResolveBranch,
+} from "./gather.ts";
 
 export interface StatusOptions {
   /** Default: git's current branch (or the Actions ref). */
@@ -63,9 +69,12 @@ export async function status(
   options: StatusOptions = {},
 ): Promise<FlowResult<StatusResultData>> {
   const { config } = context;
+  // A detached HEAD (e.g. `git checkout v1.5.0` before `launchset ship`) uses the base
+  // branch's rules: status only reads, so that's always safe.
+  const branch = options.branch ?? (await tryResolveBranch(context)) ?? config.baseBranch;
   const repo = await gatherRepoState(context, {
     worktree: true,
-    ...(options.branch ? { branch: options.branch } : {}),
+    branch,
     ...(options.fetch !== undefined ? { fetch: options.fetch } : {}),
   });
   const wantBots = options.botPrs ?? context.github !== undefined;

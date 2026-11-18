@@ -1,6 +1,6 @@
 /**
  * Preview flow (spec 9.7, 9.9): `preview-plan` decides the version and targets of a preview
- * (and reserves the tag on prerelease branches), `preview-comment` reports the per-target
+ * (and, unless `dryRun`, reserves the tag on prerelease branches), `preview-comment` reports the per-target
  * results (sticky PR comment, GitHub pre-release for prerelease branches, job summary).
  *
  * Which commit is built: the PR's **head** commit, not the merge commit `actions/checkout`

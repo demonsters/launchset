@@ -208,7 +208,7 @@ export async function resolveBranch(context: FlowContext, explicit?: string): Pr
   throw new LaunchsetError(
     "no-branch",
     "can't tell which branch this is: HEAD is detached and GITHUB_REF isn't a branch",
-    { hint: "Check out the branch (or pass --branch)." },
+    { hint: "Check out the branch (`launchset plan` also takes --branch)." },
   );
 }
 
