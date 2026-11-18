@@ -1,0 +1,8 @@
+node_modules/
+dist/
+action/dist/
+coverage/
+docs/.astro/
+docs/dist/
+.DS_Store
+*.log
