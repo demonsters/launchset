@@ -341,7 +341,7 @@ describe("branch previews and manual runs (8.3, 9.7)", () => {
     });
     expect(planOf(two).matrix).toEqual(["android", "ios"]);
 
-    const all = await previewPlan(context(repo, { event: dispatch }), { targets: "all" });
+    const all = await previewPlan(context(repo, { event: dispatch }), { targets: ["all"] });
     expect(planOf(all).matrix).toEqual(["docker-api", "web", "android", "ios"]);
 
     const fromInput = await previewPlan(

@@ -7,6 +7,7 @@ import { LaunchsetError } from "../../src/core/errors.ts";
 import {
   add,
   check,
+  eventInfo,
   type FlowContext,
   type FlowResult,
   finalize,
@@ -60,15 +61,6 @@ function requireInput(inputs: Inputs, name: "target" | "plan"): string {
   );
 }
 
-/** A comma-separated `target` input as a list, `undefined` when empty. */
-export function splitTargets(value: string): string[] | undefined {
-  const targets = value
-    .split(",")
-    .map((t) => t.trim())
-    .filter((t) => t !== "");
-  return targets.length > 0 ? targets : undefined;
-}
-
 /** Run one command. Throws `LaunchsetError` (or whatever the flow throws). */
 export async function dispatch(
   command: Command,
@@ -103,8 +95,9 @@ export async function dispatch(
     case "finalize":
       return flows.finalize(context, { plan: requireInput(inputs, "plan") });
     case "preview-plan": {
-      const targets = splitTargets(inputs.target);
-      return flows.previewPlan(context, targets ? { targets } : {});
+      // An input without a name means "not given"; previewPlan splits the comma-separated list.
+      const given = /[^\s,]/.test(inputs.target);
+      return flows.previewPlan(context, given ? { targets: [inputs.target] } : {});
     }
     case "preview-comment":
       // Empty when the preview was skipped (spec 9.7): the flow reports "nothing to report".
@@ -119,8 +112,8 @@ export async function dispatch(
 
 /** The pull request number of the event, when it is a `pull_request` run. */
 function eventPrNumber(context: FlowContext): string {
-  const pr = context.event?.payload.pull_request as { number?: unknown } | undefined;
-  return typeof pr?.number === "number" ? String(pr.number) : "";
+  const number = eventInfo(context)?.pr?.number;
+  return number === undefined ? "" : String(number);
 }
 
 /**

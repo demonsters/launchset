@@ -9,8 +9,9 @@ import { dockerPlan } from "../core/docker-tags.ts";
 import { LaunchsetError } from "../core/errors.ts";
 import { actionOutputs, envOutputs, planTarget } from "../core/outputs.ts";
 import { isoTime, unknownTarget } from "../core/plan-common.ts";
+import { flagDistTag } from "../core/release.ts";
 import type { Channel, Plan, TargetPlan } from "../core/types.ts";
-import { baseVersionOf, distTag, marketingVersion } from "../core/versions.ts";
+import { baseVersionOf, marketingVersion } from "../core/versions.ts";
 import { stampForBuild, writeChanges } from "../platforms/index.ts";
 import type { FlowContext, FlowResult } from "./context.ts";
 import { checkHeadAtPlan } from "./git-ops.ts";
@@ -87,12 +88,7 @@ export function flagPlan(
     releaseSha: options.sha,
     branch: "",
     maintenance: false,
-    distTag:
-      channel === "release"
-        ? distTag({ channel, version, maintenance: false })
-        : channel === "prerelease"
-          ? "prerelease"
-          : "preview",
+    distTag: flagDistTag(channel, version),
     matrix: [target.name],
     targets: { [target.name]: targetPlan },
     createdAt,

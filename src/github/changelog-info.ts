@@ -3,6 +3,7 @@
  * added each changeset → its merged PR. Missing token or no match → no entry, never a failure.
  */
 
+import { messageWithHint } from "../core/errors.ts";
 import type { Git } from "../git/index.ts";
 import { UPDATED_SINCE_MARGIN_MS } from "./bot-prs.ts";
 import { mapLimit } from "./concurrency.ts";
@@ -84,7 +85,7 @@ export async function changelogInfoFor(
       else misses.push({ path, added });
     } catch (error) {
       warn(
-        `changelog.github: could not look up the PR for ${path}, leaving its link out: ${(error as Error).message}`,
+        `changelog.github: could not look up the PR for ${path}, leaving its link out: ${messageWithHint(error)}`,
       );
     }
   });
@@ -122,7 +123,7 @@ export async function changelogInfoFor(
     }
   } catch (error) {
     warn(
-      `changelog.github: could not list merged PRs into ${branch}, leaving ${misses.length} link(s) out: ${(error as Error).message}`,
+      `changelog.github: could not list merged PRs into ${branch}, leaving ${misses.length} link(s) out: ${messageWithHint(error)}`,
     );
   }
   return result;

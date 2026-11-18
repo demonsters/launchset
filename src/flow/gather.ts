@@ -37,7 +37,7 @@ import {
 import { findBotPrsWithoutChangeset } from "../github/bot-prs.ts";
 import { changelogInfoFor } from "../github/changelog-info.ts";
 import { readRootVersion } from "../platforms/index.ts";
-import type { FlowContext } from "./context.ts";
+import { branchFromRef, eventInfo, type FlowContext } from "./context.ts";
 
 // ---------------------------------------------------------------------------
 // Remote and tags
@@ -192,11 +192,6 @@ export function changesetWarnings(files: readonly ChangesetFile[]): string[] {
 // ---------------------------------------------------------------------------
 // Branch, event and versions
 
-/** `refs/heads/main` → `main`; anything else → undefined. */
-function branchFromRef(ref: string | undefined): string | undefined {
-  return ref?.startsWith("refs/heads/") ? ref.slice("refs/heads/".length) : undefined;
-}
-
 /**
  * The branch this run is on: `explicit`, else the Actions ref (`GITHUB_REF` when it's a
  * branch), else git's current branch. Throws `no-branch` on a detached HEAD without either.
@@ -226,15 +221,7 @@ export async function tryResolveBranch(context: FlowContext): Promise<string | u
 
 /** The event payload's `inputs` (workflow_dispatch), as strings. */
 export function dispatchInputs(context: FlowContext): Record<string, string> {
-  const inputs = context.event?.payload.inputs;
-  const out: Record<string, string> = {};
-  if (inputs && typeof inputs === "object") {
-    for (const [key, value] of Object.entries(inputs as Record<string, unknown>)) {
-      if (typeof value === "string") out[key] = value;
-      else if (typeof value === "boolean" || typeof value === "number") out[key] = String(value);
-    }
-  }
-  return out;
+  return eventInfo(context)?.inputs ?? {};
 }
 
 export interface ReleaseEventOptions {
@@ -515,7 +502,19 @@ export async function gatherReleaseState(
 /** The `planRelease` input for a gathered state. */
 export function releaseInputFor(
   context: FlowContext,
-  state: ReleaseState,
+  state: Pick<
+    ReleaseState,
+    | "branch"
+    | "headSha"
+    | "version"
+    | "headIsReleaseCommit"
+    | "tags"
+    | "reachableReleases"
+    | "changesets"
+    | "botPrs"
+    | "commitsSinceRelease"
+    | "releaseCommit"
+  >,
   event: ReleaseEvent,
 ): ReleaseInput {
   const input: ReleaseInput = {

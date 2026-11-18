@@ -14,7 +14,7 @@ import { LaunchsetError } from "../core/errors.ts";
 import { renderSummary } from "../core/plan-common.ts";
 import { GitHubError } from "../github/index.ts";
 import { checkConsistency, readRootVersion } from "../platforms/index.ts";
-import type { FlowContext, FlowResult } from "./context.ts";
+import { branchFromRef, eventInfo, type FlowContext, type FlowResult } from "./context.ts";
 import {
   allInOrder,
   baseBranchRef,
@@ -70,33 +70,9 @@ export interface PushCheckData {
   result: PushCheckResult;
 }
 
-interface PayloadRepo {
-  full_name?: string;
-}
-
-interface PayloadPr {
-  number?: number;
-  user?: { login?: string };
-  head?: { ref?: string; sha?: string; repo?: PayloadRepo | null };
-  base?: { ref?: string; sha?: string; repo?: PayloadRepo | null };
-}
-
-/** A fork PR: the head repo differs from the base repo, or is gone (deleted fork). */
-function isForkPr(pr: PayloadPr): boolean {
-  const head = pr.head?.repo;
-  if (!head) return true;
-  return head.full_name !== pr.base?.repo?.full_name;
-}
-
-function payloadPr(context: FlowContext): PayloadPr | undefined {
-  const pr = context.event?.payload.pull_request;
-  return pr && typeof pr === "object" ? (pr as PayloadPr) : undefined;
-}
-
 /** `refs/heads/main`, `origin/main` → `main`. */
 function shortBranch(ref: string): string {
-  return ref
-    .replace(/^refs\/heads\//, "")
+  return (branchFromRef(ref) ?? ref)
     .replace(/^refs\/remotes\/[^/]+\//, "")
     .replace(/^origin\//, "");
 }
@@ -180,10 +156,10 @@ export async function check(
   if (options.push) return pushCheck(context, options);
   const { config } = context;
   await syncTags(context, options.fetch ?? true);
-  const payload = payloadPr(context);
+  const payload = eventInfo(context)?.pr;
   const baseBranch =
     options.pr?.baseBranch ??
-    payload?.base?.ref ??
+    payload?.baseRef ??
     (options.base ? shortBranch(options.base) : config.baseBranch);
   if (!options.base && !payload) {
     throw new LaunchsetError(
@@ -194,11 +170,7 @@ export async function check(
   }
   const prNumber = options.pr?.number ?? payload?.number ?? 0;
   // The PR head, never the merge commit actions/checkout made (HEAD in a PR job).
-  const headSha = await resolveHead(
-    context,
-    options.head ?? payload?.head?.sha ?? "HEAD",
-    prNumber,
-  );
+  const headSha = await resolveHead(context, options.head ?? payload?.headSha ?? "HEAD", prNumber);
   let tip: string;
   if (options.base) {
     const local = await tryCommit(context, options.base);
@@ -213,16 +185,16 @@ export async function check(
     }
     tip = local;
   } else {
-    tip = await baseTip(context, baseBranch, payload?.base?.sha);
+    tip = await baseTip(context, baseBranch, payload?.baseSha);
   }
   const base = await mergeBase(context, tip, headSha);
   const pr = {
     number: prNumber,
-    author: options.pr?.author ?? payload?.user?.login ?? "",
+    author: options.pr?.author ?? payload?.author ?? "",
     headBranch:
-      options.pr?.headBranch ?? payload?.head?.ref ?? (await tryResolveBranch(context)) ?? "",
+      options.pr?.headBranch ?? payload?.headRef ?? (await tryResolveBranch(context)) ?? "",
     baseBranch,
-    fork: options.pr?.fork ?? (payload ? isForkPr(payload) : false),
+    fork: options.pr?.fork ?? payload?.fork ?? false,
   };
   // Pending changesets, the version and the consistency check all describe the checked-out
   // commit: in Actions that's the merge commit, i.e. what the base branch will contain after

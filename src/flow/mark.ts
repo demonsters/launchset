@@ -7,15 +7,10 @@
 import { LaunchsetError } from "../core/errors.ts";
 import { planFinalize } from "../core/finalize.ts";
 import { planTarget } from "../core/outputs.ts";
-import {
-  isoTime,
-  normalizeVersionInput,
-  renderSummary,
-  unknownTarget,
-} from "../core/plan-common.ts";
+import { normalizeVersionInput, renderSummary, unknownTarget } from "../core/plan-common.ts";
+import { buildShipPlan } from "../core/release.ts";
 import { isReleased, markerTag, releaseTag } from "../core/tags.ts";
-import type { Plan, TargetPlan } from "../core/types.ts";
-import { marketingVersion } from "../core/versions.ts";
+import type { Plan } from "../core/types.ts";
 import { type FlowContext, type FlowResult, requireGitHub } from "./context.ts";
 import { type ExecutedAction, executeFinalizeActions, existingReleases } from "./finalize.ts";
 import { changelogFilePath, readTagSnapshot, syncTags, tryResolveBranch } from "./gather.ts";
@@ -109,31 +104,21 @@ export async function mark(
   if (byHand && target.release === "manual") {
     const github = requireGitHub(context, "Updating the GitHub Release of a hand-shipped target");
     const tags = await readTagSnapshot(context);
-    const targetPlan: TargetPlan = {
-      name: target.name,
-      type: target.type,
-      release: target.release,
-      marketingVersion: marketingVersion(target.type, version),
-      buildNumber: options.buildNumber ?? null,
-      marker,
-    };
     const tag = releaseTag(config.tags, version);
-    const plan: Plan = {
-      schemaVersion: 1,
-      mode: "ship",
-      channel: "release",
+    // The plan `ship` would have made, with the build number that shipped.
+    const plan = buildShipPlan(
+      {
+        config,
+        branch: (await tryResolveBranch(context)) ?? config.baseBranch,
+        tags,
+        now: context.now,
+        ...(context.run ? { run: context.run } : {}),
+        ...(context.repository ? { repository: context.repository } : {}),
+      },
+      target.name,
       version,
-      baseVersion: version,
-      buildNumber: options.buildNumber ?? null,
-      releaseSha: sha,
-      branch: (await tryResolveBranch(context)) ?? config.baseBranch,
-      maintenance: false,
-      distTag: "latest",
-      tag,
-      matrix: [target.name],
-      targets: { [target.name]: targetPlan },
-      createdAt: isoTime(context.now),
-    };
+      { buildNumber: options.buildNumber ?? null },
+    );
     const changelogPath = await changelogFilePath(context);
     const finalized = planFinalize({
       config,

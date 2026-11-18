@@ -4,6 +4,7 @@
  * can't give a clear answer throws `VerifyError`, and is never treated as "not published".
  */
 
+import { EXPECTED_ERROR } from "../core/errors.ts";
 import { redactUrls } from "./redact.ts";
 
 export interface VerifyResult {
@@ -27,6 +28,7 @@ export interface VerifyContext {
  */
 export class VerifyError extends Error {
   override name = "VerifyError";
+  readonly [EXPECTED_ERROR] = true;
   constructor(message: string, options?: ErrorOptions) {
     super(redactUrls(message), options);
   }

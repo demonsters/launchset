@@ -26,17 +26,7 @@ import {
   syncTags,
   unfinishedVersionsBefore,
 } from "./gather.ts";
-import {
-  branchHead,
-  currentCheckout,
-  ensureTag,
-  remoteBranchHead,
-  requireCleanWorktree,
-  restoreCheckout,
-  sameCommitContent,
-  type UpsertPrResult,
-  upsertPr,
-} from "./git-ops.ts";
+import { branchHead, ensureTag, rebuildBranch, type UpsertPrResult, upsertPr } from "./git-ops.ts";
 import { noteLines, plain, requireReleasePlan, resolvePlan } from "./result.ts";
 
 export interface FinalizeOptions {
@@ -147,20 +137,16 @@ async function backport(
   const current = (await git.showFile(base, repoPath)) ?? null;
   const updated = insertSectionSorted(current, action.section, action.version);
   if (current !== null && updated === current) return null;
-  await requireCleanWorktree(git, "The changelog backport");
-  const original = await currentCheckout(git);
-  try {
-    await git.checkoutNewBranch(action.branch, base);
-    await writeFile(resolve(context.cwd, action.file), updated);
-    const commit = await git.commitAll(action.commitMessage, [repoPath]);
-    // A re-run rebuilds the same commit content: don't force-push (and re-trigger CI) for nothing.
-    const remote = await remoteBranchHead(context, action.branch);
-    if (remote === undefined || !(await sameCommitContent(context, remote, commit))) {
-      await git.pushBranch(action.branch, { force: true });
-    }
-  } finally {
-    await restoreCheckout(git, original);
-  }
+  await rebuildBranch(context, {
+    branch: action.branch,
+    from: base,
+    message: action.commitMessage,
+    what: "The changelog backport",
+    write: async () => {
+      await writeFile(resolve(context.cwd, action.file), updated);
+      return [repoPath];
+    },
+  });
   return upsertPr(github, {
     head: action.branch,
     base: action.base,

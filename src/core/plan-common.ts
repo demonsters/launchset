@@ -173,6 +173,8 @@ export interface TargetPlanContext {
   preid?: string;
   /** Marker tag template; set on the release channel only. */
   markerTemplate?: { tags: ResolvedConfig["tags"] };
+  /** The build number of a build that already happened (`mark --version`): not computed. */
+  buildNumber?: number | null;
 }
 
 /** The build number inputs of a run: time, version and the CI run number and attempt. */
@@ -193,10 +195,10 @@ export function buildNumberContext(
  * data.
  */
 export function buildTargetPlan(target: ResolvedTarget, ctx: TargetPlanContext): TargetPlan {
-  const buildNumber = targetBuildNumber(
-    target,
-    buildNumberContext(ctx.now, ctx.baseVersion, ctx.run),
-  );
+  const buildNumber =
+    ctx.buildNumber !== undefined
+      ? ctx.buildNumber
+      : targetBuildNumber(target, buildNumberContext(ctx.now, ctx.baseVersion, ctx.run));
   const plan: TargetPlan = {
     name: target.name,
     type: target.type,

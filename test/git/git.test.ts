@@ -431,7 +431,9 @@ describe("branches and commits", () => {
     await git.commitAll("Changelog: v1.1.0", ["CHANGELOG.md"]);
     expect(repo.git("show", "HEAD:CHANGELOG.md")).toBe("# Changelog\n\n## 1.1.0");
 
-    await expect(git.commit("nothing")).rejects.toThrow(/no changes to commit/);
+    await expect(git.commit("nothing")).rejects.toMatchObject({
+      hint: expect.stringMatching(/no changes to commit/),
+    });
   });
 
   it("can use a custom identity", async () => {

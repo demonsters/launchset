@@ -27,14 +27,7 @@ import {
   releaseEventFor,
   releaseInputFor,
 } from "./gather.ts";
-import {
-  currentCheckout,
-  remoteBranchHead,
-  requireCleanWorktree,
-  restoreCheckout,
-  sameCommitContent,
-  upsertPr,
-} from "./git-ops.ts";
+import { rebuildBranch, upsertPr } from "./git-ops.ts";
 import { appendAlerts, appendParagraphs, noteLines, plain } from "./result.ts";
 
 export interface ReleaseOptions {
@@ -156,28 +149,17 @@ async function openReleasePr(
 ): Promise<ReleasePrResult> {
   const github = requireGitHub(context, "The release PR");
   const content = await releasePrContent(context, state, decision);
-  const { git } = context;
-  await requireCleanWorktree(git, "Building the release PR");
-  const original = await currentCheckout(git);
-  let commit: string;
-  let pushed = true;
-  try {
-    await git.checkoutNewBranch(content.branch, state.headSha);
-    const changes = await planReleaseChanges(context, content);
-    await writePlannedChanges(changes);
-    commit = await git.commitAll(
-      content.commitMessage,
-      changes.map((c) => c.path),
-    );
-    const remote = await remoteBranchHead(context, content.branch);
-    if (remote !== undefined && (await sameCommitContent(context, remote, commit))) {
-      pushed = false;
-    } else {
-      await git.pushBranch(content.branch, { force: true });
-    }
-  } finally {
-    await restoreCheckout(git, original);
-  }
+  const { commit, pushed } = await rebuildBranch(context, {
+    branch: content.branch,
+    from: state.headSha,
+    message: content.commitMessage,
+    what: "Building the release PR",
+    write: async () => {
+      const changes = await planReleaseChanges(context, content);
+      await writePlannedChanges(changes);
+      return changes.map((c) => c.path);
+    },
+  });
   const { pr, action } = await upsertPr(github, {
     head: content.branch,
     base: content.base,

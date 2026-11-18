@@ -11,7 +11,13 @@ import { planRelease } from "../core/release.ts";
 import type { Plan } from "../core/types.ts";
 import { readRootVersion, stampForBuild, writeChanges } from "../platforms/index.ts";
 import type { FlowContext, FlowResult } from "./context.ts";
-import { reachableReleaseVersions, readTagSnapshot, syncTags, tryResolveBranch } from "./gather.ts";
+import {
+  reachableReleaseVersions,
+  readTagSnapshot,
+  releaseInputFor,
+  syncTags,
+  tryResolveBranch,
+} from "./gather.ts";
 import { noteLines, plain } from "./result.ts";
 
 export interface ShipOptions {
@@ -62,10 +68,9 @@ export async function ship(
     ...(options.version ? { version: options.version } : {}),
     ...(options.force ? { force: true } : {}),
   };
-  const decision = planRelease({
-    config,
+  // Only what a ship decision reads: no changesets, commits or bot PRs.
+  const state = {
     branch: (await tryResolveBranch(context)) ?? "HEAD",
-    event,
     headSha,
     version: await readRootVersion(config, context.cwd),
     headIsReleaseCommit: false,
@@ -74,10 +79,8 @@ export async function ship(
     changesets: [],
     botPrs: [],
     commitsSinceRelease: [],
-    now: context.now,
-    ...(context.run ? { run: context.run } : {}),
-    ...(context.repository ? { repository: context.repository } : {}),
-  });
+  };
+  const decision = planRelease(releaseInputFor(context, state, event));
   const { plan } = decision;
   const tag = plan.tag ?? "";
   if (plan.mode !== "ship") {

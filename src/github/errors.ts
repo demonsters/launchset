@@ -1,10 +1,12 @@
 /** Wrapping Octokit errors into {@link GitHubError}s with a hint (spec 9.1). */
 
+import { EXPECTED_ERROR } from "../core/errors.ts";
 import { permissionLabel } from "./permissions.ts";
 
-/** A GitHub API call failed. */
+/** A GitHub API call failed. The message says which call and why; `hint` what to do. */
 export class GitHubError extends Error {
   override name = "GitHubError";
+  readonly [EXPECTED_ERROR] = true;
   /** HTTP status, or undefined when no response arrived. */
   readonly status: number | undefined;
   /** Method and path, e.g. `POST /repos/acme/app/pulls`. */
@@ -112,7 +114,7 @@ export function toGitHubError(
     typeof e.status === "number" && e.status > 0 && e.response !== undefined ? e.status : undefined;
   const hint = hintFor(status, e, info);
   const message = mask(
-    `GitHub API ${info.endpoint} failed${status ? ` (${status})` : ""}: ${apiMessage(e)}\nHint: ${hint}`,
+    `GitHub API ${info.endpoint} failed${status ? ` (${status})` : ""}: ${apiMessage(e)}`,
   );
   return new GitHubError(message, status, info.endpoint, mask(hint), { cause: error });
 }

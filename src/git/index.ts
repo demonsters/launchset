@@ -18,6 +18,7 @@
 
 import { execFile } from "node:child_process";
 import { posix } from "node:path";
+import { EXPECTED_ERROR } from "../core/errors.ts";
 
 /** Identity of commits launchset makes (release PR, changelog backport). */
 export const LAUNCHSET_IDENTITY = {
@@ -110,9 +111,10 @@ export type GitFailureReason =
   | "missing-object"
   | "other";
 
-/** A git command failed. The message has the command (no secrets), stderr and a hint. */
+/** A git command failed. The message has the command (no secrets) and stderr; `hint` what to do. */
 export class GitError extends Error {
   override name = "GitError";
+  readonly [EXPECTED_ERROR] = true;
   /** The command as shown in the message, e.g. `git push origin refs/tags/v1.0.0`. */
   readonly command: string;
   readonly stderr: string;
@@ -395,15 +397,7 @@ export class Git {
                 ? "Check that git is installed and on PATH, and that the working directory exists."
                 : undefined;
             const message = `Could not run \`${command}\` in ${this.cwd}: ${this.mask(error.message)}`;
-            reject(
-              new GitError(
-                hint ? `${message}\nHint: ${hint}` : message,
-                command,
-                stderr,
-                undefined,
-                hint,
-              ),
-            );
+            reject(new GitError(message, command, stderr, undefined, hint));
             return;
           }
           const code = error ? (error.code as number) : 0;
@@ -429,11 +423,7 @@ export class Git {
     const stderr = this.mask(result.stderr.trim() || result.stdout.trim());
     const failure = classifyFailure(args, result.stderr || result.stdout);
     const finalHint = hint ?? failure.hint;
-    const message = [
-      `\`${command}\` failed (exit code ${result.code}) in ${this.cwd}`,
-      stderr ? `: ${stderr}` : ".",
-      finalHint ? `\nHint: ${finalHint}` : "",
-    ].join("");
+    const message = `\`${command}\` failed (exit code ${result.code}) in ${this.cwd}${stderr ? `: ${stderr}` : "."}`;
     return new GitError(message, command, stderr, result.code, finalHint, failure.reason);
   }
 
@@ -814,6 +804,7 @@ export class Git {
         pushError.stderr,
         pushError.exitCode,
         pushError.hint,
+        pushError.reason,
       );
     }
     const remote = new Map<string, string>();

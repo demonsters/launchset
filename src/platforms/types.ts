@@ -43,6 +43,7 @@ export interface TextStamper<Options = void> {
 }
 
 export class StampError extends Error {
+  readonly [EXPECTED_ERROR] = true;
   readonly file: string;
   readonly reason: string;
   constructor(file: string, reason: string) {
@@ -52,6 +53,8 @@ export class StampError extends Error {
     this.reason = reason;
   }
 }
+
+import { EXPECTED_ERROR } from "../core/errors.ts";
 
 export { detectEol, lineOf } from "../core/text.ts";
 

@@ -130,15 +130,6 @@ async function initRoot(io: CliIo, cwd: string | undefined): Promise<string> {
   return base;
 }
 
-function splitTargets(value: string | undefined): string[] | "all" | undefined {
-  if (value === undefined) return undefined;
-  if (value.trim() === "all") return "all";
-  return value
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
-
 export function createProgram(io: CliIo = processIo(), state: RunState = { exitCode: 0 }): Command {
   const program = new Command("launchset");
   program
@@ -394,11 +385,10 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
       );
       const fetch = opts.fetch !== false;
       if (opts.preview) {
-        const targets = splitTargets(opts.target);
         const result = await previewPlan(context, {
           fetch,
           dryRun: true,
-          ...(targets === undefined ? {} : { targets }),
+          ...(opts.target === undefined ? {} : { targets: [opts.target] }),
         });
         if (result.data.outcome === "skip" && result.data.skip) {
           io.stdout(toJson({ skipped: result.data.skip.code, reason: result.data.skip.reason }));

@@ -151,8 +151,14 @@ function assertPlainRoot(version: string, file: string): void {
   }
 }
 
+/** What a release-channel plan is built from. */
+export type PlanInput = Pick<
+  ReleaseInput,
+  "config" | "branch" | "tags" | "now" | "run" | "repository"
+>;
+
 interface BasePlanFields {
-  input: ReleaseInput;
+  input: PlanInput;
   mode: Plan["mode"];
   version: string;
   maintenance: boolean;
@@ -179,10 +185,18 @@ function basePlan({ input, mode, version, maintenance }: BasePlanFields): Plan {
   return plan;
 }
 
-/** A plan that builds `matrix` from `releaseSha` (publish or ship). */
+/**
+ * A plan that builds `matrix` from `releaseSha` (publish or ship). `buildNumber` fixes the
+ * build number of a build that already happened instead of computing it.
+ */
 function buildPlan(
-  input: ReleaseInput,
-  fields: BasePlanFields & { matrix: string[]; releaseSha: string; tagMaintenance?: boolean },
+  input: PlanInput,
+  fields: BasePlanFields & {
+    matrix: string[];
+    releaseSha: string;
+    tagMaintenance?: boolean;
+    buildNumber?: number | null;
+  },
 ): Plan {
   const plan = basePlan(fields);
   plan.releaseSha = fields.releaseSha;
@@ -198,13 +212,26 @@ function buildPlan(
     sha: fields.releaseSha,
     createdAt: plan.createdAt,
     markerTemplate: { tags: input.config.tags },
+    ...(fields.buildNumber !== undefined ? { buildNumber: fields.buildNumber } : {}),
   });
-  plan.buildNumber = planBuildNumber(input.config, plan, {
-    now: input.now,
-    version: fields.version,
-    ...(input.run ? { run: input.run } : {}),
-  });
+  plan.buildNumber =
+    fields.buildNumber !== undefined
+      ? fields.buildNumber
+      : planBuildNumber(input.config, plan, {
+          now: input.now,
+          version: fields.version,
+          ...(input.run ? { run: input.run } : {}),
+        });
   return plan;
+}
+
+/**
+ * The dist-tag of a plan built from flags (`stamp --version --channel`), where no PR number,
+ * branch or preid is known: `latest` for a release, else the channel's name.
+ */
+export function flagDistTag(channel: Plan["channel"], version: string): string {
+  if (channel === "release") return distTag({ channel, version, maintenance: false });
+  return channel === "prerelease" ? "prerelease" : "preview";
 }
 
 function finish(
@@ -511,14 +538,30 @@ function planShip(
     }
     notices.push(`Shipping ${version} although ${targetName} already shipped ${highest} (force).`);
   }
+  return finish(buildShipPlan(input, targetName, version), { notices });
+}
+
+/**
+ * The `ship` plan of manual target `targetName` for the released `version`: built from the
+ * release tag's commit. Below the latest release it doesn't move the line's moving tags or
+ * npm `latest` (spec 6.1, 10). `buildNumber` fixes the build number of a build that already
+ * happened (`mark --version`). Callers check that shipping is allowed (`planShip`).
+ */
+export function buildShipPlan(
+  input: PlanInput,
+  targetName: string,
+  version: string,
+  options: { buildNumber?: number | null } = {},
+): Plan {
+  const tag = releaseTag(input.config.tags, version);
   const releaseSha = input.tags.shas.get(tag);
   if (!releaseSha) {
     throw new LaunchsetError("missing-tag-sha", `the commit of tag ${tag} is unknown`, {
       hint: "Fetch the tags (actions/checkout with fetch-depth: 0) and try again.",
     });
   }
-  // An older version must not move the line's moving tags or npm `latest` (spec 6.1, 10).
-  const latest = latestRelease(index);
+  const maintenance = isMaintenanceBranch(input.config, input.branch);
+  const latest = latestRelease(input.tags.index);
   const notLatest = latest !== null && compareVersions(version, latest) < 0;
   const plan = buildPlan(input, {
     input,
@@ -528,9 +571,10 @@ function planShip(
     tagMaintenance: maintenance || notLatest,
     matrix: [targetName],
     releaseSha,
+    ...(options.buildNumber !== undefined ? { buildNumber: options.buildNumber } : {}),
   });
   plan.distTag = distTag({ channel: "release", version, maintenance: maintenance || notLatest });
-  return finish(plan, { notices });
+  return plan;
 }
 
 /** `, build number N` of the shipped target (its own value, also when `eas` makes it null). */

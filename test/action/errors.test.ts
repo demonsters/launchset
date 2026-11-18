@@ -11,7 +11,7 @@ describe("formatError", () => {
     expect(errorText(formatError(error))).toBe("something broke\nDo this.");
   });
 
-  it("doesn't repeat a hint that GitError already embeds in its message", () => {
+  it("doesn't repeat a hint that a GitError embeds in its message: it becomes the tip", () => {
     const error = new GitError(
       "git push failed: denied\nHint: use the App token",
       "git push",
@@ -20,12 +20,12 @@ describe("formatError", () => {
       "use the App token",
     );
     const formatted = formatError(error);
-    expect(formatted).toEqual({ message: error.message });
+    expect(formatted).toEqual({ message: "git push failed: denied", hint: "use the App token" });
     expect(errorText(formatted).match(/use the App token/g)).toHaveLength(1);
     expect(errorSummary("launchset release", formatted).match(/use the App token/g)).toHaveLength(
       1,
     );
-    expect(errorSummary("launchset release", formatted)).not.toContain("[!TIP]");
+    expect(errorSummary("launchset release", formatted)).toContain("> [!TIP]\n> use the App token");
   });
 
   it("doesn't repeat the hint of a GitHubError either", () => {

@@ -44,12 +44,17 @@ import {
 import { escapeRegExp } from "../core/regex.ts";
 import type { Plan } from "../core/types.ts";
 import { GitError, type PushResult, TagCleanupError, TagExistsError } from "../git/index.ts";
-import { createGitHub, type GitHub, type Job } from "../github/index.ts";
-import { type FlowContext, type FlowResult, requireGitHub } from "./context.ts";
+import type { GitHub, Job } from "../github/index.ts";
+import {
+  branchFromRef,
+  eventInfo,
+  type FlowContext,
+  type FlowResult,
+  requireGitHub,
+} from "./context.ts";
 import {
   baseBranchRef,
   changesetDir,
-  dispatchInputs,
   readChangesetFiles,
   readTagSnapshot,
   rootVersionReader,
@@ -62,25 +67,13 @@ export const MAX_RESERVATION_ATTEMPTS = 10;
 // ---------------------------------------------------------------------------
 // Reading the event
 
-type Json = Record<string, unknown>;
-
-function record(value: unknown): Json | undefined {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Json)
-    : undefined;
-}
-
-function text(value: unknown): string | undefined {
-  return typeof value === "string" && value !== "" ? value : undefined;
-}
-
 function invalidEvent(message: string): LaunchsetError {
   return new LaunchsetError("invalid-event", message, {
     hint: "The preview workflow runs on pull_request, push and workflow_dispatch events.",
   });
 }
 
-/** Split `targets` input values (the action passes a comma-separated string). */
+/** Split `targets` values: each may be a comma-separated list (or `all`). */
 function splitTargets(values: readonly string[]): string[] {
   return values
     .flatMap((v) => v.split(","))
@@ -90,7 +83,8 @@ function splitTargets(values: readonly string[]): string[] {
 
 /** Branch of a `refs/heads/<branch>` ref; throws for tags and other refs. */
 function branchOfRef(ref: string): string {
-  if (ref.startsWith("refs/heads/")) return ref.slice("refs/heads/".length);
+  const branch = branchFromRef(ref);
+  if (branch !== undefined) return branch;
   throw new LaunchsetError(
     "unsupported-ref",
     `a preview can only be built from a branch, but the event ref is ${ref}`,
@@ -105,10 +99,9 @@ interface Source {
 }
 
 async function currentBranch(context: FlowContext): Promise<string> {
-  const payload: Json = context.event?.payload ?? {};
-  const ref = text(payload.ref) ?? text(context.env.GITHUB_REF);
+  const ref = eventInfo(context)?.ref ?? (context.env.GITHUB_REF || undefined);
   if (ref?.startsWith("refs/")) return branchOfRef(ref);
-  const name = text(context.env.GITHUB_REF_NAME);
+  const name = context.env.GITHUB_REF_NAME || undefined;
   if (name) return name;
   const branch = await context.git.currentBranch();
   if (branch) return branch;
@@ -118,48 +111,28 @@ async function currentBranch(context: FlowContext): Promise<string> {
 }
 
 async function currentSha(context: FlowContext): Promise<string> {
-  const payload: Json = context.event?.payload ?? {};
-  const after = text(payload.after);
-  const sha =
-    text(context.env.GITHUB_SHA) ??
-    (after && !/^0+$/.test(after) ? after : undefined) ??
-    (await context.git.headSha());
-  return sha;
+  return context.env.GITHUB_SHA || eventInfo(context)?.sha || context.git.headSha();
 }
 
 async function deriveSource(
   context: FlowContext,
   targets: readonly string[] | undefined,
 ): Promise<Source> {
-  const { event } = context;
+  const event = eventInfo(context);
 
   if (event?.name === "pull_request") {
-    const pr = record(event.payload.pull_request);
-    const head = record(pr?.head);
-    const number = typeof pr?.number === "number" ? pr.number : Number(event.payload.number);
-    const branch = text(head?.ref);
-    const headSha = text(head?.sha);
-    if (!pr || !Number.isSafeInteger(number) || !branch || !headSha) {
+    const { pr } = event;
+    const number = pr?.number;
+    const branch = pr?.headRef;
+    const headSha = pr?.headSha;
+    if (!pr || number === undefined || !Number.isSafeInteger(number) || !branch || !headSha) {
       throw invalidEvent(
         "the pull_request event payload has no pull_request number, head.ref or head.sha",
       );
     }
-    const action = text(event.payload.action);
-    const labels = Array.isArray(pr.labels)
-      ? pr.labels.flatMap((l) => {
-          const name = text(record(l)?.name);
-          return name ? [name] : [];
-        })
-      : [];
-    const headRepo = text(record(head?.repo)?.full_name);
-    const baseRepo =
-      text(record(event.payload.repository)?.full_name) ?? context.repository ?? undefined;
-    // A deleted fork has no head repo: it can't have been a same-repo PR either.
-    const fork = headRepo === undefined || (baseRepo !== undefined && headRepo !== baseRepo);
-    const trigger: PreviewTrigger = { kind: "pr", number, labels, fork };
-    if (action !== undefined) trigger.action = action;
-    const eventLabel = text(record(event.payload.label)?.name);
-    if (action === "labeled" && eventLabel !== undefined) trigger.label = eventLabel;
+    const trigger: PreviewTrigger = { kind: "pr", number, labels: pr.labels, fork: pr.fork };
+    if (pr.action !== undefined) trigger.action = pr.action;
+    if (pr.action === "labeled" && pr.label !== undefined) trigger.label = pr.label;
     return { trigger, branch, headSha };
   }
 
@@ -172,7 +145,7 @@ async function deriveSource(
     return { trigger: { kind: "push" }, branch, headSha };
   }
   // workflow_dispatch, or no event at all (the CLI): any branch, the targets input.
-  const inputs = dispatchInputs(context);
+  const inputs = event?.inputs ?? {};
   const input = targets ?? splitTargets([inputs.targets ?? inputs.target ?? ""]);
   const trigger: PreviewTrigger = { kind: "dispatch" };
   if (input.length > 0) trigger.targets = input;
@@ -207,11 +180,11 @@ async function requireCommit(context: FlowContext, sha: string): Promise<void> {
 
 export interface PreviewPlanOptions {
   /**
-   * Targets to build (`workflow_dispatch` input; the action passes `target` as a
-   * comma-separated list, entries may contain commas and are split). `"all"` builds every
-   * target. Only used for manual runs; PR and push previews ignore it.
+   * Targets to build, as given (CLI `--target`, the action's `target` input): each value may
+   * be a comma-separated list; `all` builds every target. Only used for manual runs; PR and
+   * push previews ignore it.
    */
-  targets?: string[] | "all";
+  targets?: readonly string[];
   /** `git fetch --tags` first (when a remote exists). Default true. */
   fetch?: boolean;
   /**
@@ -364,12 +337,7 @@ export async function previewPlan(
   options: PreviewPlanOptions = {},
 ): Promise<FlowResult<PreviewPlanData>> {
   const { config } = context;
-  const targets =
-    options.targets === undefined
-      ? undefined
-      : options.targets === "all"
-        ? ["all"]
-        : splitTargets(options.targets);
+  const targets = options.targets === undefined ? undefined : splitTargets(options.targets);
 
   const { trigger, branch, headSha } = await deriveSource(context, targets);
   if (targets !== undefined && trigger.kind !== "dispatch") {
@@ -540,20 +508,14 @@ export function targetResults(
 
 /** The jobs of the current run. The App token first, then the workflow's own `GITHUB_TOKEN`. */
 async function listRunJobs(context: FlowContext, github: GitHub, runId: number): Promise<Job[]> {
-  const fallbackToken = context.env.GITHUB_TOKEN;
   try {
     return await github.listJobs(runId);
   } catch (error) {
-    if (!fallbackToken || fallbackToken === context.token || !context.repository) throw error;
+    if (!context.workflowGitHub) throw error;
     context.log.warn(
-      `Couldn't list the jobs with the App token (${(error as Error).message}); trying GITHUB_TOKEN`,
+      `Couldn't list the jobs with the App token (${errorMessage(error)}); trying GITHUB_TOKEN`,
     );
-    const apiUrl = context.env.GITHUB_API_URL;
-    return createGitHub({
-      token: fallbackToken,
-      repository: context.repository,
-      ...(apiUrl ? { apiUrl } : {}),
-    }).listJobs(runId);
+    return context.workflowGitHub.listJobs(runId);
   }
 }
 

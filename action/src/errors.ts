@@ -1,27 +1,18 @@
 /** How a failure is shown in the step error and the job summary. */
 
-import { errorMessage, isLaunchsetError } from "../../src/core/errors.ts";
+import { describeError } from "../../src/core/errors.ts";
 
 export interface FormattedError {
-  /** The message, as thrown. */
+  /** The message, without the hint. */
   message: string;
-  /** A hint that isn't already part of the message. */
+  /** What to do about it. */
   hint?: string;
 }
 
-/**
- * The message and the hint of an error. `LaunchsetError` keeps its hint apart, but `GitError`,
- * `GitHubError` and `VerifyError` embed "Hint: …" in the message and also carry it as `hint`:
- * the hint is only returned when the message doesn't contain it yet.
- */
+/** The message and the hint of an error ({@link describeError}: the hint once, apart). */
 export function formatError(error: unknown): FormattedError {
-  const message = errorMessage(error);
-  const raw = isLaunchsetError(error)
-    ? error.hint
-    : (error as { hint?: unknown } | null | undefined)?.hint;
-  const hint = typeof raw === "string" ? raw.trim() : "";
-  if (hint === "" || message.includes(hint)) return { message };
-  return { message, hint };
+  const { message, hint } = describeError(error);
+  return hint ? { message, hint } : { message };
 }
 
 /** The text of the step error (`setFailed`). */

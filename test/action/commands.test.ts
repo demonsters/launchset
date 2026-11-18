@@ -1,7 +1,7 @@
 /** Input reading and command dispatch, with the flow functions mocked. */
 
 import { describe, expect, it, vi } from "vitest";
-import { dispatch, type Flows, outputsFor, splitTargets } from "../../action/src/commands.ts";
+import { dispatch, type Flows, outputsFor } from "../../action/src/commands.ts";
 import { COMMANDS, type Inputs, readInputs } from "../../action/src/inputs.ts";
 import { LaunchsetError } from "../../src/core/errors.ts";
 import type { FlowContext, FlowResult } from "../../src/flow/index.ts";
@@ -159,9 +159,16 @@ describe("dispatch", () => {
     ).rejects.toMatchObject({ code: "missing-input" });
   });
 
-  it("preview-plan splits target on commas; preview-comment passes the (maybe empty) plan", async () => {
+  it("preview-plan passes a given target through (previewPlan splits it); preview-comment passes the (maybe empty) plan", async () => {
     const flows = mockFlows();
     await dispatch("preview-plan", inputs({ command: "preview-plan" }), context, flows);
+    expect(flows.previewPlan).toHaveBeenLastCalledWith(context, {});
+    await dispatch(
+      "preview-plan",
+      inputs({ command: "preview-plan", target: " , " }),
+      context,
+      flows,
+    );
     expect(flows.previewPlan).toHaveBeenLastCalledWith(context, {});
     await dispatch(
       "preview-plan",
@@ -169,7 +176,7 @@ describe("dispatch", () => {
       context,
       flows,
     );
-    expect(flows.previewPlan).toHaveBeenLastCalledWith(context, { targets: ["web", "android"] });
+    expect(flows.previewPlan).toHaveBeenLastCalledWith(context, { targets: ["web, android ,,"] });
     await dispatch("preview-comment", inputs({ command: "preview-comment" }), context, flows);
     expect(flows.previewComment).toHaveBeenLastCalledWith(context, { plan: "" });
   });
@@ -178,12 +185,6 @@ describe("dispatch", () => {
     const flows = mockFlows();
     await dispatch("add", inputs({ command: "add", bump: "patch", message: "m" }), context, flows);
     expect(flows.add).toHaveBeenCalledWith(context, { bump: "patch", message: "m" });
-  });
-
-  it("splitTargets", () => {
-    expect(splitTargets("")).toBeUndefined();
-    expect(splitTargets(" , ")).toBeUndefined();
-    expect(splitTargets("all")).toEqual(["all"]);
   });
 });
 

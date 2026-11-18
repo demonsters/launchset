@@ -27,6 +27,127 @@ export interface ActionsEvent {
   payload: Record<string, unknown>;
 }
 
+/** A pull request from the event payload (`pull_request`). */
+export interface EventPr {
+  /** `pull_request.number` (else the payload's `number`). */
+  number?: number;
+  headRef?: string;
+  headSha?: string;
+  /** `owner/repo` the head branch lives in; undefined when the fork was deleted. */
+  headRepo?: string;
+  baseRef?: string;
+  baseSha?: string;
+  /** `owner/repo` of the base branch (`base.repo`, else the payload's `repository`). */
+  baseRepo?: string;
+  /** Login of the PR's author. */
+  author?: string;
+  labels: string[];
+  /** A fork PR: the head repo is gone (deleted fork) or isn't the base repo. */
+  fork: boolean;
+  /** The event's `action` (`opened`, `synchronize`, `labeled`, …). */
+  action?: string;
+  /** The label of a `labeled`/`unlabeled` event. */
+  label?: string;
+}
+
+/** The fields of an Actions event launchset reads, parsed from the payload once. */
+export interface EventInfo {
+  name: string;
+  /** Set when the payload has a `pull_request`. */
+  pr?: EventPr;
+  /** The payload's `ref` (push and workflow_dispatch: `refs/heads/<branch>`). */
+  ref?: string;
+  /** The payload's `after` (push), unless it's all zeros (a deleted branch). */
+  sha?: string;
+  /** `workflow_dispatch` inputs, as strings. */
+  inputs: Record<string, string>;
+}
+
+type Json = Record<string, unknown>;
+
+function record(value: unknown): Json | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Json)
+    : undefined;
+}
+
+function text(value: unknown): string | undefined {
+  return typeof value === "string" && value !== "" ? value : undefined;
+}
+
+function parsePr(payload: Json): EventPr | undefined {
+  const pr = record(payload.pull_request);
+  if (!pr) return undefined;
+  const head = record(pr.head);
+  const base = record(pr.base);
+  const number =
+    typeof pr.number === "number"
+      ? pr.number
+      : typeof payload.number === "number"
+        ? payload.number
+        : undefined;
+  const headRepo = text(record(head?.repo)?.full_name);
+  const baseRepo =
+    text(record(base?.repo)?.full_name) ?? text(record(payload.repository)?.full_name);
+  const labels = Array.isArray(pr.labels)
+    ? pr.labels.flatMap((l) => {
+        const name = text(record(l)?.name);
+        return name ? [name] : [];
+      })
+    : [];
+  return {
+    number,
+    headRef: text(head?.ref),
+    headSha: text(head?.sha),
+    headRepo,
+    baseRef: text(base?.ref),
+    baseSha: text(base?.sha),
+    baseRepo,
+    author: text(record(pr.user)?.login),
+    labels,
+    fork: headRepo === undefined || headRepo !== baseRepo,
+    action: text(payload.action),
+    label: text(record(payload.label)?.name),
+  };
+}
+
+/** Parse the fields launchset reads from an event payload. */
+export function parseEvent(event: ActionsEvent): EventInfo {
+  const { payload } = event;
+  const inputs: Record<string, string> = {};
+  for (const [key, value] of Object.entries(record(payload.inputs) ?? {})) {
+    if (typeof value === "string") inputs[key] = value;
+    else if (typeof value === "boolean" || typeof value === "number") inputs[key] = String(value);
+  }
+  const info: EventInfo = { name: event.name, inputs };
+  const pr = parsePr(payload);
+  if (pr) info.pr = pr;
+  const ref = text(payload.ref);
+  if (ref) info.ref = ref;
+  const after = text(payload.after);
+  if (after && !/^0+$/.test(after)) info.sha = after;
+  return info;
+}
+
+const parsedEvents = new WeakMap<ActionsEvent, EventInfo>();
+
+/** The context's event, parsed (once per event); undefined outside Actions. */
+export function eventInfo(context: Pick<FlowContext, "event">): EventInfo | undefined {
+  const { event } = context;
+  if (!event) return undefined;
+  let info = parsedEvents.get(event);
+  if (!info) {
+    info = parseEvent(event);
+    parsedEvents.set(event, info);
+  }
+  return info;
+}
+
+/** `refs/heads/main` → `main`; anything else → undefined. */
+export function branchFromRef(ref: string | undefined): string | undefined {
+  return ref?.startsWith("refs/heads/") ? ref.slice("refs/heads/".length) : undefined;
+}
+
 export interface FlowContext {
   /** Config root (the directory with `launchset.config.*`; the action's `working-directory`). */
   cwd: string;
@@ -35,6 +156,11 @@ export interface FlowContext {
   git: Git;
   /** Set when a token and the repository are known. Commands that need it call `requireGitHub`. */
   github?: GitHub;
+  /**
+   * A client for the workflow's own `GITHUB_TOKEN`, when that isn't `token` (the App token):
+   * a fallback for reads the App may lack permission for (the run's jobs).
+   */
+  workflowGitHub?: GitHub;
   token?: string;
   /** `owner/repo`. */
   repository?: string;
@@ -113,15 +239,17 @@ export async function createContext(options: ContextOptions): Promise<FlowContex
   const git = new Git({ cwd: root, ...(token ? { token } : {}), serverUrl });
   let repository = options.repository || env.GITHUB_REPOSITORY || undefined;
   if (!repository) repository = (await git.repoFromRemote().catch(() => undefined)) ?? undefined;
-  const github =
-    token && repository
+  const client = (clientToken: string | undefined) =>
+    clientToken && repository
       ? createGitHub({
-          token,
+          token: clientToken,
           repository,
           ...(env.GITHUB_API_URL ? { apiUrl: env.GITHUB_API_URL } : {}),
           log,
         })
       : undefined;
+  const github = client(token);
+  const workflowGitHub = env.GITHUB_TOKEN !== token ? client(env.GITHUB_TOKEN) : undefined;
   const context: FlowContext = {
     cwd: root,
     config,
@@ -133,10 +261,14 @@ export async function createContext(options: ContextOptions): Promise<FlowContex
     log,
   };
   if (github) context.github = github;
+  if (workflowGitHub) context.workflowGitHub = workflowGitHub;
   if (token) context.token = token;
   if (repository) context.repository = repository;
   const event = await readEvent(env);
-  if (event) context.event = event;
+  if (event) {
+    context.event = event;
+    eventInfo(context); // parsed once, here; flows read it with eventInfo(context)
+  }
   const run = runInfoFromEnv(env, serverUrl, repository);
   if (run) context.run = run;
   return context;

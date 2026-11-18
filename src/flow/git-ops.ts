@@ -96,6 +96,46 @@ export async function requireCleanWorktree(git: Git, what: string): Promise<void
   );
 }
 
+export interface RebuildBranchOptions {
+  /** The branch to (re)build, e.g. `launchset/release/main`. */
+  branch: string;
+  /** Commit it starts from. */
+  from: string;
+  /** Commit message of the one commit on top of `from`. */
+  message: string;
+  /** Edits the working tree; returns the repo-relative paths to commit. */
+  write: () => Promise<string[]>;
+  /** What needs the clean working tree, for the error (`Building the release PR`). */
+  what: string;
+}
+
+/**
+ * Rebuild `branch` as one commit on top of `from` and force-push it: needs a clean working
+ * tree, and restores the original checkout afterwards. A rebuild with the same content as the
+ * remote branch isn't pushed (no CI re-run for nothing): `pushed: false`.
+ */
+export async function rebuildBranch(
+  context: FlowContext,
+  options: RebuildBranchOptions,
+): Promise<{ commit: string; pushed: boolean }> {
+  const { git } = context;
+  await requireCleanWorktree(git, options.what);
+  const original = await currentCheckout(git);
+  try {
+    await git.checkoutNewBranch(options.branch, options.from);
+    const paths = await options.write();
+    const commit = await git.commitAll(options.message, paths);
+    const remote = await remoteBranchHead(context, options.branch);
+    if (remote !== undefined && (await sameCommitContent(context, remote, commit))) {
+      return { commit, pushed: false };
+    }
+    await git.pushBranch(options.branch, { force: true });
+    return { commit, pushed: true };
+  } finally {
+    await restoreCheckout(git, original);
+  }
+}
+
 /**
  * The commit of `branch` on the remote (fetched into `refs/remotes/<remote>/<branch>`), or
  * the local branch when there is no remote. Throws when the branch doesn't exist.

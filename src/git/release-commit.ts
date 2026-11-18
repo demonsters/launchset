@@ -7,6 +7,7 @@
  * commit as the original run.
  */
 
+import { LaunchsetError } from "../core/errors.ts";
 import { type Git, topPathspec } from "./index.ts";
 
 /**
@@ -48,9 +49,10 @@ function parseRootVersion(text: string, file: string, sha: string): string | und
   try {
     data = JSON.parse(text.replace(/^\uFEFF/, ""));
   } catch (error) {
-    throw new Error(
-      `Could not parse ${file} at commit ${sha.slice(0, 12)}: ${(error as Error).message}\n` +
-        `Hint: the version file must be valid JSON in every commit launchset inspects.`,
+    throw new LaunchsetError(
+      "invalid-version-file",
+      `Could not parse ${file} at commit ${sha.slice(0, 12)}: ${(error as Error).message}`,
+      { hint: "The version file must be valid JSON in every commit launchset inspects." },
     );
   }
   if (data && typeof data === "object" && !Array.isArray(data)) {
