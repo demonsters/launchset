@@ -154,16 +154,23 @@ describe("errors", () => {
     const dir = tempDir("empty");
     const plain = await cli(["status"], { cwd: dir });
     expect(plain.stderr).not.toContain("\u001b[");
-    const tty = await cli(["status"], { cwd: dir, isTTY: true, env: {} });
+    const tty = await cli(["status"], { cwd: dir, stderrIsTTY: true, env: {} });
     expect(tty.stderr).toContain("\u001b[");
-    const noColor = await cli(["status"], { cwd: dir, isTTY: true, env: { NO_COLOR: "1" } });
+    const noColor = await cli(["status"], {
+      cwd: dir,
+      stderrIsTTY: true,
+      env: { NO_COLOR: "1" },
+    });
     expect(noColor.stderr).not.toContain("\u001b[");
+    // Colors follow stderr, not stdin: a terminal on stdin with a piped stderr stays plain.
+    const piped = await cli(["status"], { cwd: dir, isTTY: true, stderrIsTTY: false, env: {} });
+    expect(piped.stderr).not.toContain("\u001b[");
   });
 
   it("rejects a malformed --repo", async () => {
     const f = fixtureRepo();
     const r = await cli(["status", "--repo", "nope"], { cwd: f.dir });
-    expect(r.code).toBe(1);
+    expect(r.code).toBe(2);
     expect(r.stderr).toContain("error: --repo nope is not owner/repo");
   });
 });
@@ -232,7 +239,7 @@ describe("add", () => {
   it("fails without flags when there is no terminal", async () => {
     const f = fixtureRepo();
     const r = await cli(["add"], { cwd: f.dir });
-    expect(r.code).toBe(1);
+    expect(r.code).toBe(2);
     expect(r.stdout).toBe("");
     expect(r.stderr).toContain(
       "error: add needs --bump <major|minor|patch|none> and --message <text>",
@@ -244,7 +251,7 @@ describe("add", () => {
   it("fails with --yes even in a terminal, and without a message", async () => {
     const f = fixtureRepo();
     const yes = await cli(["add", "--yes"], { cwd: f.dir, isTTY: true });
-    expect(yes.code).toBe(1);
+    expect(yes.code).toBe(2);
     expect(yes.stderr).toContain("error: add needs --bump");
     const bare = await cli(["add", "--bump", "minor"], { cwd: f.dir });
     expect(bare.code).toBe(1);
@@ -255,7 +262,7 @@ describe("add", () => {
   it("rejects --empty with a bump", async () => {
     const f = fixtureRepo();
     const r = await cli(["add", "--empty", "--bump", "major"], { cwd: f.dir });
-    expect(r.code).toBe(1);
+    expect(r.code).toBe(2);
     expect(r.stderr).toContain("error: --empty means bump: none");
   });
 
@@ -379,7 +386,7 @@ describe("status", () => {
     expect(unknown.code).toBe(1);
     expect(unknown.stderr).toContain("error: --since nope/ref isn't a known commit or branch");
     const alone = await cli(["status", "--since", "origin/main"], { cwd: f.dir });
-    expect(alone.code).toBe(1);
+    expect(alone.code).toBe(2);
     expect(alone.stderr).toContain("--since only applies with --require-changeset");
   });
 });
@@ -533,12 +540,12 @@ describe("stamp", () => {
   it("explains what is missing or conflicting", async () => {
     const f = fixtureRepo();
     const none = await cli(["stamp", "--target", "web"], { cwd: f.dir });
-    expect(none.code).toBe(1);
+    expect(none.code).toBe(2);
     expect(none.stderr).toContain("error: stamp needs --version or the plan");
     const both = await cli(["stamp", "--target", "web", "--plan", "{}", "--version", "1.0.0"], {
       cwd: f.dir,
     });
-    expect(both.code).toBe(1);
+    expect(both.code).toBe(2);
     expect(both.stderr).toContain("--plan can't be combined");
     const file = await cli(["stamp", "--target", "web", "--plan", "@/no/such/plan.json"], {
       cwd: f.dir,
@@ -556,7 +563,7 @@ describe("verify, mark, finalize, ship, hotfix, check", () => {
     const f = fixtureRepo();
     for (const argv of [["verify", "--target", "web"], ["finalize"]]) {
       const r = await cli(argv, { cwd: f.dir });
-      expect(r.code).toBe(1);
+      expect(r.code).toBe(2);
       expect(r.stderr).toContain("needs the release plan");
       expect(r.stderr).toContain("hint: Pass --plan");
     }
@@ -581,7 +588,7 @@ describe("verify, mark, finalize, ship, hotfix, check", () => {
   it("mark needs --version or a plan; marks an auto target by version", async () => {
     const f = fixtureRepo();
     const none = await cli(["mark", "--target", "web"], { cwd: f.dir });
-    expect(none.code).toBe(1);
+    expect(none.code).toBe(2);
     expect(none.stderr).toContain("mark needs --version or the plan");
     const r = await cli(["mark", "--target", "web", "--version", "1.4.0", "--json"], {
       cwd: f.dir,

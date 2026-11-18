@@ -46,14 +46,16 @@ export async function add(context: FlowContext, options: AddOptions): Promise<Fl
     throw new LaunchsetError(
       "invalid-bump",
       raw ? `"${options.bump}" is not a bump type` : "add needs a bump type",
-      { hint: "Pass --bump major, minor, patch or none (or --empty for none)." },
+      {
+        hint: "Give the bump: major, minor, patch or none, or empty for none (CLI: --bump / --empty; action: bump input).",
+      },
     );
   }
   const bump: Bump = raw;
   const summary = (options.message ?? "").replace(/\r\n/g, "\n").trim();
   if (summary === "" && bump !== "none") {
     throw new LaunchsetError("empty-summary", `a ${bump} changeset needs a summary`, {
-      hint: 'Pass --message "<what changed, for the changelog>", or --empty for a change that needs no release.',
+      hint: "Give a message with what changed, for the changelog (CLI: --message; action: message input), or use an empty changeset for a change that needs no release (CLI: --empty).",
     });
   }
   const dir = join(context.cwd, CHANGESET_DIR);

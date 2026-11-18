@@ -3,10 +3,9 @@
  * flags, decides whether it may ask questions, builds the flow context and prints results.
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { Command, CommanderError, InvalidArgumentError, Option } from "commander";
-import { LaunchsetError } from "../core/errors.ts";
 import { BUMPS, type Bump, type Channel } from "../core/types.ts";
 import {
   add,
@@ -22,8 +21,9 @@ import {
   version,
 } from "../flow/index.ts";
 import { previewPlan } from "../flow/preview.ts";
+import { Git } from "../git/index.ts";
 import { INIT_FLAGS, type InitOptions, packageFile, parseDecide, runInit } from "../init/index.ts";
-import { reportError } from "./errors.ts";
+import { exitCodeFor, reportError, UsageError } from "./errors.ts";
 import { type CliIo, processIo } from "./io.ts";
 import { clackAddPrompts } from "./prompts.ts";
 import { emit, type GlobalOpts, makeContext, readPlanInput, toJson } from "./run.ts";
@@ -65,11 +65,12 @@ type Handler<O> = (opts: O & GlobalOpts, args: string[]) => Promise<number>;
 /** Shared options; `--cwd` etc. are also accepted before the command name. */
 function withGlobals(
   cmd: Command,
-  options: { json?: boolean; yes?: boolean; github?: boolean } = {},
+  options: { json?: boolean; yes?: boolean; github?: boolean; cwdHelp?: string } = {},
 ): Command {
   cmd.option(
     "--cwd <dir>",
-    "run in this directory (default: the nearest folder with a launchset config)",
+    options.cwdHelp ??
+      "run in this directory (default: the nearest folder with a launchset config)",
   );
   if (options.json) cmd.option("--json", "print JSON on stdout (logs go to stderr)");
   if (options.yes) cmd.option("--yes", "never ask; accept defaults");
@@ -84,10 +85,48 @@ function examples(cmd: Command, ...lines: string[]): Command {
   return cmd.addHelpText("after", `\nExample:\n${lines.map((l) => `  $ ${l}`).join("\n")}\n`);
 }
 
-function missingPlan(command: string): LaunchsetError {
-  return new LaunchsetError("missing-plan", `${command} needs the release plan`, {
-    hint: "Pass --plan '<json>', --plan @plan.json or set LAUNCHSET_PLAN. Create one with: launchset plan > plan.json",
-  });
+function missingPlan(command: string): UsageError {
+  return new UsageError(
+    `${command} needs the release plan`,
+    "Pass --plan '<json>', --plan @plan.json or set LAUNCHSET_PLAN. Create one with: launchset plan > plan.json",
+  );
+}
+
+/** The git top-level directory of `dir`, or undefined outside a repo. */
+async function gitTopLevel(dir: string): Promise<string | undefined> {
+  try {
+    return await new Git({ cwd: dir }).topLevel();
+  } catch {
+    return undefined;
+  }
+}
+
+function sameDir(a: string, b: string): boolean {
+  try {
+    return realpathSync(a) === realpathSync(b);
+  } catch {
+    return resolve(a) === resolve(b);
+  }
+}
+
+/**
+ * The folder `init` sets up: `--cwd`, else the git top-level folder (GitHub only runs workflows
+ * from the repo root), else the shell's folder. Says so when that isn't the folder it ran in.
+ */
+async function initRoot(io: CliIo, cwd: string | undefined): Promise<string> {
+  const base = resolve(io.cwd, cwd ?? ".");
+  const top = await gitTopLevel(base);
+  if (top === undefined || sameDir(top, base)) return base;
+  if (cwd === undefined) {
+    io.stderr(
+      `note: init sets up the repo root ${top} (you ran it in ${base}). Pass --cwd to set up another folder.\n`,
+    );
+    return top;
+  }
+  io.stderr(
+    `warning: ${base} is a subfolder of the repo ${top}. GitHub only runs workflows from the repo root, so the workflows init writes in ${base}/.github won't run.\n`,
+  );
+  return base;
 }
 
 function splitTargets(value: string | undefined): string[] | "all" | undefined {
@@ -136,7 +175,7 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
         state.exitCode = await handler(self.optsWithGlobals() as O & GlobalOpts, self.args);
       } catch (error) {
         reportError(io, error);
-        state.exitCode = 1;
+        state.exitCode = exitCodeFor(error);
       }
     });
   }
@@ -153,7 +192,11 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
     "init",
     "Set up a repo: detect versions and targets, write the config, workflows and README.",
     (cmd) => {
-      withGlobals(cmd, { github: false });
+      withGlobals(cmd, {
+        github: false,
+        cwdHelp:
+          "set up this folder (default: the git repo root; GitHub only runs workflows from the root)",
+      });
       for (const flag of INIT_FLAGS) {
         if (flag.type === "string[]") {
           cmd.addOption(new Option(`${flag.flag} <id=value>`, flag.description).argParser(collect));
@@ -173,7 +216,7 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
     async (opts) => {
       const interactive = io.isTTY && !opts.yes && !opts.detect && !opts.json && !opts.convertOnly;
       const options: InitOptions = {
-        cwd: resolve(io.cwd, opts.cwd ?? "."),
+        cwd: await initRoot(io, opts.cwd),
         yes: Boolean(opts.yes),
         decide: parseDecide(opts.decide ?? []),
         detect: Boolean(opts.detect),
@@ -215,32 +258,28 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
     },
     async (opts) => {
       if (opts.empty && opts.bump && opts.bump !== "none") {
-        throw new LaunchsetError(
-          "conflicting-flags",
+        throw new UsageError(
           `--empty means bump: none, but --bump ${opts.bump} was given`,
-          { hint: "Drop --empty, or use --bump none." },
+          "Drop --empty, or use --bump none.",
         );
       }
-      const context = await makeContext(io, opts);
       let bump: string | undefined = opts.empty ? "none" : opts.bump;
       let message = opts.message;
       const flagsGiven = opts.bump !== undefined || opts.message !== undefined || opts.empty;
       if (!flagsGiven) {
         if (!io.isTTY || opts.yes || opts.json) {
-          throw new LaunchsetError(
-            "missing-flags",
+          throw new UsageError(
             "add needs --bump <major|minor|patch|none> and --message <text> (or --empty), because it can't ask questions here",
-            {
-              hint: io.isTTY
-                ? 'Leave out --yes/--json to answer the prompts, or pass the flags: launchset add --bump patch --message "Fix the crash".'
-                : 'Pass the flags, e.g.: launchset add --bump patch --message "Fix the crash".',
-            },
+            io.isTTY
+              ? 'Leave out --yes/--json to answer the prompts, or pass the flags: launchset add --bump patch --message "Fix the crash".'
+              : 'Pass the flags, e.g.: launchset add --bump patch --message "Fix the crash".',
           );
         }
         const prompts = io.addPrompts ?? clackAddPrompts();
         bump = await prompts.bump();
         if (bump !== "none") message = await prompts.summary();
       }
+      const context = await makeContext(io, opts);
       const result = await add(context, {
         ...(bump !== undefined ? { bump: bump as Bump } : {}),
         ...(message !== undefined ? { message } : {}),
@@ -273,9 +312,10 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
     },
     async (opts) => {
       if (opts.since !== undefined && !opts.requireChangeset) {
-        throw new LaunchsetError("invalid-flags", "--since only applies with --require-changeset", {
-          hint: "Add --require-changeset, or drop --since.",
-        });
+        throw new UsageError(
+          "--since only applies with --require-changeset",
+          "Add --require-changeset, or drop --since.",
+        );
       }
       const result = await status(await makeContext(io, opts), {
         ...(opts.requireChangeset ? { requireChangeset: true } : {}),
@@ -354,6 +394,7 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
         const targets = splitTargets(opts.target);
         const result = await previewPlan(context, {
           fetch,
+          dryRun: true,
           ...(targets === undefined ? {} : { targets }),
         });
         if (result.data.outcome === "skip" && result.data.skip) {
@@ -413,17 +454,17 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
       const byFlags =
         opts.version !== undefined || opts.buildNumber !== undefined || opts.channel !== undefined;
       if (byFlags && opts.plan !== undefined) {
-        throw new LaunchsetError(
-          "conflicting-flags",
+        throw new UsageError(
           "--plan can't be combined with --version, --build-number or --channel",
-          { hint: "Give either the plan or the values." },
+          "Give either the plan or the values.",
         );
       }
       const plan = await readPlanInput(io, opts.plan, !byFlags);
       if (plan === undefined && opts.version === undefined) {
-        throw new LaunchsetError("missing-plan", "stamp needs --version or the plan", {
-          hint: "Pass --version <v> (and --build-number <n>), or --plan '<json>' / --plan @plan.json / $LAUNCHSET_PLAN.",
-        });
+        throw new UsageError(
+          "stamp needs --version or the plan",
+          "Pass --version <v> (and --build-number <n>), or --plan '<json>' / --plan @plan.json / $LAUNCHSET_PLAN.",
+        );
       }
       const result = await stamp(await makeContext(io, opts), {
         target: opts.target,
@@ -473,9 +514,10 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
     async (opts) => {
       const plan = await readPlanInput(io, opts.plan, opts.version === undefined);
       if (plan === undefined && opts.version === undefined) {
-        throw new LaunchsetError("missing-plan", "mark needs --version or the plan", {
-          hint: "For a manual target shipped by hand pass --version <v>; in CI pass --plan.",
-        });
+        throw new UsageError(
+          "mark needs --version or the plan",
+          "For a manual target shipped by hand pass --version <v>; in CI pass --plan.",
+        );
       }
       const result = await mark(await makeContext(io, opts), {
         target: opts.target,
@@ -549,7 +591,7 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
       state.exitCode = emit(io, result, { json: opts.json });
     } catch (error) {
       reportError(io, error);
-      state.exitCode = 1;
+      state.exitCode = exitCodeFor(error);
     }
   });
 

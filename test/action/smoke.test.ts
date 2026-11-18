@@ -80,14 +80,42 @@ suite("action bundle on Node 24", () => {
 
   let plan = "";
 
-  it("runs on Node 24 from the publish layout (no package.json, no node_modules)", () => {
+  it.each([
+    ["no package.json", undefined],
+    ["a typeless package.json", '{"name":"host"}'],
+    ['a "type": "commonjs" package.json', '{"name":"host","type":"commonjs"}'],
+  ])("loads with %s above the action folder", (_name, packageJson) => {
+    // A consumer's checkout can have any package.json above the folder the runner puts the
+    // action in (_actions/demonsters/launchset-action/v1 under the runner's work dir).
+    const host = tempDir("host");
+    const copy = join(host, "nested/launchset-action");
+    mkdirSync(join(copy, "dist"), { recursive: true });
+    for (const file of ["dist/index.js", "dist/package.json"]) {
+      writeFileSync(join(copy, file), readFileSync(join(dirname(dirname(bundle)), file)));
+    }
+    if (packageJson) writeFileSync(join(host, "package.json"), packageJson);
+    const run = runAction({
+      node: node as string,
+      bundle: join(copy, "dist/index.js"),
+      scratch,
+      workspace,
+      inputs: { command: "deploy" },
+    });
+    // The command is unknown on purpose: it proves the bundle loaded and ran, cheaply.
+    expect(run.stderr).toBe("");
+    expect(run.stdout).toContain('unknown command "deploy"');
+    expect(run.status).toBe(1);
+  });
+
+  it("runs on Node 24 from the publish layout (no node_modules)", () => {
     expect(execFileSync(node as string, ["--version"], { encoding: "utf8" })).toMatch(/^v24\./);
     const published = dirname(dirname(bundle));
     for (const file of ["action.yml", "README.md", "LICENSE", "dist/index.js"]) {
       expect(existsSync(join(published, file))).toBe(true);
     }
     expect(existsSync(join(published, "package.json"))).toBe(false);
-    expect(existsSync(join(published, "dist/package.json"))).toBe(false);
+    // The only package.json: it makes dist/index.js an ES module whatever is above it.
+    expect(readFileSync(join(published, "dist/package.json"), "utf8")).toBe('{"type":"module"}\n');
     expect(readFileSync(join(published, "LICENSE"), "utf8")).toContain("All rights reserved");
   });
 

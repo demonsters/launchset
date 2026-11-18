@@ -210,6 +210,11 @@ export interface PreviewPlanOptions {
   targets?: string[] | "all";
   /** `git fetch --tags` first (when a remote exists). Default true. */
   fetch?: boolean;
+  /**
+   * Plan only: on a prerelease branch don't reserve (push) the tag. The tag in the plan is the
+   * next free candidate from the fetched tags and may be taken by the time a build starts.
+   */
+  dryRun?: boolean;
 }
 
 export interface PreviewPlanData {
@@ -427,7 +432,11 @@ export async function previewPlan(
   const invalidChangesets = files.flatMap((f) => (f.ok ? [] : [{ path: f.path, error: f.error }]));
   let attempts: number | undefined;
   const extra: string[] = [];
-  if (decision.preview === "prerelease") {
+  if (decision.preview === "prerelease" && options.dryRun) {
+    extra.push(
+      `Tag ${code(decision.plan.tag as string)} is the next free prerelease tag at ${code(headSha.slice(0, 7))}. It is **not reserved** (dry run), so a concurrent run may take it.`,
+    );
+  } else if (decision.preview === "prerelease") {
     const reserved = await reservePrereleaseTag(context, input, decision);
     decision = reserved.decision;
     attempts = reserved.attempts;
@@ -454,7 +463,11 @@ export async function previewPlan(
     `Preview ${plan.version} (${plan.channel}) of ${plan.branch} at ${headSha.slice(0, 7)}`,
     `Targets: ${plan.matrix.length > 0 ? plan.matrix.join(", ") : "none"}`,
   ];
-  if (plan.tag) lines.push(`Tag: ${plan.tag}`);
+  if (plan.tag) {
+    lines.push(
+      `Tag: ${plan.tag}${options.dryRun && decision.preview === "prerelease" ? " (not reserved: dry run)" : ""}`,
+    );
+  }
   return {
     ok: true,
     outputs: { ...actionOutputs(plan), skipped: "", "skip-reason": "" },

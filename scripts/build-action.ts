@@ -5,7 +5,8 @@
  *   node scripts/build-action.ts                 build action/dist/index.js
  *   node scripts/build-action.ts --out <dir>     also write the publish directory for
  *                                                demonsters/launchset-action: action.yml,
- *                                                dist/index.js, README.md, LICENSE
+ *                                                dist/index.js, dist/package.json,
+ *                                                README.md, LICENSE
  *   node scripts/build-action.ts --write-readme  regenerate the tables in action/README.md
  *                                                from action.yml
  */
@@ -19,6 +20,13 @@ import { parse } from "yaml";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const actionDir = resolve(root, "action");
 export const BUNDLE = resolve(actionDir, "dist/index.js");
+
+/**
+ * Written next to `index.js`: the bundle is an ES module, and without this file Node decides by
+ * looking for a package.json above the action folder. A typeless one prints
+ * MODULE_TYPELESS_PACKAGE_JSON, `"type": "commonjs"` makes loading fail.
+ */
+export const DIST_PACKAGE_JSON = `${JSON.stringify({ type: "module" })}\n`;
 
 export const LICENSE_TEXT = `Copyright (c) demonsters. All rights reserved.
 
@@ -85,6 +93,7 @@ export async function buildBundle(outfile: string = BUNDLE): Promise<BuildResult
     // Every dependency is bundled: the action runs without node_modules.
     packages: "bundle",
   });
+  await writeFile(resolve(dirname(outfile), "package.json"), DIST_PACKAGE_JSON);
   const text = await readFile(outfile);
   return { bundle: outfile, bytes: text.length };
 }
@@ -170,9 +179,17 @@ export async function writePublishDir(out: string, bundle: string = BUNDLE): Pro
   const dir = resolve(out);
   await rm(resolve(dir, "dist"), { recursive: true, force: true });
   await mkdir(resolve(dir, "dist"), { recursive: true });
-  const files = ["action.yml", "dist/index.js", "dist/index.js.LEGAL.txt", "README.md", "LICENSE"];
+  const files = [
+    "action.yml",
+    "dist/index.js",
+    "dist/package.json",
+    "dist/index.js.LEGAL.txt",
+    "README.md",
+    "LICENSE",
+  ];
   await copyFile(resolve(actionDir, "action.yml"), resolve(dir, "action.yml"));
   await copyFile(bundle, resolve(dir, "dist/index.js"));
+  await writeFile(resolve(dir, "dist/package.json"), DIST_PACKAGE_JSON);
   await copyFile(`${bundle}.LEGAL.txt`, resolve(dir, "dist/index.js.LEGAL.txt"));
   await writeFile(resolve(dir, "README.md"), await expectedReadme());
   await writeFile(resolve(dir, "LICENSE"), LICENSE_TEXT);

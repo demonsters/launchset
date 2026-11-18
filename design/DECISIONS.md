@@ -84,3 +84,4 @@ Entries marked **NEEDS REVIEW** deviate from the spec because it couldn't be don
 - The `action` target has no `verify`: scripts/publish-action.ts is idempotent (an existing `v{version}` with the same tree is a no-op, with a different tree an error). The action's major tag only moves forward (never for prereleases or older hotfixes); commit, version tag and major tag go in one atomic push. (10, 15)
 - launchset's first release is 1.0.0 (the initial changeset is `major`), so `demonsters/launchset-action@v1`, which init writes into workflows, resolves from the first release. (10, 15)
 - launchset's own config uses a type-only import (`satisfies LaunchsetConfig`) so it loads without node_modules in the action smoke job; other repos use `defineConfig`. (5, 15)
+- The published action also contains `dist/package.json` with `{"type":"module"}`, so the ESM bundle loads even when a parent folder has a CommonJS package.json (e.g. a vendored copy). (10)

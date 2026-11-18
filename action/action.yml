@@ -21,13 +21,12 @@ inputs:
     required: true
   token:
     description: >-
-      GitHub token. For check, the default GITHUB_TOKEN is enough (it only reads and comments).
-      For release, mark, finalize, preview-plan and preview-comment use a GitHub App installation
-      token (actions/create-github-app-token), because events caused by GITHUB_TOKEN do not
-      trigger other workflows. When empty, the action falls back to the GITHUB_TOKEN environment
-      variable.
+      GitHub token. For check, the default (github.token) is enough: it only reads and comments.
+      For release, mark, finalize, preview-plan and preview-comment pass a GitHub App
+      installation token (actions/create-github-app-token), because events caused by
+      GITHUB_TOKEN do not trigger other workflows.
     required: false
-    default: ""
+    default: ${{ github.token }}
   target:
     description: >-
       Target name. Required for stamp, verify and mark. With release: the manual target to ship

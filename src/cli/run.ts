@@ -6,6 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { CONFIG_FILE_NAMES } from "../config/load.ts";
 import { LaunchsetError } from "../core/errors.ts";
 import { createContext, type FlowContext, type FlowResult, type Logger } from "../flow/index.ts";
+import { UsageError } from "./errors.ts";
 import type { CliIo } from "./io.ts";
 
 /** Options every command understands (also accepted before the command name). */
@@ -45,9 +46,10 @@ const REPO = /^[^/\s]+\/[^/\s]+$/;
 
 export async function makeContext(io: CliIo, opts: GlobalOpts): Promise<FlowContext> {
   if (opts.repo !== undefined && !REPO.test(opts.repo)) {
-    throw new LaunchsetError("invalid-repo", `--repo ${opts.repo} is not owner/repo`, {
-      hint: "Pass the repository as --repo demonsters/my-app.",
-    });
+    throw new UsageError(
+      `--repo ${opts.repo} is not owner/repo`,
+      "Pass the repository as --repo demonsters/my-app.",
+    );
   }
   return createContext({
     cwd: resolveRoot(io, opts),

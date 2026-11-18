@@ -424,6 +424,22 @@ describe("prerelease branches (9.9)", () => {
     expect(result.summary).toContain("Reserved tag");
   });
 
+  it("dryRun plans the next tag without pushing it", async () => {
+    const { repo } = setup();
+    branchWithChangeset(repo, "next/login");
+    const result = await previewPlan(context(repo, { event: pushEvent("next/login") }), {
+      dryRun: true,
+    });
+    expect(planOf(result).tag).toBe("v1.5.0-alpha.0");
+    expect(result.data.reservationAttempts).toBeUndefined();
+    expect(result.summary).toContain("not reserved");
+    expect(result.summary).not.toContain("Reserved tag");
+    expect(remoteTags(repo)).toEqual(["v1.4.0"]);
+    expect(repo.git("tag", "--list", "v1.5.0-alpha.*")).toBe("");
+    // The real run afterwards still gets the same number.
+    expect(planOf(await prerelease(repo)).tag).toBe("v1.5.0-alpha.0");
+  });
+
   it("numbers the next push alpha.1 and a re-run of the plan job alpha.2", async () => {
     const { repo } = setup();
     branchWithChangeset(repo, "next/login");

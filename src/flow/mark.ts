@@ -61,8 +61,10 @@ export async function mark(
     if (options.version && normalizeVersionInput(options.version) !== plan.version) {
       throw new LaunchsetError(
         "version-mismatch",
-        `--version ${options.version} doesn't match the plan's version ${plan.version}`,
-        { hint: "Pass either the plan or --version, not both." },
+        `the version ${options.version} doesn't match the plan's version ${plan.version}`,
+        {
+          hint: "Pass either the plan or the version, not both (CLI: --plan / --version; action: plan / version inputs).",
+        },
       );
     }
     version = plan.version;
@@ -70,9 +72,13 @@ export async function mark(
     marker = targetPlan.marker ?? markerTag(config.tags, options.target, version);
   } else {
     if (!options.version) {
-      throw new LaunchsetError("missing-plan", "mark needs the plan or --version", {
-        hint: "In workflows pass the launchset job's plan output; by hand pass --version (the version you shipped).",
-      });
+      throw new LaunchsetError(
+        "missing-plan",
+        "mark needs a plan or a version (CLI: --plan / --version; action: plan / version inputs)",
+        {
+          hint: "In workflows pass the launchset job's plan output; by hand pass the version you shipped.",
+        },
+      );
     }
     version = normalizeVersionInput(options.version);
     const tags = await readTagSnapshot(context);

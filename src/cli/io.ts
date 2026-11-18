@@ -15,8 +15,8 @@ export interface CliIo {
   env: Record<string, string | undefined>;
   /** Stdin is a terminal: only then may a command ask questions. */
   isTTY: boolean;
-  /** Stdout is a terminal (colors). Defaults to `isTTY`. */
-  stdoutIsTTY?: boolean;
+  /** Stderr is a terminal: colors for `error:` and `hint:` (they go to stderr). Default false. */
+  stderrIsTTY?: boolean;
   /** The shell's working directory (`--cwd` is resolved against it). */
   cwd: string;
   /** Interactive prompts for `add` (tests inject fakes; default: @clack/prompts). */
@@ -40,15 +40,15 @@ export function processIo(): CliIo {
     },
     env: process.env,
     isTTY: Boolean(process.stdin.isTTY),
-    stdoutIsTTY: Boolean(process.stdout.isTTY),
+    stderrIsTTY: Boolean(process.stderr.isTTY),
     cwd: process.cwd(),
   };
 }
 
 type Format = "red" | "dim" | "bold";
 
-/** Colors only when stdout is a terminal and `NO_COLOR` isn't set. */
+/** Colors for stderr text: only when stderr is a terminal and `NO_COLOR` isn't set. */
 export function styler(io: CliIo): (format: Format, text: string) => string {
-  const color = (io.stdoutIsTTY ?? io.isTTY) && !io.env.NO_COLOR && io.env.TERM !== "dumb";
+  const color = (io.stderrIsTTY ?? false) && !io.env.NO_COLOR && io.env.TERM !== "dumb";
   return (format, text) => (color ? styleText(format, text, { validateStream: false }) : text);
 }

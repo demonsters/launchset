@@ -33,10 +33,13 @@ export interface Fixture {
 }
 
 /** A pushed repo at `version` with a config, a docker target, a web target and a manual iOS target. */
-export function fixtureRepo(version = "1.4.0", options: { released?: boolean } = {}): Fixture {
+export function fixtureRepo(
+  version = "1.4.0",
+  options: { released?: boolean; config?: unknown } = {},
+): Fixture {
   const { repo, remote } = repoWithRemote();
   repo.commit(`Set up ${version}`, {
-    "launchset.config.json": `${JSON.stringify(CONFIG, null, 2)}\n`,
+    "launchset.config.json": `${JSON.stringify(options.config ?? CONFIG, null, 2)}\n`,
     ".launchset/README.md": "# Changesets\n",
     "CHANGELOG.md": `# Changelog\n\n## ${version} (2026-01-01)\n\n### Patch changes\n- First release.\n`,
     "package.json": pkg(version),
@@ -61,6 +64,7 @@ export interface RunOptions {
   cwd?: string;
   env?: Record<string, string | undefined>;
   isTTY?: boolean;
+  stderrIsTTY?: boolean;
   io?: Partial<CliIo>;
 }
 
@@ -78,6 +82,7 @@ export async function cli(argv: string[], options: RunOptions = {}): Promise<Run
     // Prompts and colors are off unless a test asks: NO_COLOR keeps error output plain in TTY runs.
     env: options.env ?? { NO_COLOR: "1" },
     isTTY: options.isTTY ?? false,
+    stderrIsTTY: options.stderrIsTTY ?? false,
     cwd: options.cwd ?? process.cwd(),
     now: NOW,
     ...options.io,
