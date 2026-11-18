@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <title>launchset</title>
+  <g transform="translate(256 256) rotate(45) scale(0.7) translate(-256 -300)">
+    <g fill="none" stroke-width="22" stroke-linecap="round">
+      <path d="M220 404 L220 486" stroke="#38BDF8"/>
+      <path d="M256 404 L256 530" stroke="#FB923C"/>
+      <path d="M292 404 L292 486" stroke="#A78BFA"/>
+    </g>
+    <path d="M168 262 L118 330 L124 378 L188 350 Z" fill="#FB923C"/>
+    <path d="M344 262 L394 330 L388 378 L324 350 Z" fill="#FB923C"/>
+    <path d="M256 70 C330 118 350 214 338 300 L318 362 L194 362 L174 300 C162 214 182 118 256 70 Z" fill="#1E293B"/>
+    <path d="M220 362 L292 362 L284 386 L228 386 Z" fill="#94A3B8"/>
+    <circle cx="256" cy="214" r="38" fill="#F8FAFC"/>
+    <circle cx="256" cy="214" r="38" fill="none" stroke="#38BDF8" stroke-width="12"/>
+  </g>
+</svg>
