@@ -43,6 +43,8 @@ jobs:
           GIT_COMMITTER_NAME: ci
           GIT_COMMITTER_EMAIL: ci@example.com
       - run: pnpm build
+      - name: Docs build
+        run: pnpm --filter docs check:generated && pnpm --filter docs build
       - uses: actions/upload-artifact@v4
         with:
           name: action-bundle

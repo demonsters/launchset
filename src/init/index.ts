@@ -17,6 +17,7 @@ import { resolveConfig } from "../core/config/schema.ts";
 import { LaunchsetError } from "../core/errors.ts";
 import { renderTag } from "../core/tags.ts";
 import { Git } from "../git/index.ts";
+import { REQUIRED_APP_PERMISSIONS } from "../github/permissions.ts";
 import { stampForRelease, writeChanges } from "../platforms/index.ts";
 import { renderWorkflows } from "../templates/workflows.ts";
 import { installSkill } from "./agents.ts";
@@ -571,7 +572,7 @@ async function writeAll(
 
   // --- Manual steps
   manualSteps.push(
-    'Create the launchset GitHub App for your org if it doesn\'t exist (Contents: read & write, Pull requests: read & write), install it on this repo, and add the secrets LAUNCHSET_APP_ID and LAUNCHSET_APP_PRIVATE_KEY. See "GitHub App setup" in the docs.',
+    `Create the launchset GitHub App for your org if it doesn't exist (${REQUIRED_APP_PERMISSIONS.map((p) => `${p.name}: ${p.access}`).join(", ")}), install it on this repo, and add the secrets LAUNCHSET_APP_ID and LAUNCHSET_APP_PRIVATE_KEY. See "GitHub App setup" in the docs.`,
   );
   const buildTargets = plan.targets.map((t) => t.name);
   manualSteps.push(

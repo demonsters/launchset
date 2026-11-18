@@ -1,4 +1,11 @@
 # --- @@target@@ (web): your build and deploy steps, e.g. ---
+# Remove this step once you've added the build and upload steps below: it stops the release
+# from marking @@target@@ as shipped while nothing builds it.
+- name: Build steps missing (@@target@@)
+  if: @@if@@
+  run: |
+    echo "::error::No build steps for @@target@@ yet. Add them to this workflow and remove this step."
+    exit 1
 # The root package.json already has the version. `stamp` also wrote it into any extra `files`
 # of this target.
 #

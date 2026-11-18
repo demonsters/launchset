@@ -85,3 +85,5 @@ Entries marked **NEEDS REVIEW** deviate from the spec because it couldn't be don
 - launchset's first release is 1.0.0 (the initial changeset is `major`), so `demonsters/launchset-action@v1`, which init writes into workflows, resolves from the first release. (10, 15)
 - launchset's own config uses a type-only import (`satisfies LaunchsetConfig`) so it loads without node_modules in the action smoke job; other repos use `defineConfig`. (5, 15)
 - The published action also contains `dist/package.json` with `{"type":"module"}`, so the ESM bundle loads even when a parent folder has a CommonJS package.json (e.g. a vendored copy). (10)
+- Generated workflows add a failing "Build steps missing (<target>)" step for targets whose build steps are still commented examples (android, ios, web, custom without npm), so `mark` never records a target as shipped while nothing builds it. The team removes the step when adding their steps. (9.3, 11.1)
+- The adoption skill (`skills/launchset-adopt`) ships in the npm package next to the usage skill, so it can be copied to `~/.claude/skills/` from an installed package; no Claude Code plugin manifest is provided. (16.3)

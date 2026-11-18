@@ -30,6 +30,7 @@
     "dist",
     "templates",
     "skills/launchset",
+    "skills/launchset-adopt",
     "README.md"
   ],
   "scripts": {

@@ -720,3 +720,29 @@ describe("action.yml contract", () => {
     });
   }
 });
+
+describe("build-step guard", () => {
+  it("fails the build of targets that only have commented example steps, not docker", () => {
+    const config = resolveConfig({
+      targets: {
+        api: { type: "docker", image: "ghcr.io/org/api" },
+        web: { type: "web" },
+      },
+      preview: false,
+    });
+    const release = renderWorkflows({ config }).find((f) =>
+      f.path.endsWith("launchset-release.yml"),
+    );
+    const steps = (
+      parse(release?.content ?? "") as {
+        jobs: { build: { steps: { name?: string; if?: string; run?: string }[] } };
+      }
+    ).jobs.build.steps;
+    const guards = steps.filter((s) => s.name?.startsWith("Build steps missing"));
+    expect(guards.map((s) => s.name)).toEqual(["Build steps missing (web)"]);
+    expect(guards[0]?.run).toContain("exit 1");
+    // It runs before `mark`, so a target without build steps never gets a marker.
+    const names = steps.map((s) => s.name ?? s.run ?? "");
+    expect(names.indexOf("Build steps missing (web)")).toBeLessThan(names.length - 1);
+  });
+});
