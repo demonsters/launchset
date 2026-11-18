@@ -559,13 +559,6 @@ export async function detect(root: string, options: { now?: Date } = {}): Promis
     const github = await git.repoFromRemote();
     if (github) gitInfo.github = github;
     tagNames = (await git.tags()).map((t) => t.name);
-    const top = await git.topLevel();
-    if (absolute(top, ".") !== absolute(root, ".") && (await statOrNull(top))) {
-      notes.push({
-        level: "warning",
-        message: `${root} is not the root of the git repository (${top}); GitHub only reads workflows from .github/workflows at the repository root.`,
-      });
-    }
   } else {
     notes.push({
       level: "warning",

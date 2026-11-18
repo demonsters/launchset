@@ -47,6 +47,15 @@ export async function mark(
   const { config } = context;
   const target = config.targets[options.target];
   if (!target) throw unknownTarget(config, options.target);
+  if (options.plan === undefined && !options.version) {
+    throw new LaunchsetError(
+      "missing-plan",
+      "mark needs a plan or a version (CLI: --plan / --version; action: plan / version inputs)",
+      {
+        hint: "In workflows pass the launchset job's plan output; by hand pass the version you shipped.",
+      },
+    );
+  }
   await syncTags(context, options.fetch ?? true);
 
   let version: string;
@@ -71,16 +80,7 @@ export async function mark(
     sha = plan.releaseSha;
     marker = targetPlan.marker ?? markerTag(config.tags, options.target, version);
   } else {
-    if (!options.version) {
-      throw new LaunchsetError(
-        "missing-plan",
-        "mark needs a plan or a version (CLI: --plan / --version; action: plan / version inputs)",
-        {
-          hint: "In workflows pass the launchset job's plan output; by hand pass the version you shipped.",
-        },
-      );
-    }
-    version = normalizeVersionInput(options.version);
+    version = normalizeVersionInput(options.version ?? ""); // checked above: there is one
     const tags = await readTagSnapshot(context);
     const tag = releaseTag(config.tags, version);
     const tagSha = tags.shas.get(tag);

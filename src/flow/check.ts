@@ -18,7 +18,6 @@ import { branchFromRef, eventInfo, type FlowContext, type FlowResult } from "./c
 import {
   allInOrder,
   baseBranchRef,
-  changedFilesBetween,
   changesetDir,
   commitsSince,
   lastReleaseTagOf,
@@ -201,7 +200,7 @@ export async function check(
   // the merge (a changeset the base already released is gone there). Which changesets the PR
   // itself adds comes from the diff.
   const [changedFiles, changesets, mismatches, version, tags, dir] = await allInOrder([
-    changedFilesBetween(context, base, headSha),
+    context.git.changedFiles(base, headSha),
     readChangesetFiles(context, { ref: "HEAD" }),
     checkConsistency(config, context.cwd),
     readRootVersion(config, context.cwd),

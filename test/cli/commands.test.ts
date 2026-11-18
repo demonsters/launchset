@@ -541,7 +541,7 @@ describe("stamp", () => {
     const f = fixtureRepo();
     const none = await cli(["stamp", "--target", "web"], { cwd: f.dir });
     expect(none.code).toBe(2);
-    expect(none.stderr).toContain("error: stamp needs --version or the plan");
+    expect(none.stderr).toContain("error: stamp needs the plan or a --version");
     const both = await cli(["stamp", "--target", "web", "--plan", "{}", "--version", "1.0.0"], {
       cwd: f.dir,
     });
@@ -589,7 +589,7 @@ describe("verify, mark, finalize, ship, hotfix, check", () => {
     const f = fixtureRepo();
     const none = await cli(["mark", "--target", "web"], { cwd: f.dir });
     expect(none.code).toBe(2);
-    expect(none.stderr).toContain("mark needs --version or the plan");
+    expect(none.stderr).toContain("mark needs a plan or a version");
     const r = await cli(["mark", "--target", "web", "--version", "1.4.0", "--json"], {
       cwd: f.dir,
     });

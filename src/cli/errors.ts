@@ -12,9 +12,13 @@ export class UsageError extends LaunchsetError {
   }
 }
 
-/** Exit code for a failure: 2 for wrong usage, else 1. */
+/**
+ * Exit code for a failure: 2 for wrong usage (also a command that got neither its plan nor
+ * the flags that replace it: `missing-plan`), else 1.
+ */
 export function exitCodeFor(error: unknown): number {
-  return error instanceof UsageError ? 2 : 1;
+  if (error instanceof UsageError) return 2;
+  return error instanceof LaunchsetError && error.code === "missing-plan" ? 2 : 1;
 }
 
 /** Print `error:` / `hint:` for `error` to stderr; the stack too with `LAUNCHSET_DEBUG`. */

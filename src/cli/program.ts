@@ -378,10 +378,9 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
     },
     async (opts) => {
       const context = await makeContext(
-        opts.runNumber === undefined
-          ? io
-          : { ...io, env: { ...io.env, GITHUB_RUN_NUMBER: String(opts.runNumber) } },
+        io,
         opts,
+        opts.runNumber === undefined ? {} : { run: { number: opts.runNumber } },
       );
       const fetch = opts.fetch !== false;
       if (opts.preview) {
@@ -390,12 +389,14 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
           dryRun: true,
           ...(opts.target === undefined ? {} : { targets: [opts.target] }),
         });
-        if (result.data.outcome === "skip" && result.data.skip) {
-          io.stdout(toJson({ skipped: result.data.skip.code, reason: result.data.skip.reason }));
-          io.stderr(`${result.lines.join("\n")}\n`);
-          return result.ok ? 0 : 1;
-        }
-        io.stdout(toJson(result.data.plan));
+        const { skip } = result.data;
+        io.stdout(
+          toJson(
+            result.data.outcome === "skip" && skip
+              ? { skipped: skip.code, reason: skip.reason }
+              : result.data.plan,
+          ),
+        );
         io.stderr(`${result.lines.join("\n")}\n`);
         return result.ok ? 0 : 1;
       }
@@ -452,13 +453,8 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
           "Give either the plan or the values.",
         );
       }
+      // Neither the plan nor --version: stamp says so (exit code 2).
       const plan = await readPlanInput(io, opts.plan, !byFlags);
-      if (plan === undefined && opts.version === undefined) {
-        throw new UsageError(
-          "stamp needs --version or the plan",
-          "Pass --version <v> (and --build-number <n>), or --plan '<json>' / --plan @plan.json / $LAUNCHSET_PLAN.",
-        );
-      }
       const result = await stamp(await makeContext(io, opts), {
         target: opts.target,
         ...(plan !== undefined ? { plan } : {}),
@@ -505,13 +501,8 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
       return examples(cmd, "launchset mark --target ios --version 1.5.0 --build-number 217000000");
     },
     async (opts) => {
+      // Neither the plan nor --version: mark says so (exit code 2).
       const plan = await readPlanInput(io, opts.plan, opts.version === undefined);
-      if (plan === undefined && opts.version === undefined) {
-        throw new UsageError(
-          "mark needs --version or the plan",
-          "For a manual target shipped by hand pass --version <v>; in CI pass --plan.",
-        );
-      }
       const result = await mark(await makeContext(io, opts), {
         target: opts.target,
         ...(plan !== undefined ? { plan } : {}),
@@ -567,26 +558,23 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
   );
 
   // hotfix -------------------------------------------------------------------------------
-  const hotfixCmd = program
-    .command("hotfix")
-    .description("Create a maintenance branch for a released <major>.<minor> line.")
-    .argument("<major.minor>", "the version line, e.g. 1.4");
-  withGlobals(hotfixCmd, { json: true });
-  hotfixCmd.option("--no-fetch", "don't fetch tags first");
-  examples(hotfixCmd, "launchset hotfix 1.4");
-  hotfixCmd.action(async (line: string, _o: unknown, self: Command) => {
-    const opts = self.optsWithGlobals() as GlobalOpts & { fetch?: boolean };
-    try {
+  command<{ fetch?: boolean }>(
+    "hotfix",
+    "Create a maintenance branch for a released <major>.<minor> line.",
+    (cmd) => {
+      cmd.argument("<major.minor>", "the version line, e.g. 1.4");
+      withGlobals(cmd, { json: true });
+      cmd.option("--no-fetch", "don't fetch tags first");
+      return examples(cmd, "launchset hotfix 1.4");
+    },
+    async (opts, args) => {
       const result = await hotfix(await makeContext(io, opts), {
-        line,
+        line: args[0] ?? "",
         fetch: opts.fetch !== false,
       });
-      state.exitCode = emit(io, result, { json: opts.json });
-    } catch (error) {
-      reportError(io, error);
-      state.exitCode = exitCodeFor(error);
-    }
-  });
+      return emit(io, result, { json: opts.json });
+    },
+  );
 
   // check --------------------------------------------------------------------------------
   command<{ base?: string; push?: boolean; comment?: boolean; fetch?: boolean }>(

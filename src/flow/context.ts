@@ -181,6 +181,8 @@ export interface ContextOptions {
   env?: Record<string, string | undefined>;
   now?: Date;
   log?: Logger;
+  /** Overrides the run info from the environment (`plan --run-number`). */
+  run?: RunInfo;
 }
 
 function positiveInt(value: string | undefined): number | undefined {
@@ -269,7 +271,8 @@ export async function createContext(options: ContextOptions): Promise<FlowContex
     context.event = event;
     eventInfo(context); // parsed once, here; flows read it with eventInfo(context)
   }
-  const run = runInfoFromEnv(env, serverUrl, repository);
+  const fromEnv = runInfoFromEnv(env, serverUrl, repository);
+  const run = options.run ? { ...fromEnv, ...options.run } : fromEnv;
   if (run) context.run = run;
   return context;
 }

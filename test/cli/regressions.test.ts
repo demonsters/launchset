@@ -86,7 +86,7 @@ describe("usage errors exit 2", () => {
       "--plan can't be combined",
     ],
     [["add"], "add needs --bump"],
-    [["mark", "--target", "web"], "mark needs --version or the plan"],
+    [["mark", "--target", "web"], "mark needs a plan or a version"],
     [["verify", "--target", "web"], "verify needs the release plan"],
   ])("%j", async (argv, message) => {
     const f = fixtureRepo();

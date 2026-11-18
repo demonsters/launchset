@@ -110,10 +110,6 @@ async function currentBranch(context: FlowContext): Promise<string> {
   });
 }
 
-async function currentSha(context: FlowContext): Promise<string> {
-  return context.env.GITHUB_SHA || eventInfo(context)?.sha || context.git.headSha();
-}
-
 async function deriveSource(
   context: FlowContext,
   targets: readonly string[] | undefined,
@@ -140,7 +136,8 @@ async function deriveSource(
     throw invalidEvent(`can't build a preview for the ${event.name} event`);
   }
   const branch = await currentBranch(context);
-  const headSha = await currentSha(context);
+  const headSha =
+    context.env.GITHUB_SHA || eventInfo(context)?.sha || (await context.git.headSha());
   if (event?.name === "push") {
     return { trigger: { kind: "push" }, branch, headSha };
   }
@@ -487,23 +484,16 @@ function unknownResults(targets: readonly string[]): Record<string, TargetResult
   return Object.fromEntries(targets.map((name) => [name, { status: "unknown" as const }]));
 }
 
-/** Per-target results of the run's jobs; targets without a job are `unknown` and listed in `unmatched`. */
-export function targetResults(
-  plan: Plan,
-  jobs: readonly Job[],
-): { results: Record<string, TargetResult>; unmatched: string[] } {
+/** Per-target results of the run's jobs; targets without a job are `unknown`. */
+export function targetResults(plan: Plan, jobs: readonly Job[]): Record<string, TargetResult> {
   const results: Record<string, TargetResult> = {};
-  const unmatched: string[] = [];
   for (const name of plan.matrix) {
     const job = findTargetJob(jobs, name);
-    if (!job) {
-      unmatched.push(name);
-      results[name] = { status: "unknown" };
-      continue;
-    }
-    results[name] = { status: jobStatus(job), ...(job.url ? { jobUrl: job.url } : {}) };
+    results[name] = job
+      ? { status: jobStatus(job), ...(job.url ? { jobUrl: job.url } : {}) }
+      : { status: "unknown" };
   }
-  return { results, unmatched };
+  return results;
 }
 
 /** The jobs of the current run. The App token first, then the workflow's own `GITHUB_TOKEN`. */
@@ -579,42 +569,37 @@ export async function previewComment(
   // Per-target job results.
   const notes: string[] = [];
   const runId = context.run?.id ?? plan.run?.id;
-  let results: Record<string, TargetResult> = {};
-  let unmatched: string[] = [];
+  let results = unknownResults(plan.matrix);
+  let listed = false;
   if (runId === undefined) {
     notes.push("The workflow run id is unknown, so the per-target results can't be read.");
-    unmatched = [...plan.matrix];
-    results = unknownResults(plan.matrix);
   } else {
-    let jobs: Job[] | undefined;
     try {
-      jobs = await listRunJobs(context, github, runId);
+      results = targetResults(plan, await listRunJobs(context, github, runId));
+      listed = true;
     } catch (error) {
       // The comment is still worth posting; the failure is reported in it and in the summary.
-      context.log.warn(`Couldn't list the jobs of run ${runId}: ${(error as Error).message}`);
+      context.log.warn(`Couldn't list the jobs of run ${runId}: ${errorMessage(error)}`);
       notes.push(
-        `Couldn't read the job results of this run (${(error as Error).message}). The App needs the Actions: read permission.`,
+        `Couldn't read the job results of this run (${errorMessage(error)}). The App needs the Actions: read permission.`,
       );
-      unmatched = [...plan.matrix];
-      results = unknownResults(plan.matrix);
     }
-    if (jobs) {
-      ({ results, unmatched } = targetResults(plan, jobs));
-      if (unmatched.length > 0) {
-        notes.push(
-          `No build job found for ${unmatched.map(code).join(", ")}: the jobs are expected to be named ${code("Preview <target>")}.`,
-        );
-      }
-    }
+  }
+  const unmatched = plan.matrix.filter((name) => results[name]?.status === "unknown");
+  if (listed && unmatched.length > 0) {
+    notes.push(
+      `No build job found for ${unmatched.map(code).join(", ")}: the jobs are expected to be named ${code("Preview <target>")}.`,
+    );
   }
   const noteBlock = notes.length > 0 ? `\n${notes.map((n) => `> ${n}`).join("\n")}\n` : "";
   const data: PreviewCommentData = { kind: "branch", plan, results, unmatched };
   const outputs: Record<string, string> = {};
   const lines: string[] = [];
+  const comment = () => `${renderPreviewComment({ plan, results })}${noteBlock}`;
 
   if (plan.prNumber !== undefined) {
     data.kind = "pr";
-    const body = `${renderPreviewComment({ plan, results })}${noteBlock}`;
+    const body = comment();
     const posted = await github.upsertStickyComment(plan.prNumber, PREVIEW_COMMENT_ID, body);
     data.commentUrl = posted.url;
     outputs["comment-url"] = posted.url;
@@ -633,21 +618,11 @@ export async function previewComment(
       ...(compared.baseChangesetPaths ? { baseChangesetPaths: compared.baseChangesetPaths } : {}),
     });
     const body = `${release.body}${compared.note ? `\n${compared.note}\n` : ""}`;
+    const fields = { name: release.name, body, prerelease: true, makeLatest: false };
     const existing = await github.getReleaseByTag(release.tag);
     const published = existing
-      ? await github.updateRelease(existing.id, {
-          name: release.name,
-          body,
-          prerelease: true,
-          makeLatest: false,
-        })
-      : await github.createRelease({
-          tag: release.tag,
-          name: release.name,
-          body,
-          prerelease: true,
-          makeLatest: false,
-        });
+      ? await github.updateRelease(existing.id, fields)
+      : await github.createRelease({ tag: release.tag, ...fields });
     data.releaseUrl = published.url;
     outputs["release-url"] = published.url;
     lines.push(
@@ -656,7 +631,7 @@ export async function previewComment(
     return { ok: true, outputs, summary: `${body}${noteBlock}`, lines, data };
   }
 
-  const body = `${renderPreviewComment({ plan, results })}${noteBlock}`;
+  const body = comment();
   lines.push(`Preview ${plan.version}: ${plan.matrix.length} target(s), no PR to comment on`);
   return { ok: true, outputs, summary: body, lines, data };
 }

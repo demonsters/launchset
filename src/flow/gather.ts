@@ -27,7 +27,7 @@ import type { ReleaseEvent, ReleaseInput } from "../core/release.ts";
 import type { ChangesetOrigin } from "../core/release-pr.ts";
 import { lastReleaseTag, versionTagShas } from "../core/tags.ts";
 import type { Changeset } from "../core/types.ts";
-import type { ChangedFile, TagRef } from "../git/index.ts";
+import type { TagRef } from "../git/index.ts";
 import {
   findReleaseCommit,
   headIsReleaseCommit,
@@ -359,15 +359,6 @@ export async function unfinishedVersionsBefore(
     if (await context.git.isAncestor(candidate.sha, releaseSha)) result.push(candidate);
   }
   return result;
-}
-
-/** Files changed between the merge base of `base` and `head`, with rename similarity. */
-export function changedFilesBetween(
-  context: FlowContext,
-  base: string,
-  head: string,
-): Promise<ChangedFile[]> {
-  return context.git.changedFiles(base, head);
 }
 
 // ---------------------------------------------------------------------------

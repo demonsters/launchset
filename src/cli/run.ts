@@ -5,7 +5,13 @@ import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { CONFIG_FILE_NAMES } from "../config/load.ts";
 import { LaunchsetError } from "../core/errors.ts";
-import { createContext, type FlowContext, type FlowResult, type Logger } from "../flow/index.ts";
+import {
+  type ContextOptions,
+  createContext,
+  type FlowContext,
+  type FlowResult,
+  type Logger,
+} from "../flow/index.ts";
 import { UsageError } from "./errors.ts";
 import type { CliIo } from "./io.ts";
 
@@ -44,7 +50,11 @@ export function cliLogger(io: CliIo): Logger {
 
 const REPO = /^[^/\s]+\/[^/\s]+$/;
 
-export async function makeContext(io: CliIo, opts: GlobalOpts): Promise<FlowContext> {
+export async function makeContext(
+  io: CliIo,
+  opts: GlobalOpts,
+  extra: Pick<ContextOptions, "run"> = {},
+): Promise<FlowContext> {
   if (opts.repo !== undefined && !REPO.test(opts.repo)) {
     throw new UsageError(
       `--repo ${opts.repo} is not owner/repo`,
@@ -58,6 +68,7 @@ export async function makeContext(io: CliIo, opts: GlobalOpts): Promise<FlowCont
     ...(opts.token ? { token: opts.token } : {}),
     ...(opts.repo ? { repository: opts.repo } : {}),
     ...(io.now ? { now: io.now } : {}),
+    ...extra,
   });
 }
 
@@ -95,11 +106,11 @@ export function toJson(value: unknown): string {
 export function emit(
   io: CliIo,
   result: FlowResult,
-  opts: { json?: boolean | undefined; data?: unknown } = {},
+  opts: { json?: boolean | undefined } = {},
 ): number {
   const text = result.lines.length > 0 ? `${result.lines.join("\n")}\n` : "";
   if (opts.json) {
-    let data = opts.data ?? result.data;
+    let data = result.data;
     if (result.env && data !== null && typeof data === "object" && !Array.isArray(data)) {
       data = { ...data, env: result.env };
     }
