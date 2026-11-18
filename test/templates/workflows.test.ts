@@ -655,7 +655,18 @@ describe("action.yml contract", () => {
       "dist-tag",
       "pr-number",
     ];
-    const extras = ["docker-refs-json", "marketing-version", "tag", "prerelease"];
+    const extras = [
+      "docker-refs-json",
+      "marketing-version",
+      "tag",
+      "prerelease",
+      // add, preview-plan and preview-comment
+      "path",
+      "skipped",
+      "skip-reason",
+      "comment-url",
+      "release-url",
+    ];
     expect(Object.keys(action.outputs).sort()).toEqual([...specOutputs, ...extras].sort());
     for (const entry of [...Object.values(action.inputs), ...Object.values(action.outputs)]) {
       expect(entry.description?.length).toBeGreaterThan(10);

@@ -8,4 +8,5 @@ export default defineConfig({
   dts: { entry: "src/index.ts" },
   clean: true,
   outDir: "dist",
+  fixedExtension: false,
 });
