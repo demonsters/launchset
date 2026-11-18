@@ -8,5 +8,6 @@ export default defineConfig({
   dts: { entry: "src/index.ts" },
   clean: true,
   outDir: "dist",
+  tsconfig: "tsconfig.build.json",
   fixedExtension: false,
 });

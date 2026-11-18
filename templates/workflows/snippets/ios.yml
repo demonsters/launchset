@@ -26,16 +26,21 @@
 #       -exportOptionsPlist ExportOptions.plist \
 #       -exportPath "$RUNNER_TEMP/export"
 #   env:
-#     LAUNCHSET_VERSION: ${{ steps.stamp.outputs.version }}
+#     LAUNCHSET_VERSION: ${{ steps.stamp.outputs.marketing-version }}
 #     LAUNCHSET_BUILD_NUMBER: ${{ steps.stamp.outputs.build-number }}
 #     LAUNCHSET_CHANNEL: ${{ steps.stamp.outputs.channel }}
 # - name: Upload to TestFlight (@@target@@)
+#   # Uses a fastlane lane (see "Workflow recipes" in the launchset docs):
+#   #   lane :testflight do |options|
+#   #     api_key = app_store_connect_api_key(key_id: ENV.fetch("ASC_KEY_ID"),
+#   #       issuer_id: ENV.fetch("ASC_ISSUER_ID"), key_content: ENV.fetch("ASC_PRIVATE_KEY"))
+#   #     upload_to_testflight(api_key: api_key, ipa: options.fetch(:ipa),
+#   #       skip_waiting_for_build_processing: true)
+#   #   end
 #   if: @@if@@
-#   run: |
-#     bundle exec fastlane pilot upload \
-#       --ipa "$RUNNER_TEMP/export/@@scheme@@.ipa" \
-#       --skip_waiting_for_build_processing
+#   run: bundle exec fastlane testflight ipa:"$RUNNER_TEMP/export/@@scheme@@.ipa"
 #   env:
-#     APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.LAUNCHSET_ASC_KEY_ID }}
-#     APP_STORE_CONNECT_API_ISSUER_ID: ${{ secrets.LAUNCHSET_ASC_ISSUER_ID }}
-#     APP_STORE_CONNECT_API_KEY: ${{ secrets.LAUNCHSET_ASC_PRIVATE_KEY }}
+#     # The raw contents of the .p8 key (also used by `verify`).
+#     ASC_KEY_ID: ${{ secrets.LAUNCHSET_ASC_KEY_ID }}
+#     ASC_ISSUER_ID: ${{ secrets.LAUNCHSET_ASC_ISSUER_ID }}
+#     ASC_PRIVATE_KEY: ${{ secrets.LAUNCHSET_ASC_PRIVATE_KEY }}

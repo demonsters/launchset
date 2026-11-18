@@ -75,7 +75,7 @@ function withGlobals(
   if (options.json) cmd.option("--json", "print JSON on stdout (logs go to stderr)");
   if (options.yes) cmd.option("--yes", "never ask; accept defaults");
   if (options.github !== false) {
-    cmd.option("--token <token>", "GitHub token (default: $GITHUB_TOKEN)");
+    cmd.option("--token <token>", "GitHub token (default: $LAUNCHSET_TOKEN, then $GITHUB_TOKEN)");
     cmd.option("--repo <owner/repo>", "GitHub repository (default: from the origin remote)");
   }
   return cmd;

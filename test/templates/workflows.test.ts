@@ -333,7 +333,7 @@ describe("launchset-release.yml", () => {
     }
     expect(text).toContain("#   run: ./gradlew bundleRelease");
     expect(text).toContain("fastlane supply");
-    expect(text).toContain("fastlane pilot");
+    expect(text).toContain("upload_to_testflight");
     expect(text).toContain("xcodebuild archive");
     expect(text).toContain("working-directory: apps/mobile/android");
     expect(text).toContain('-project "apps/mobile/ios/App.xcodeproj"');
