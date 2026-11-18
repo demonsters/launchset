@@ -1,0 +1,586 @@
+---
+/**
+ * The homepage below the hero: how a release goes, what lands in each target's files, who does
+ * what, the awkward cases, and how to start. Colours of the four example targets match the
+ * trails in the hero.
+ */
+import { Code } from "@astrojs/starlight/components";
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+const to = (path: string) => `${base}/${path}`;
+
+const steps = [
+  {
+    title: "Add a changeset to your PR",
+    body: "A changeset is a short markdown file: how big the change is and one line for the changelog. `launchset add` writes it for you. Commit messages don't matter, and the PR check tells you when one is missing.",
+    code: {
+      lang: "md",
+      title: ".launchset/brave-lions-sing.md",
+      text: "---\nbump: minor\n---\n\nAdd offline mode to the mobile app.",
+    },
+  },
+  {
+    title: "launchset keeps a release PR open",
+    body: "Every pending changeset goes into one pull request: the version bump, the version written into each target's files and the new changelog section. It is rebuilt on every push, so it never has conflicts.",
+    code: {
+      lang: "text",
+      title: "Release v1.5.0",
+      text: [
+        "launchset/release/main into main",
+        "",
+        "M  package.json                 1.4.2 → 1.5.0",
+        "M  android/app/build.gradle     versionName",
+        "M  ios/App.xcodeproj/project.pbxproj",
+        "M  CHANGELOG.md",
+        "D  .launchset/brave-lions-sing.md",
+      ].join("\n"),
+    },
+  },
+  {
+    title: "Merge it, and every target builds",
+    body: "The release workflow plans one job per target. Each job writes the version and a fresh build number into its checkout, runs your own build and upload steps, and records a marker tag. Nothing is committed.",
+    code: {
+      lang: "json",
+      title: "launchset plan",
+      text: '{\n  "mode": "publish",\n  "version": "1.5.0",\n  "buildNumber": 217175105,\n  "channel": "release",\n  "matrix": ["api", "web", "android", "ios"]\n}',
+    },
+  },
+  {
+    title: "The version is tagged when everything shipped",
+    body: "Once every target has its marker, launchset tags `v1.5.0` and publishes the GitHub Release with the changelog. If a job fails, re-run it: targets that already shipped are skipped.",
+    code: {
+      lang: "sh",
+      title: "Terminal",
+      text: "git tag --list 'launchset/*@1.5.0' 'v1.5.0'\nlaunchset/android@1.5.0\nlaunchset/api@1.5.0\nlaunchset/ios@1.5.0\nlaunchset/web@1.5.0\nv1.5.0",
+    },
+  },
+];
+
+const inline = (text: string) => text.replace(/`([^`]+)`/g, "<code>$1</code>");
+
+const targets = [
+  {
+    type: "docker",
+    trail: "sky",
+    name: "Docker",
+    version:
+      "The image tags (<code>1.5.0</code>, <code>1.5</code>, <code>1</code>, <code>latest</code>) and OCI labels, handed to your build-push step.",
+    build: "Not used.",
+    link: "targets/docker/",
+  },
+  {
+    type: "android",
+    trail: "flame",
+    name: "Android",
+    version:
+      "<code>versionName</code> in <code>build.gradle</code>, <code>build.gradle.kts</code> or <code>gradle.properties</code>.",
+    build: "<code>versionCode</code>",
+    link: "targets/android/",
+  },
+  {
+    type: "ios",
+    trail: "violet",
+    name: "iOS",
+    version:
+      "<code>MARKETING_VERSION</code> in the Xcode project or an xcconfig, or <code>CFBundleShortVersionString</code> in <code>Info.plist</code>.",
+    build: "<code>CURRENT_PROJECT_VERSION</code> or <code>CFBundleVersion</code>",
+    link: "targets/ios/",
+  },
+  {
+    type: "web",
+    trail: "hull",
+    name: "Web",
+    version: "Nothing by default. List extra files if your app shows its version.",
+    build: "Not used.",
+    link: "targets/web/",
+  },
+  {
+    type: "custom",
+    trail: "none",
+    name: "Custom",
+    version:
+      "Any JSON or YAML key, or a regex: an SDK's <code>package.json</code>, a Helm chart, a version file.",
+    build: "A <code>{buildNumber}</code> placeholder, if you use one.",
+    link: "targets/custom/",
+  },
+];
+
+const split = [
+  ["Write a changeset in each PR.", "Checks the PR has one and comments on it."],
+  [
+    "Review and merge the release PR.",
+    "Opens and updates it, with the changelog and the version files.",
+  ],
+  [
+    "Write the build and upload steps.",
+    "Plans the matrix, writes version and build number, checks the store, records markers.",
+  ],
+  [
+    "Fix and re-run a failed target.",
+    "Skips what already shipped, and tags the release when every target did.",
+  ],
+];
+
+const cases = [
+  {
+    title: "Preview builds",
+    link: "guides/previews/",
+    body: "Label a PR `launchset:preview` to get a TestFlight, Play internal or Docker build at `1.5.0-pr.123.4`. Nothing is committed or tagged.",
+  },
+  {
+    title: "Build numbers",
+    link: "guides/build-numbers/",
+    body: "Seconds since 2020 by default: always higher, on every branch, with nothing stored. Checked against the stores if you want.",
+  },
+  {
+    title: "Hotfixes",
+    link: "guides/hotfixes/",
+    body: "Release `1.4.1` from `release/1.4.x` with the same changeset flow. launchset opens the PR that copies the changelog back to `main`.",
+  },
+  {
+    title: "Unfinished releases",
+    link: "guides/partial-releases/",
+    body: "If 1.4.0 never finished, 1.5.0 replaces it. 1.4.0 keeps a GitHub Release marked partial and never gets a release tag.",
+  },
+  {
+    title: "Manual targets",
+    link: "guides/manual-targets/",
+    body: "An app that ships when you decide still gets every version written into its files, and ships with one click.",
+  },
+  {
+    title: "Dependabot and Renovate",
+    link: "guides/bot-prs/",
+    body: "Bot PRs pass the check without a changeset. The release PR lists them as patch changes, from their titles.",
+  },
+  {
+    title: "Moving an existing repo",
+    link: "guides/migrating/",
+    body: "`init` reads your current versions and build numbers, and never lowers either. An agent can run it for you with the adoption skill.",
+  },
+  {
+    title: "Mobile stacks",
+    link: "targets/",
+    body: "React Native, Capacitor and Expo apps use the same Android and iOS targets, pointed at their own files.",
+  },
+];
+---
+
+<div class="ls-home not-content">
+  <section class="ls-section" aria-labelledby="flow">
+    <h2 id="flow" class="ls-h2">From pull request to release</h2>
+    <ol class="ls-steps">
+      {
+        steps.map((step, i) => (
+          <li class="ls-step">
+            <span class="ls-step__number" aria-hidden="true">{i + 1}</span>
+            <div class="ls-step__text">
+              <h3 class="ls-h3">{step.title}</h3>
+              <p set:html={inline(step.body)} />
+            </div>
+            <div class="ls-step__artifact">
+              <Code code={step.code.text} lang={step.code.lang} title={step.code.title} />
+            </div>
+          </li>
+        ))
+      }
+    </ol>
+  </section>
+
+  <section class="ls-section" aria-labelledby="files">
+    <h2 id="files" class="ls-h2">The version, in each target's own files</h2>
+    <p class="ls-intro">
+      launchset changes only the characters that hold the version. Indentation, comments and line
+      endings stay as they are, and a release PR's diff shows the versions and nothing else.
+    </p>
+    <div class="ls-table-wrap">
+      <table class="ls-targets">
+        <thead>
+          <tr>
+            <th scope="col">Target</th>
+            <th scope="col">The version goes into</th>
+            <th scope="col">The build number goes into</th>
+          </tr>
+        </thead>
+        <tbody>
+          {
+            targets.map((t) => (
+              <tr>
+                <th scope="row">
+                  <a href={to(t.link)} class="ls-target" data-trail={t.trail}>{t.name}</a>
+                </th>
+                <td set:html={t.version} />
+                <td set:html={t.build} />
+              </tr>
+            ))
+          }
+        </tbody>
+      </table>
+    </div>
+    <p class="ls-note">
+      Build numbers are written in CI at build time and never committed. React Native, Capacitor
+      and Expo apps use the Android and iOS targets: see <a href={to("targets/")}>Targets</a>.
+    </p>
+  </section>
+
+  <section class="ls-section ls-split" aria-labelledby="split">
+    <div>
+      <h2 id="split" class="ls-h2">launchset decides. Your workflow builds.</h2>
+      <p class="ls-intro">
+        launchset doesn't run Gradle, Xcode or Docker. It works out what to release and writes the
+        numbers; your own steps (<code>docker/build-push-action</code>, fastlane, Gradle, Xcode)
+        build and upload. State lives in git tags, so there is no database to keep.
+      </p>
+    </div>
+    <table class="ls-duties">
+      <thead>
+        <tr>
+          <th scope="col">You</th>
+          <th scope="col">launchset</th>
+        </tr>
+      </thead>
+      <tbody>
+        {
+          split.map(([you, tool]) => (
+            <tr>
+              <td>{you}</td>
+              <td>{tool}</td>
+            </tr>
+          ))
+        }
+      </tbody>
+    </table>
+  </section>
+
+  <section class="ls-section" aria-labelledby="cases">
+    <h2 id="cases" class="ls-h2">The awkward cases are covered</h2>
+    <dl class="ls-cases">
+      {
+        cases.map((c) => (
+          <div class="ls-case">
+            <dt>
+              <a href={to(c.link)}>{c.title}</a>
+            </dt>
+            <dd set:html={inline(c.body)} />
+          </div>
+        ))
+      }
+    </dl>
+  </section>
+
+  <section class="ls-section ls-start" aria-labelledby="start">
+    <h2 id="start" class="ls-h2">Set up a repo</h2>
+    <p class="ls-intro">
+      <code>init</code> finds your current version, Dockerfiles and native projects, then writes the
+      config and three workflows. Run it with <code>--detect</code> first to see what it would do
+      without writing anything.
+    </p>
+    <Code code="npx @demonsters/launchset init --detect" lang="sh" />
+    <p class="ls-note">
+      The CLI is <code>@demonsters/launchset</code> on npm, private to the demonsters org. CI uses
+      the public action <code>demonsters/launchset-action@v1</code>, which needs no npm access.
+    </p>
+    <p>
+      <a class="ls-start__link" href={to("getting-started/")}>Read Getting started</a>
+    </p>
+  </section>
+</div>
+
+<style>
+  .ls-home {
+    --gap-section: clamp(4rem, 9vw, 7rem);
+    font-size: 1.0625rem;
+    line-height: 1.65;
+    color: var(--sl-color-gray-2);
+  }
+
+  .ls-section {
+    margin-top: var(--gap-section);
+  }
+
+  .ls-h2 {
+    margin: 0 0 1.25rem;
+    max-width: 22ch;
+    font-size: clamp(1.85rem, 4vw, 2.75rem);
+    font-weight: 750;
+    font-stretch: var(--ls-stretch-display);
+    line-height: 1.05;
+    letter-spacing: -0.015em;
+    color: var(--sl-color-white);
+  }
+  .ls-h3 {
+    margin: 0 0 0.5rem;
+    font-size: 1.25rem;
+    font-weight: 650;
+    font-stretch: var(--ls-stretch-heading);
+    line-height: 1.25;
+    color: var(--sl-color-white);
+  }
+
+  .ls-intro {
+    max-width: 62ch;
+    margin: 0;
+  }
+  .ls-note {
+    max-width: 66ch;
+    margin: 1.25rem 0 0;
+    font-size: 0.9375rem;
+    color: var(--sl-color-gray-3);
+  }
+
+  .ls-home :is(p, td, dd) code {
+    font-family: var(--__sl-font-mono);
+    font-size: 0.86em;
+    padding: 0.1em 0.35em;
+    border-radius: 0.3rem;
+    background: var(--sl-color-bg-inline-code);
+    color: var(--sl-color-white);
+    overflow-wrap: anywhere;
+  }
+
+  .ls-home a {
+    color: var(--sl-color-text-accent);
+    text-underline-offset: 0.2em;
+  }
+  .ls-home a:focus-visible {
+    outline: 2px solid var(--sl-color-text-accent);
+    outline-offset: 3px;
+    border-radius: 0.2rem;
+  }
+
+  /* Steps: one triple trail runs down the numbers, like the logo's exhaust. */
+
+  .ls-steps {
+    position: relative;
+    list-style: none;
+    margin: 2.5rem 0 0;
+    padding: 0;
+    display: grid;
+    gap: clamp(2.5rem, 5vw, 3.5rem);
+  }
+  .ls-steps::before {
+    content: "";
+    position: absolute;
+    inset-block: 1.25rem 1.25rem;
+    inset-inline-start: calc(1.25rem - 6px);
+    width: 12px;
+    background: linear-gradient(
+      90deg,
+      var(--ls-trail-sky) 0 2px,
+      transparent 2px 5px,
+      var(--ls-trail-flame) 5px 7px,
+      transparent 7px 10px,
+      var(--ls-trail-violet) 10px 12px
+    );
+    opacity: 0.55;
+  }
+  .ls-step {
+    position: relative;
+    display: grid;
+    grid-template-columns: 2.5rem minmax(0, 1fr);
+    column-gap: 1.25rem;
+    row-gap: 1rem;
+  }
+  .ls-step__number {
+    grid-row: span 2;
+    display: grid;
+    place-items: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: 50%;
+    background: var(--sl-color-black);
+    border: 3px solid var(--ls-trail-sky);
+    color: var(--sl-color-white);
+    font-weight: 750;
+    font-stretch: var(--ls-stretch-heading);
+    font-size: 1rem;
+  }
+  .ls-step__text p {
+    margin: 0;
+    max-width: 52ch;
+  }
+  .ls-step__artifact {
+    min-width: 0;
+  }
+  @media (min-width: 60rem) {
+    .ls-step {
+      grid-template-columns: 2.5rem minmax(0, 5fr) minmax(0, 6fr);
+      column-gap: 2rem;
+    }
+    .ls-step__number {
+      grid-row: auto;
+    }
+    .ls-step__text {
+      padding-top: 0.35rem;
+    }
+  }
+
+  /* Targets table */
+
+  .ls-table-wrap {
+    margin-top: 2rem;
+    overflow-x: auto;
+  }
+  .ls-targets,
+  .ls-duties {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9875rem;
+    line-height: 1.55;
+  }
+  .ls-targets th,
+  .ls-targets td,
+  .ls-duties th,
+  .ls-duties td {
+    padding: 0.9rem 1rem 0.9rem 0;
+    text-align: start;
+    vertical-align: top;
+    border-bottom: 1px solid var(--sl-color-hairline-light);
+  }
+  .ls-targets thead th,
+  .ls-duties thead th {
+    padding-top: 0;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--sl-color-gray-3);
+  }
+  .ls-targets tbody th {
+    width: 9rem;
+  }
+  .ls-targets td:last-child {
+    width: 30%;
+  }
+  .ls-target {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
+    font-weight: 650;
+    font-stretch: var(--ls-stretch-heading);
+    color: var(--sl-color-white) !important;
+    text-decoration: none;
+  }
+  .ls-target:hover {
+    text-decoration: underline;
+  }
+  .ls-target::before {
+    content: "";
+    flex: none;
+    width: 1.25rem;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--trail, var(--sl-color-gray-5));
+  }
+  .ls-target[data-trail="sky"] { --trail: var(--ls-trail-sky); }
+  .ls-target[data-trail="flame"] { --trail: var(--ls-trail-flame); }
+  .ls-target[data-trail="violet"] { --trail: var(--ls-trail-violet); }
+  .ls-target[data-trail="hull"] { --trail: var(--ls-trail-hull); }
+
+  @media (max-width: 40rem) {
+    .ls-targets thead {
+      display: none;
+    }
+    .ls-targets,
+    .ls-targets tbody,
+    .ls-targets tr,
+    .ls-targets th,
+    .ls-targets td {
+      display: block;
+      width: auto !important;
+    }
+    .ls-targets tr {
+      padding: 1rem 0;
+      border-bottom: 1px solid var(--sl-color-hairline-light);
+    }
+    .ls-targets th,
+    .ls-targets td {
+      border: 0;
+      padding: 0.15rem 0;
+    }
+    .ls-targets td:nth-of-type(2)::before {
+      content: "Build number: ";
+      color: var(--sl-color-gray-3);
+    }
+  }
+
+  /* Who does what */
+
+  .ls-split {
+    display: grid;
+    gap: 2rem;
+  }
+  @media (min-width: 60rem) {
+    .ls-split {
+      grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+      column-gap: 4rem;
+      align-items: start;
+    }
+  }
+  .ls-duties td:first-child {
+    width: 42%;
+    color: var(--sl-color-white);
+  }
+  .ls-duties thead th:last-child {
+    color: var(--ls-trail-sky);
+  }
+
+  /* The awkward cases */
+
+  .ls-cases {
+    display: grid;
+    gap: 2rem 3rem;
+    margin: 2rem 0 0;
+  }
+  @media (min-width: 40rem) {
+    .ls-cases {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @media (min-width: 64rem) {
+    .ls-cases {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+  }
+  .ls-case dt {
+    margin: 0 0 0.35rem;
+    font-weight: 650;
+    font-stretch: var(--ls-stretch-heading);
+    font-size: 1.0625rem;
+  }
+  .ls-case dt a {
+    color: var(--sl-color-white);
+    text-decoration-color: var(--sl-color-gray-4);
+  }
+  .ls-case dt a:hover {
+    text-decoration-color: currentColor;
+  }
+  .ls-case dd {
+    margin: 0;
+    font-size: 0.9875rem;
+    line-height: 1.6;
+  }
+
+  /* Start */
+
+  .ls-start {
+    max-width: 44rem;
+    padding-bottom: 2rem;
+  }
+  .ls-start :global(.expressive-code) {
+    margin-top: 1.5rem;
+  }
+  .ls-start__link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.75rem;
+    margin-top: 1.25rem;
+    padding: 0 1.25rem;
+    border-radius: 0.75rem;
+    background: var(--sl-color-text-accent);
+    color: var(--sl-color-black) !important;
+    font-weight: 650;
+    font-stretch: var(--ls-stretch-heading);
+    text-decoration: none;
+  }
+  .ls-start__link:hover {
+    opacity: 0.88;
+  }
+</style>

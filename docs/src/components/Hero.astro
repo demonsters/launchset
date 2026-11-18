@@ -1,0 +1,464 @@
+---
+/**
+ * Replaces Starlight's hero on the homepage (the only page with `hero` frontmatter).
+ *
+ * The picture is the release itself: the merged release PR splits into one trail per target,
+ * each target is stamped, built and marked, and the trails meet again at the release tag. The
+ * trail colours are the logo's exhaust trails. Wide screens get it left to right, narrow screens
+ * top to bottom.
+ */
+// Starlight gives the page title this id (its PAGE_TITLE_ID); the skip link and TOC point at it.
+const PAGE_TITLE_ID = "_top";
+
+const { data } = Astro.locals.starlightRoute.entry;
+const { title = data.title, tagline, actions = [] } = data.hero ?? {};
+const titleLines = title.split(/(?<=\.)\s+/);
+
+const version = "1.5.0";
+const lanes = [
+  { name: "api", color: "var(--ls-sky)" },
+  { name: "android", color: "var(--ls-flame)" },
+  { name: "ios", color: "var(--ls-violet)" },
+  { name: "web", color: "var(--ls-hull)" },
+];
+
+// Animation timing, in seconds. The trails draw at a constant speed, so a station at a given
+// fraction of the path lights up at that fraction of the draw time.
+const draw = 1.6;
+const stagger = 0.12;
+const at = (lane: number, fraction: number) =>
+  `${(0.25 + lane * stagger + fraction * draw).toFixed(2)}s`;
+const done = at(lanes.length - 1, 1);
+
+// Wide: left to right.
+const W = { width: 1180, height: 372, sx: 150, ex: 1030, cy: 206, fanEnd: 280, laneEnd: 900 };
+const wideY = (i: number) => 86 + i * 80;
+const wideStations = [
+  { label: "stamp", x: 440 },
+  { label: "your build steps", x: 570 },
+  { label: "mark", x: 700 },
+];
+const widePath = (y: number) =>
+  `M${W.sx} ${W.cy} C${W.sx + 60} ${W.cy} ${W.fanEnd - 60} ${y} ${W.fanEnd} ${y} ` +
+  `L${W.laneEnd} ${y} C${W.laneEnd + 60} ${y} ${W.ex - 60} ${W.cy} ${W.ex} ${W.cy}`;
+const wideFrac = (x: number) => (x - W.sx) / (W.ex - W.sx);
+
+// Narrow: top to bottom.
+const N = { width: 360, height: 640, cx: 180, sy: 84, ey: 548, fanEnd: 168, laneEnd: 466 };
+const narrowX = (i: number) => 96 + i * 56;
+const narrowStations = [
+  { label: "stamp", y: 250 },
+  { label: "build", y: 330 },
+  { label: "mark", y: 410 },
+];
+const narrowPath = (x: number) =>
+  `M${N.cx} ${N.sy} C${N.cx} ${N.sy + 44} ${x} ${N.fanEnd - 44} ${x} ${N.fanEnd} ` +
+  `L${x} ${N.laneEnd} C${x} ${N.laneEnd + 44} ${N.cx} ${N.ey - 44} ${N.cx} ${N.ey}`;
+const narrowFrac = (y: number) => (y - N.sy) / (N.ey - N.sy);
+---
+
+<section class="ls-hero not-content" aria-labelledby={PAGE_TITLE_ID}>
+  <div class="ls-hero__intro">
+    <h1 id={PAGE_TITLE_ID} class="ls-hero__title">
+      {titleLines.map((line) => <span>{line}</span>)}
+    </h1>
+    <div class="ls-hero__lede">
+      {tagline && <p class="ls-hero__tagline" set:html={tagline} />}
+      <div class="ls-hero__act">
+        <div class="ls-hero__actions">
+          {
+            actions.map((action) => (
+              <a
+                href={action.link}
+                class:list={["ls-button", action.variant === "minimal" ? "ls-button--quiet" : "ls-button--primary"]}
+              >
+                {action.text}
+              </a>
+            ))
+          }
+        </div>
+        <div class="ls-command">
+          <code>npx @demonsters/launchset init</code>
+          <button type="button" class="ls-command__copy" data-copy="npx @demonsters/launchset init">
+            Copy
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <figure class="ls-flight">
+    <figcaption class="sr-only">
+      Merging the release PR for version {version} starts one build per target: api, android, ios
+      and web. Each one is stamped with the version, built by your own steps and marked with a git
+      tag. When every target is marked, launchset tags v{version} and publishes the GitHub Release.
+    </figcaption>
+
+    <svg class="ls-flight__wide" viewBox={`0 0 ${W.width} ${W.height}`} aria-hidden="true">
+      {
+        wideStations.map((s) => (
+          <g class="ls-flight__station">
+            <line x1={s.x} x2={s.x} y1={48} y2={W.height - 16} />
+            <text x={s.x} y={30} text-anchor="middle">{s.label}</text>
+          </g>
+        ))
+      }
+      {
+        lanes.map((lane, i) => {
+          const y = wideY(i);
+          return (
+            <g class="ls-flight__lane" style={`--lane: ${lane.color}`}>
+              <path class="ls-flight__trail" d={widePath(y)} pathLength="1" style={`--delay: ${at(i, 0)}`} />
+              <text class="ls-flight__target" x={W.fanEnd + 14} y={y - 14}>{lane.name}</text>
+              <circle class="ls-flight__stop ls-flight__stop--stamp" cx={wideStations[0].x} cy={y} r="5" style={`--delay: ${at(i, wideFrac(wideStations[0].x))}`} />
+              <circle class="ls-flight__stop ls-flight__stop--build" cx={wideStations[1].x} cy={y} r="7" style={`--delay: ${at(i, wideFrac(wideStations[1].x))}`} />
+              <g class="ls-flight__stop" style={`--delay: ${at(i, wideFrac(wideStations[2].x))}`}>
+                <circle class="ls-flight__mark" cx={wideStations[2].x} cy={y} r="8" />
+                <path class="ls-flight__check" d={`M${wideStations[2].x - 4} ${y} l3 3 l5 -6`} />
+                <text class="ls-flight__tag" x={wideStations[2].x + 16} y={y - 14}>launchset/{lane.name}@{version}</text>
+              </g>
+            </g>
+          );
+        })
+      }
+      <g class="ls-flight__node">
+        <circle cx={W.sx} cy={W.cy} r="15" />
+        <text class="ls-flight__label" x={W.sx - 26} y={W.cy - 4} text-anchor="end">Release v{version}</text>
+        <text class="ls-flight__sub" x={W.sx - 26} y={W.cy + 16} text-anchor="end">merged</text>
+      </g>
+      <g class="ls-flight__node ls-flight__node--end" style={`--delay: ${done}`}>
+        <circle cx={W.ex} cy={W.cy} r="15" />
+        <text class="ls-flight__label ls-flight__label--tag" x={W.ex + 28} y={W.cy - 4}>v{version}</text>
+        <text class="ls-flight__sub" x={W.ex + 28} y={W.cy + 16}>GitHub Release</text>
+      </g>
+    </svg>
+
+    <svg class="ls-flight__narrow" viewBox={`0 0 ${N.width} ${N.height}`} aria-hidden="true">
+      {
+        narrowStations.map((s) => (
+          <g class="ls-flight__station">
+            <line x1={70} x2={N.width - 20} y1={s.y} y2={s.y} />
+            <text x={14} y={s.y + 5}>{s.label}</text>
+          </g>
+        ))
+      }
+      {
+        lanes.map((lane, i) => {
+          const x = narrowX(i);
+          return (
+            <g class="ls-flight__lane" style={`--lane: ${lane.color}`}>
+              <path class="ls-flight__trail" d={narrowPath(x)} pathLength="1" style={`--delay: ${at(i, 0)}`} />
+              <text class="ls-flight__target ls-flight__target--halo" x={x} y={N.fanEnd + 30} text-anchor="middle">{lane.name}</text>
+              <circle class="ls-flight__stop ls-flight__stop--stamp" cx={x} cy={narrowStations[0].y} r="5" style={`--delay: ${at(i, narrowFrac(narrowStations[0].y))}`} />
+              <circle class="ls-flight__stop ls-flight__stop--build" cx={x} cy={narrowStations[1].y} r="7" style={`--delay: ${at(i, narrowFrac(narrowStations[1].y))}`} />
+              <g class="ls-flight__stop" style={`--delay: ${at(i, narrowFrac(narrowStations[2].y))}`}>
+                <circle class="ls-flight__mark" cx={x} cy={narrowStations[2].y} r="8" />
+                <path class="ls-flight__check" d={`M${x - 4} ${narrowStations[2].y} l3 3 l5 -6`} />
+              </g>
+            </g>
+          );
+        })
+      }
+      <g class="ls-flight__node">
+        <circle cx={N.cx} cy={N.sy} r="15" />
+        <text class="ls-flight__label" x={N.cx} y={N.sy - 46} text-anchor="middle">Release v{version}</text>
+        <text class="ls-flight__sub" x={N.cx} y={N.sy - 26} text-anchor="middle">merged</text>
+      </g>
+      <g class="ls-flight__node ls-flight__node--end" style={`--delay: ${done}`}>
+        <circle cx={N.cx} cy={N.ey} r="15" />
+        <text class="ls-flight__label ls-flight__label--tag" x={N.cx} y={N.ey + 46} text-anchor="middle">v{version}</text>
+        <text class="ls-flight__sub" x={N.cx} y={N.ey + 68} text-anchor="middle">GitHub Release</text>
+      </g>
+    </svg>
+  </figure>
+</section>
+
+<script>
+  for (const button of document.querySelectorAll<HTMLButtonElement>("[data-copy]")) {
+    button.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(button.dataset.copy ?? "");
+        button.textContent = "Copied";
+      } catch {
+        button.textContent = "Select and copy";
+      }
+      setTimeout(() => {
+        button.textContent = "Copy";
+      }, 2000);
+    });
+  }
+</script>
+
+<style>
+  .ls-hero {
+    --panel-line: #334155;
+    position: relative;
+    margin-block: 0.5rem 1rem;
+    border-radius: 1.75rem;
+    background: linear-gradient(180deg, var(--ls-deep), var(--ls-night));
+    border: 1px solid var(--panel-line);
+    color: var(--ls-hull);
+    overflow: hidden;
+  }
+
+  .ls-hero__intro {
+    padding: clamp(1.75rem, 5vw, 3.5rem) clamp(1.25rem, 5vw, 3.5rem) 0;
+  }
+
+  .ls-hero__title {
+    margin: 0;
+    font-size: clamp(2.6rem, 8.2vw, 5.75rem);
+    font-weight: 800;
+    font-stretch: var(--ls-stretch-display);
+    line-height: 0.96;
+    letter-spacing: -0.02em;
+    color: var(--ls-hull);
+  }
+  .ls-hero__title span {
+    display: block;
+  }
+
+  .ls-hero__lede {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1.75rem;
+    margin-top: clamp(1.5rem, 3vw, 2.25rem);
+  }
+  @media (min-width: 60rem) {
+    .ls-hero__lede {
+      grid-template-columns: minmax(0, 34rem) minmax(0, 1fr);
+      align-items: end;
+      gap: 3rem;
+    }
+  }
+
+  .ls-hero__tagline {
+    margin: 0;
+    font-size: clamp(1.05rem, 1.6vw, 1.2rem);
+    line-height: 1.55;
+    color: #cbd5e1;
+    max-width: 34rem;
+  }
+
+  .ls-hero__act {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    min-width: 0;
+    gap: 0.875rem;
+    justify-items: start;
+  }
+  @media (min-width: 60rem) {
+    .ls-hero__act {
+      justify-items: end;
+    }
+  }
+
+  .ls-hero__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+  }
+
+  .ls-button {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.75rem;
+    padding: 0 1.25rem;
+    border-radius: 0.75rem;
+    font-weight: 650;
+    font-stretch: var(--ls-stretch-heading);
+    text-decoration: none;
+    transition: background-color 120ms, border-color 120ms;
+  }
+  .ls-button--primary {
+    background: var(--ls-sky);
+    color: var(--ls-night);
+  }
+  .ls-button--primary:hover {
+    background: #7dd3fc;
+  }
+  .ls-button--quiet {
+    color: var(--ls-hull);
+    border: 1px solid var(--panel-line);
+  }
+  .ls-button--quiet:hover {
+    border-color: var(--ls-nozzle);
+  }
+  .ls-button:focus-visible,
+  .ls-command__copy:focus-visible {
+    outline: 2px solid var(--ls-flame);
+    outline-offset: 3px;
+  }
+
+  .ls-command {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    max-width: 100%;
+    padding: 0.4rem 0.4rem 0.4rem 1rem;
+    border: 1px solid var(--panel-line);
+    border-radius: 0.75rem;
+    background: rgb(11 18 32 / 0.6);
+  }
+  .ls-command code {
+    min-width: 0;
+    font-family: var(--__sl-font-mono);
+    font-size: 0.875rem;
+    color: var(--ls-hull);
+    background: none;
+    padding: 0;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+  .ls-command__copy {
+    flex: none;
+    min-height: 2rem;
+    padding: 0 0.75rem;
+    border: 0;
+    border-radius: 0.5rem;
+    background: var(--panel-line);
+    color: var(--ls-hull);
+    font: inherit;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .ls-command__copy:hover {
+    background: #475569;
+  }
+
+  /* The flight plan */
+
+  .ls-flight {
+    margin: clamp(2rem, 4vw, 3rem) 0 0;
+    padding: 0 clamp(0.5rem, 3vw, 2rem) clamp(1rem, 3vw, 2rem);
+    border-top: 1px solid var(--panel-line);
+    padding-top: clamp(1.25rem, 3vw, 2rem);
+  }
+  .ls-flight svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    overflow: visible;
+  }
+  .ls-flight__wide {
+    display: none !important;
+  }
+  @media (min-width: 46rem) {
+    .ls-flight__wide {
+      display: block !important;
+    }
+    .ls-flight__narrow {
+      display: none !important;
+    }
+  }
+  .ls-flight__narrow {
+    max-width: 24rem;
+    margin-inline: auto;
+  }
+
+  .ls-flight text {
+    font-family: var(--__sl-font);
+    font-size: 14px;
+  }
+  .ls-flight__station line {
+    stroke: var(--panel-line);
+    stroke-width: 1;
+    stroke-dasharray: 3 5;
+  }
+  .ls-flight__station text {
+    fill: var(--ls-nozzle);
+    font-stretch: var(--ls-stretch-heading);
+  }
+
+  .ls-flight__trail {
+    fill: none;
+    stroke: var(--lane);
+    stroke-width: 6;
+    stroke-linecap: round;
+  }
+  .ls-flight__target {
+    fill: var(--lane);
+    font-family: var(--__sl-font-mono) !important;
+    font-size: 14px;
+    font-weight: 500;
+  }
+  .ls-flight__target--halo {
+    paint-order: stroke;
+    stroke: #172133;
+    stroke-width: 8px;
+    stroke-linejoin: round;
+  }
+  .ls-flight__stop--stamp {
+    fill: var(--lane);
+  }
+  .ls-flight__stop--build {
+    fill: var(--ls-night);
+    stroke: var(--lane);
+    stroke-width: 3;
+  }
+  .ls-flight__mark {
+    fill: var(--lane);
+  }
+  .ls-flight__check {
+    fill: none;
+    stroke: var(--ls-night);
+    stroke-width: 2.25;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .ls-flight__tag {
+    fill: var(--ls-nozzle);
+    font-family: var(--__sl-font-mono) !important;
+    font-size: 12.5px !important;
+  }
+
+  /* Both ends are the rocket's window: night inside a sky ring. */
+  .ls-flight__node circle {
+    fill: var(--ls-night);
+    stroke: var(--ls-sky);
+    stroke-width: 5;
+  }
+  .ls-flight__label {
+    fill: var(--ls-hull);
+    font-weight: 650;
+    font-stretch: var(--ls-stretch-heading);
+    font-size: 15px !important;
+  }
+  .ls-flight__label--tag {
+    font-family: var(--__sl-font-mono) !important;
+    font-weight: 600;
+    font-size: 17px !important;
+  }
+  .ls-flight__sub {
+    fill: var(--ls-nozzle);
+    font-size: 13px !important;
+  }
+
+  /*
+   * The one moment of motion on the page: on load the trails draw from the merged PR to the
+   * release tag, and each stop lights up as its trail passes it.
+   */
+  @media (prefers-reduced-motion: no-preference) {
+    .ls-flight__trail {
+      stroke-dasharray: 1 1;
+      stroke-dashoffset: 1;
+      animation: ls-draw 1.6s linear var(--delay) forwards;
+    }
+    .ls-flight__stop,
+    .ls-flight__node--end {
+      opacity: 0;
+      animation: ls-appear 280ms ease-out var(--delay) forwards;
+    }
+  }
+  @keyframes ls-draw {
+    to {
+      stroke-dashoffset: 0;
+    }
+  }
+  @keyframes ls-appear {
+    to {
+      opacity: 1;
+    }
+  }
+</style>

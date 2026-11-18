@@ -2,6 +2,8 @@
 
 <h1 align="center">launchset</h1>
 
+<p align="center"><strong><a href="https://demonsters.github.io/launchset/">Documentation</a></strong> · <a href="https://demonsters.github.io/launchset/getting-started/">Getting started</a> · <a href="https://demonsters.github.io/launchset/reference/cli/">CLI reference</a></p>
+
 Changesets-style releases for repos where **one version** drives **many targets**: Docker images, Android, iOS and web apps, built from one repo and released together.
 
 Every PR adds a small changeset file. launchset collects them into a release PR. Merging that PR releases every target at the same version. launchset builds nothing: it decides what to release, writes version and build numbers into your files and records what shipped as git tags. Your own workflow steps (docker build/push, Gradle, fastlane, Xcode) do the building.
@@ -16,7 +18,7 @@ The package is `@demonsters/launchset` (private on npm). The GitHub Action is pu
 
 ## Documentation
 
-The docs site is in [`docs/`](docs/) (Astro Starlight). Start with `docs/src/content/docs/getting-started.md`, or run `pnpm --filter docs dev`.
+The docs are at **https://demonsters.github.io/launchset/** (start with [Getting started](https://demonsters.github.io/launchset/getting-started/)). Their source is in [`docs/`](docs/) (Astro Starlight); `pnpm --filter docs dev` runs them locally. They are published to GitHub Pages by `.github/workflows/docs.yml` on every push to `main`.
 
 - Getting started, concepts, writing changesets
 - Targets: Docker, web, Android, iOS, React Native, Capacitor, Expo, custom
