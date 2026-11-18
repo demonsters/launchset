@@ -32,6 +32,8 @@ Developers describe each change in a small changeset file in their PR. Commit me
 - Expo OTA updates / `runtimeVersion` handling: issue [#1](https://github.com/demonsters/launchset/issues/1).
 - Store-ready release notes per platform: issue [#2](https://github.com/demonsters/launchset/issues/2). Unknown changeset frontmatter keys must be kept (not rejected) so #2 can add a field later.
 - Running the actual builds or store uploads.
+- Repos outside the demonsters org: the private action and the GitHub App only work there.
+- Build services that run outside GitHub Actions (Xcode Cloud, Codemagic). Expo EAS is covered by the `eas` build-number strategy (7.2). A generic `external` strategy can be added when a project needs it.
 
 ---
 
@@ -46,10 +48,11 @@ Developers describe each change in a small changeset file in their PR. Commit me
 | **Release commit** | The commit where the root `package.json` version first became the version being released (normally the merge of the release PR). All release builds check out this exact commit. |
 | **Release PR** | The PR launchset opens and keeps updated, titled `Release vX.Y.Z`, that applies pending changesets. |
 | **Marker tag** | A git tag recording that one target shipped for one version: `launchset/<target>@<version>`. |
-| **Release tag** | `v<version>`, created only when **every** target has a marker. Means "this version is fully released". |
+| **Release tag** | `v<version>` (template `tags.release`), created only when **every** auto target has a marker. Means "this version is fully released". Only tags whose version is a plain `X.Y.Z` count as release tags; prerelease tags (9.9) and partial tags (9.6) never do. |
+| **Prerelease** | A build from a prerelease branch (9.9): a preview with a stable version `X.Y.Z-<preid>.N`, a git tag and a GitHub pre-release, but nothing committed. |
 | **Maintenance branch** | `release/<major>.<minor>.x`, used for hotfixes on an older version line. |
 | **Preview** | A test build from a PR or branch (TestFlight, Play internal track, preview Docker tags). Has no side effects. |
-| **Channel** | `release` or `preview`, passed to each build job so the workflow chooses where to upload. |
+| **Channel** | `release`, `prerelease` or `preview`, passed to each build job so the workflow chooses where to upload. |
 | **Marketing version** | The user-visible version: `versionName` (Android), `CFBundleShortVersionString` / `MARKETING_VERSION` (iOS), `expo.version`. Committed by the release PR. |
 | **Build number** | `versionCode` (Android), `CFBundleVersion` / `CURRENT_PROJECT_VERSION` (iOS), `expo.ios.buildNumber` / `expo.android.versionCode`. Assigned in CI only. |
 
@@ -118,6 +121,7 @@ export default defineConfig({
   tags: {
     release: "v{version}",                     // default
     marker: "launchset/{target}@{version}",      // default
+    partial: "launchset/partial/{version}",    // default; see 9.6
   },
 
   buildNumber: {
@@ -133,7 +137,10 @@ export default defineConfig({
   preview: {
     label: "launchset:preview",                  // default
     rebuildOnPush: true,                       // default
-    branches: [],                              // e.g. ["develop"]: auto-preview on push
+    branches: [],                              // auto-preview on push, see 9.7 and 9.9, e.g.
+    //   ["develop"]
+    //   [{ branch: "feature/*", targets: ["docker-api"] },
+    //    { branch: "next/*", prerelease: "alpha" }]   // prerelease branch: tagged, 9.9
     targets: "all",                            // or ["android", "ios"]
   },
 
@@ -141,6 +148,7 @@ export default defineConfig({
     "docker-api": {
       type: "docker",
       image: "ghcr.io/demonsters/api",
+      tags: ["v{version}", "latest"],          // optional, see 6.1; also { release, preview, prerelease }
       verify: ["registry"],                    // optional: skip if the tag already exists
     },
     web: { type: "web" },
@@ -171,6 +179,8 @@ Any target may override `buildNumber`. Any target may have extra `files` entries
 - At least one target. Target names: `[a-z0-9][a-z0-9-]*`.
 - At least one target with `release: "auto"` (otherwise no release would ever complete).
 - `buildNumber.strategy: "semver"` together with previews enabled is an error (section 7.2).
+- Docker `tags` rules from 6.1 (a release list needs a `{version}` template; preview and prerelease lists can't contain `latest`).
+- `preview.branches` entries are globs. Branches matching `maintenanceBranches` never auto-preview, even if a pattern matches them. A pattern that matches the base branch is an error for prerelease entries (9.9).
 - Source files referenced by targets must exist.
 - Unknown keys are errors (catches typos) except where noted.
 
@@ -186,11 +196,34 @@ Two kinds of stamping:
 
 ### 6.1 `docker`
 
-- Options: `image` (required, may be a list for several registries), `tags` (optional, override defaults), `verify: ["registry"]`.
+- Options: `image` (required, may be a list for several registries), `tags` (optional, see below), `verify: ["registry"]`.
 - No files stamped by default.
-- Default release tags: `{version}`, `{major}.{minor}`, `{major}`, `latest`.
-  - On a maintenance branch: only `{version}` and `{major}.{minor}`. A hotfix must never move `latest` or `{major}` while a newer line exists.
-- Preview tags: `pr-<number>` (or `<branch-slug>` for branch previews) and the full preview version, e.g. `1.5.0-pr.123.4`. Never `latest` or a plain version.
+
+**Tag templates.** `tags` is either a list (the release list; preview and prerelease keep their defaults) or an object `{ release?, preview?, prerelease? }` of lists. Each entry is a template.
+
+| Placeholder | Value |
+|---|---|
+| `{version}` | the version of this run: the release version, the preview version (8.3) or the prerelease version (9.9) |
+| `{major}`, `{minor}`, `{patch}` | parts of the plain `X.Y.Z` (for previews and prereleases: of `{next}`) |
+| `{preid}` | prerelease id (prerelease only) |
+| `{prNumber}` | PR number (PR previews only) |
+| `{branchSlug}` | branch slug, 8.3 (branch previews and prereleases only) |
+| `{sha}`, `{shortSha}` | full / 7-character commit sha of the built commit |
+| `{buildNumber}` | the run's build number |
+
+| List | Default | Example result |
+|---|---|---|
+| `release` | `["{version}", "{major}.{minor}", "{major}", "latest"]` | `1.5.0`, `1.5`, `1`, `latest` |
+| `preview` | `["{version}", "pr-{prNumber}", "{branchSlug}"]` | `1.5.0-pr.123.4`, `pr-123` |
+| `prerelease` | `["{version}", "{branchSlug}"]` | `1.5.0-alpha.3`, `next-new-form` |
+
+Rules:
+- A template whose placeholder has no value in this run (e.g. `{prNumber}` on a branch preview) is skipped.
+- **Maintenance branches**: templates that contain neither `{version}` nor `{minor}` are dropped (that removes `latest` and major-only tags). This applies to custom lists too. A hotfix must never move `latest` or `{major}` while a newer line exists.
+- **0.x versions**: templates that contain neither `{version}` nor `{minor}`, other than the literal `latest`, are skipped while the major version is 0. A moving `:0` tag means nothing.
+- Validation: the `release` list must contain at least one template with `{version}` (used by `verify`, 7.4). `preview` and `prerelease` lists can't contain `latest` or a template that renders to a plain `X.Y.Z`.
+- Existing images often use a `v` prefix (`app:v1.5.0`). Keep it with `tags: ["v{version}", …]`; `init` reads the current tags from existing workflows (11.1).
+
 - Outputs for the job: full image refs (`image:tag`, one per line and as JSON), plus `version`, `build-number`, `channel`, and OCI label values (`org.opencontainers.image.version`, `.revision`, `.created`) so the workflow can pass them to `docker/build-push-action`.
 
 ### 6.2 `web`
@@ -271,7 +304,7 @@ The store is not a source of numbers, only a safety check. `launchset verify --t
 
 ### 7.4 Registry verification (`verify: ["registry"]`)
 
-For `docker` targets: check if `image:{version}` already exists via the registry HTTP API (OCI distribution spec, `HEAD /v2/<name>/manifests/<tag>` with token auth). Support at least ghcr.io and Docker Hub; generic registries with basic auth. Credentials from env (`LAUNCHSET_REGISTRY_USERNAME` / `LAUNCHSET_REGISTRY_PASSWORD`) or the standard Docker config file. If it exists: `already-published=true`. This replaces the team's old "ask the Docker API whether the image exists" workflow, but only as a safety net: the source of truth is the marker tags.
+For `docker` targets: check if the **verify tag** already exists. That is the first template in the run's tag list (6.1) that contains `{version}`, rendered: `image:1.5.0` with the defaults, `image:v1.5.0` with `tags: ["v{version}", …]`. The check uses the registry HTTP API (OCI distribution spec, `HEAD /v2/<name>/manifests/<tag>` with token auth). Support at least ghcr.io and Docker Hub; generic registries with basic auth. Credentials from env (`LAUNCHSET_REGISTRY_USERNAME` / `LAUNCHSET_REGISTRY_PASSWORD`) or the standard Docker config file. If it exists: `already-published=true`. This replaces the team's old "ask the Docker API whether the image exists" workflow, but only as a safety net: the source of truth is the marker tags. With private GHCR packages, `verify` needs read access before it runs: `packages: read` plus the registry env variables, or a `docker/login-action` step placed **before** `verify`. The generated workflow template does this.
 
 ---
 
@@ -281,7 +314,7 @@ For `docker` targets: check if `image:{version}` already exists via the registry
 
 1. `current` = root `package.json` version.
 2. `next` = `semver.inc(current, bump)`.
-3. **Next free version**: if `v{next}` or any marker tag for `{next}` already exists (for example a hotfix released it from a maintenance branch), increase the patch until a free version is found. Example: main is at `1.4.0` with a pending patch, but `v1.4.1` was released from `release/1.4.x` → next is `1.4.2`.
+3. **Next free version**: if the release tag for `{next}` or any marker tag for `{next}` already exists (for example a hotfix released it from a maintenance branch), increase the patch until a free version is found. Example: main is at `1.4.0` with a pending patch, but `v1.4.1` was released from `release/1.4.x` → next is `1.4.2`.
 
 ### 8.2 Maintenance branches
 
@@ -293,6 +326,7 @@ For `docker` targets: check if `image:{version}` already exists via the registry
 - Base: the next version computed from the changesets on the PR/branch. If none are pending, use a patch bump.
 - PR: `{next}-pr.{prNumber}.{runNumber}` → `1.5.0-pr.123.4`.
 - Branch preview (auto or `workflow_dispatch`): `{next}-{branchSlug}.{runNumber}` → `1.5.0-develop.17`. Slug: lowercase, `[a-z0-9-]`, max 30 chars.
+- Prerelease branch (9.9): `{next}-{preid}.{n}` → `1.5.0-alpha.3`, where `n` is the next free number for that `{next}` and `{preid}`, starting at 0.
 - iOS marketing version: plain `{next}` (section 6.4).
 
 ---
@@ -311,7 +345,7 @@ Events caused by the default `GITHUB_TOKEN` don't trigger other workflows. A rel
 
 ### 9.2 PR check (`launchset-check.yml`)
 
-Trigger: `pull_request` (opened, synchronize, reopened, edited, labeled, unlabeled) targeting the base branch or a maintenance branch.
+Trigger: `pull_request` (opened, synchronize, reopened, edited, labeled, unlabeled) targeting the base branch, a maintenance branch or a prerelease branch (9.9).
 
 The check passes when:
 - the PR adds or changes at least one valid changeset, **or**
@@ -380,13 +414,13 @@ build:
 ### 9.4 Bot PRs
 
 - The PR check passes for authors in `check.bots`. **launchset never pushes to bot branches**: Dependabot and Renovate stop rebasing PRs that others have pushed to.
-- When building the release PR, launchset lists PRs merged into the branch since the last release tag (commits between `v{last}` and HEAD → associated PRs via the GitHub API), and for each one authored by a bot that **didn't** add a changeset, it writes a generated changeset: `bump: patch`, `source: bot`, `pr: <n>`, body = the PR title (e.g. "Bump react-native from 0.76.1 to 0.76.3"). These are generated fresh on every release-PR run (the branch is rebuilt), so they're never duplicated.
+- When building the release PR, launchset lists PRs merged into the branch since the last release tag (commits between the last release tag and HEAD → associated PRs via the GitHub API), and for each one authored by a bot that **didn't** add a changeset, it writes a generated changeset: `bump: patch`, `source: bot`, `pr: <n>`, body = the PR title (e.g. "Bump react-native from 0.76.1 to 0.76.3"). These are generated fresh on every release-PR run (the branch is rebuilt), so they're never duplicated.
 - Merged bot PRs alone are enough to open a release PR.
 - In the changelog, bot entries go under a **Dependencies** heading.
 
 ### 9.5 Hotfixes / maintenance branches
 
-- `launchset hotfix <major.minor>` (CLI, run locally): creates `release/<major>.<minor>.x` from the latest `v<major>.<minor>.*` release tag and pushes it. Errors if the branch already exists or no such tag exists.
+- `launchset hotfix <major.minor>` (CLI, run locally): creates `release/<major>.<minor>.x` from the latest release tag in the `<major>.<minor>` line (e.g. `v1.4.2`) and pushes it. Errors if the branch already exists or no such tag exists.
 - On that branch the whole flow is identical: PRs target it, the check runs, a release PR `launchset/release/release/1.4.x` is opened (branch naming must handle slashes), merging it publishes.
 - Build numbers: `timestamp` keeps working because it increases over time regardless of branch. Hotfix Android builds always get a higher `versionCode` than earlier uploads.
 - Docker tags on maintenance releases: see 6.1 (never `latest`).
@@ -395,9 +429,10 @@ build:
 
 ### 9.6 Partial (unfinished) releases
 
-- Only the newest version is ever published. When a newer version reaches `finalize` and an older version has marker tags but no `v` tag, that older version is **superseded**:
-  - Create tag `v{old}-partial` at the old release commit, and a GitHub Release for it marked **pre-release**, titled `v1.4.0 (partial, superseded by v1.4.1)`, listing which targets shipped and which didn't, plus the changelog section.
-  - It never gets a `v{old}` tag.
+- Only the newest version is ever published. When a newer version reaches `finalize` and an older version has marker tags but no release tag, that older version is **superseded**:
+  - Create the partial tag (`tags.partial`, default `launchset/partial/{version}`) at the old release commit. Also create a GitHub Release for it, marked **pre-release** and titled `v1.4.0 (partial, superseded by v1.4.1)`, listing which targets shipped and which didn't, plus the changelog section.
+  - The partial tag deliberately sits outside the `v*` namespace, so existing `on: push: tags: ["v*"]` workflows don't fire on it. (A `v{old}-partial` tag would match `v*` and `v*.*.*` filters, and would also parse as a semver prerelease.)
+  - It never gets a release tag.
 - Only auto targets count. An older version that has all its auto markers is a normal release, whether or not its manual targets were ever shipped.
 - `plan` only ever considers the current version (for `publish`; `ship` may target any released version, 9.8).
 
@@ -406,13 +441,13 @@ build:
 Triggers:
 - `pull_request` (labeled, synchronize, reopened): only when the PR has `preview.label`. With `rebuildOnPush: false`, only on the `labeled` event.
 - `workflow_dispatch` on any branch (optional input: targets).
-- `push` to branches in `preview.branches`.
+- `push` to branches matching `preview.branches` (globs; entries may be objects `{ branch, targets? }`, where `targets` overrides `preview.targets` for that branch). Entries with `prerelease` are prerelease branches (9.9).
 - Concurrency per PR/branch with `cancel-in-progress: true` (a newer push replaces the older preview; build numbers stay unique).
 - PRs from forks: secrets aren't available; skip with a clear notice in the job summary.
 
 Behavior:
 - `command: preview-plan` outputs the same shape as `plan` with `channel=preview`, the preview version (8.3), a build number, and the preview targets (`preview.targets`).
-- **No side effects**: no changesets consumed, nothing committed, no marker or release tags, no GitHub Releases.
+- **No side effects**: no changesets consumed, nothing committed, no marker or release tags, no GitHub Releases. (Prerelease branches add a tag and a GitHub pre-release, 9.9.)
 - `command: preview-comment` (final job, `if: always()`): one sticky PR comment with version, build number per platform, Docker image tags, and per-target success/failure with links to the jobs. Updated on each preview run.
 - Manual targets can be in `preview.targets` like any other target (for example TestFlight previews by label).
 
@@ -447,6 +482,26 @@ A target with `release: "manual"` is kept in version step with every release, bu
 
 **Switching** a target between `manual` and `auto` is a one-line config change. It takes effect from the next release; existing markers stay valid.
 
+### 9.9 Prerelease branches (tagged previews)
+
+For long-lived lines that ship real, installable prereleases (public npm alphas, alpha images deployed to staging, betas that other repos pin). Configured as a `preview.branches` entry with `prerelease`:
+
+```ts
+preview: { branches: [{ branch: "next/*", prerelease: "alpha", targets: "all" }] }
+```
+
+A push to a matching branch runs the preview workflow (9.7), with these differences:
+
+- **Version**: `{next}-{preid}.{n}` (8.3). `{next}` comes from the changesets on the branch compared with the base branch. `n` is the next free number: one higher than the highest existing `{next}-{preid}.*` prerelease tag, starting at 0.
+- **Tag as reservation**: `preview-plan` creates and pushes the tag (release template, e.g. `v1.5.0-alpha.3`) at the built commit **before** the builds start, using the App token. If the push fails because the tag exists (a concurrent run), it retries with `n+1`. Re-running failed jobs reuses the plan, so the version stays the same. Numbers reserved by cancelled or failed runs are skipped; gaps are fine.
+- **Channel** `prerelease`. Docker tags from the `prerelease` list (6.1, default `{version}` and `{branchSlug}`), never `latest`. The `dist-tag` output is `{preid}`, for npm. Android `versionName` is the full prerelease version; iOS uses the plain `{next}` (6.4), and the build number tells builds apart.
+- **GitHub pre-release**: the final job (`preview-comment`) creates or updates a GitHub Release for the tag, marked **pre-release**, never "latest". The body lists the changesets pending on the branch (the ones the base branch doesn't have) and the per-target result.
+- **Nothing is committed, no changesets are consumed, no markers.** When the branch merges into the base branch, its changesets produce a normal release PR with the full changelog. So there's no pre-mode state file, no "exit pre mode", and no prerelease version committed on main.
+- **Never release tags**: prerelease tags don't count for "last release", next-free-version (8.1), the hotfix base or the bot-PR range (glossary).
+- Concurrency per branch with `cancel-in-progress: false`, so every push gets its prerelease.
+- The PR check (9.2) also runs for PRs that target a prerelease branch.
+- Migrating from Changesets pre mode: `init` converts the changesets on the default branch (4.2). Changesets on a pre-mode branch are converted on that branch with `launchset init --convert-only`; `pre.json` is ignored, with a warning.
+
 ---
 
 ## 10. The GitHub Action
@@ -455,7 +510,7 @@ A target with `release: "manual"` is kept in version step with every release, bu
 - `dist/index.js` is a **single bundled file** that includes the CLI core and all dependencies, and is committed. CI in the launchset repo fails if `dist` is out of date. Consumer repos never install anything from npm.
 - Used as `demonsters/launchset/action@v1`.
 - Inputs: `command` (`check` | `release` | `stamp` | `verify` | `mark` | `finalize` | `preview-plan` | `preview-comment`), `token`, `target`, `version` (with `release` + `target`: ship a manual target, 9.8), `plan`, `working-directory`.
-- Outputs (depending on command): `mode` (`publish` | `ship` | `release-pr` | `none`), `matrix`, `plan`, `version`, `build-number`, `channel`, `release-sha`, `already-published`, `docker-tags`, `docker-labels`, `pr-number`.
+- Outputs (depending on command): `mode` (`publish` | `ship` | `release-pr` | `none`), `matrix`, `plan`, `version`, `build-number`, `channel` (`release` | `prerelease` | `preview`), `release-sha`, `already-published`, `docker-tags`, `docker-labels`, `dist-tag` (npm dist-tag suggestion: `latest` for base-branch releases, `release-<major>.<minor>` on maintenance branches, `<preid>` for prereleases, `pr-<n>` / `<branchSlug>` for previews), `pr-number`.
 - Writes a readable job summary (`$GITHUB_STEP_SUMMARY`) for every command.
 - Versioning of launchset itself: tags `v1.2.3` plus a moving major tag `v1`.
 - Because the repo is private, other demonsters repos can only use the action after an org owner enables **Settings → Actions → General → Access → "Accessible from repositories in the 'demonsters' organization"**. Document this.
@@ -487,13 +542,37 @@ The GitHub-facing commands work from the CLI too when given `GITHUB_TOKEN`/`--to
 
 ### 11.1 `launchset init`
 
-1. **Detect**: root `package.json`; Android (`android/app/build.gradle(.kts)`, `gradle.properties` version keys); iOS (`*.xcodeproj`, `Info.plist`, `.xcconfig`; choose `xcodeproj` when plists use `$(MARKETING_VERSION)`); Capacitor (`capacitor.config.*`); Expo (`app.json` with an `expo` key; for `app.config.*` print the advice from 6.5); Dockerfiles (suggest docker targets, ask for the image name).
-2. **Show versions** found per file. If they don't match, pick the canonical version (default: root `package.json`) and align the files.
+1. **Detect**:
+   - **Versions**: root `package.json`; `package.json` files next to each detected Dockerfile; existing tags (`v1.2.3`, `1.2.3`, `name@1.2.3`, with or without prerelease).
+   - **Android**: `android/app/build.gradle(.kts)`, `gradle.properties` version keys.
+   - **iOS**: `*.xcodeproj`, `Info.plist`, `.xcconfig` (only if it contains `MARKETING_VERSION`/`CURRENT_PROJECT_VERSION`). Choose `xcodeproj` when plists use `$(MARKETING_VERSION)`.
+   - **Capacitor**: `capacitor.config.*`; prefer the `capacitor` alias.
+   - **Expo**: `app.json` with an `expo` key. For `app.config.*`, print the advice from 6.5.
+   - **Search scope**: the repo root, workspace packages (`workspaces`, `pnpm-workspace.yaml`) and `**/Dockerfile*`, excluding `node_modules`.
+   - **Dockerfiles**: suggest docker targets. Read the image name, `file`/`context` and the current tag pattern (e.g. a `v` prefix) from existing `docker/build-push-action` / `docker/metadata-action` steps or `docker push` lines, and only ask when nothing is found.
+   - **Existing release machinery** that would conflict with launchset (step 4):
+     - workflows (`.github/workflows/*`, `.gitlab-ci.yml`) triggered by `push.tags` patterns that match the release tag (`v*`, `v*.*.*`, `*.*.*`, …);
+     - `changesets/action`, and `changeset version|status|publish|tag` in workflows or `package.json` scripts;
+     - steps or scripts that create tags or GitHub Releases (`git tag`, `gh release create`, `createRelease`);
+     - Docker pushes of `latest` on branch pushes;
+     - scripts that write `MARKETING_VERSION`, `CURRENT_PROJECT_VERSION`, `versionCode` or `versionName` (they would overwrite stamped build numbers in CI);
+     - `@changesets/write` in scripts;
+     - release instructions in `CLAUDE.md`, `AGENTS.md` and `README` (`npm version`, `git tag`, `changeset`).
+2. **Canonical version**: show every version found, per file and per tag.
+   - **Default to the highest** of: the root version, the `package.json` next to each Dockerfile target, native marketing versions, and the highest existing release-like tag. Explain the choice.
+   - **Never lower** a version without explicit confirmation (`--decide version=<v>` or an interactive answer). Stores reject lower marketing versions, and image tags or runtime versions would go backwards.
+   - Then align the target files to the canonical version. Image-pin files (k8s/kustomize/Helm) are never aligned automatically; they are only offered as `files` entries.
    - **Target kind**: for every detected platform, ask whether it is shipped by CI with every release (`auto`), shipped on demand (`manual`, 9.8), or not a target. Default: `auto` when an existing workflow already builds it, `manual` for native projects that no workflow builds.
 3. **Build numbers**: read the current highest `versionCode` / `CFBundleVersion` from the files (and, if credentials are present, from the stores). If any is higher than what the chosen strategy produces now, set `buildNumber.offset` so new numbers stay higher, and explain.
 4. **Write**: `launchset.config.ts`, `.launchset/README.md`, the three workflow files (with commented placeholders for the team's build steps, and example steps for docker/build-push-action and fastlane), `CHANGELOG.md` if missing.
-5. **Baseline**: offer to create the `v{version}` tag on HEAD so the current version counts as released (skip if it exists).
-6. **Convert** existing `.changeset/*.md` (4.2).
+   - **Retire conflicting machinery**: list everything found in step 1 with the reason it conflicts. Examples: "fires again on launchset's `v{version}` tag and pushes the image twice"; "creates `v{version}` before `finalize`"; "overwrites the stamped build number".
+   - Per item, offer **remove** (delete the workflow or script), **disable** (remove only the conflicting trigger or step), or **keep**.
+   - Default with `--yes`: disable the conflicting trigger or step, and print a list of the changes. Never leave a conflict in place silently.
+5. **Baseline**: offer to create the release tag for the canonical version on HEAD, so it counts as released (skip if it exists).
+   - Default **yes** only when an existing tag in another format (`0.9.4`, `name@0.9.4`) already marks that version as released.
+   - Otherwise default **no**, with a warning that the version may never have been built. A baseline tag on an unreleased version means launchset never builds it, and pinned images might not exist.
+   - `--baseline` forces it.
+6. **Convert** existing `.changeset/*.md` (4.2). `launchset init --convert-only` runs only this step, e.g. on a Changesets pre-mode branch (9.9).
 7. **Agent skill**: offer to install `.claude/skills/launchset/SKILL.md` and add a short launchset section to `AGENTS.md` (create it if missing) for non-Claude agents.
 8. Print the manual steps that remain: GitHub App + secrets, store credential secrets, action access setting.
 
@@ -502,7 +581,7 @@ The GitHub-facing commands work from the CLI too when given `GITHUB_TOKEN`/`--to
 **Agent-assisted adoption.** Repos will move to launchset one at a time, mostly done by an agent, so init has a detection-only mode for that:
 
 - `launchset init --detect --json` writes nothing. It prints everything from steps 1–3 (files, versions, build numbers, Dockerfiles, native projects, existing workflows) plus a list of **decisions**. Each decision has an `id`, the question, the options, the proposed default, and the evidence (`path:line`) behind the default.
-- Example decisions: the canonical version; which detected platforms become targets, and `auto` or `manual`; Docker image names; whether to create the baseline tag.
+- Example decisions: the canonical version; which detected platforms become targets, and `auto` or `manual`; Docker image names and tag templates; what to do with each piece of conflicting release machinery; whether to create the baseline tag.
 - Every decision can be answered with `--decide <id>=<value>` (repeatable), besides the named flags.
 - The intended loop: the agent runs `--detect --json`, asks the human only the decisions where the default isn't obviously right, then runs `launchset init --yes --decide …`. The adoption skill (16.3) describes this loop.
 
@@ -576,11 +655,12 @@ Keep `core/` free of I/O so it can be tested with plain inputs.
 ## 14. Testing
 
 - **Stampers**: fixtures for Groovy and KTS Gradle files (incl. flavors → error), `gradle.properties`, a pbxproj with several targets and configurations including an app extension, Info.plist with literal values and with `$(MARKETING_VERSION)`, `.xcconfig`, Capacitor layout, Expo `app.json`, bare RN layout, JSON/YAML/regex. Assert exact output text (only the values changed).
-- **Core**: bump calculation, next-free version, maintenance restrictions, preview versions, build-number strategies incl. limits and the semver+preview rejection, changelog rendering, config validation messages.
+- **Core**: bump calculation, next-free version, maintenance restrictions, preview and prerelease versions (counter, gaps, prerelease tags never counted as releases), Docker tag template rendering (placeholders, skipped templates, maintenance filtering, 0.x major, validation errors), build-number strategies incl. limits and the semver+preview rejection, changelog rendering, config validation messages.
 - **Plan/state**: every mode (`publish`, `ship`, `release-pr`, `none`), markers present/missing, release-sha detection, superseding, `workflow_dispatch` retry. Manual targets: left out of the publish matrix, not needed for `v{version}`, ignored by superseding; `ship` of the latest and an older version, refusal to go backwards, already-marked version.
 - **GitHub**: mocked HTTP (msw): release PR create/update/close, sticky comments, tags, releases, bot-PR detection, changelog backport PR.
-- **Verify**: mocked Play, App Store Connect and registry responses incl. "already published" and "store is ahead".
-- **End to end**: real temporary git repos with a local bare remote, running the CLI through a full lifecycle: init → add → version → plan → stamp → mark → finalize; a hotfix line; a superseded partial release; a preview; a manual target shipped by hand two releases later (`ship` → `mark --version`); `init --detect --json` followed by `init --yes --decide …` on fixture repos.
+- **Verify**: mocked Play, App Store Connect and registry responses incl. "already published" and "store is ahead"; registry verify uses the rendered verify tag (`v{version}` templates).
+- **init detection**: fixture repos with tag-triggered workflows, a Changesets pipeline, a version-sync script, a `v`-prefixed `docker/build-push-action`, mismatched versions where the root is lower (no lowering by default), and an unreleased root version (no baseline by default).
+- **End to end**: real temporary git repos with a local bare remote, running the CLI through a full lifecycle: init → add → version → plan → stamp → mark → finalize; a hotfix line; a superseded partial release; a preview; a manual target shipped by hand two releases later (`ship` → `mark --version`); a prerelease branch with two concurrent pushes (tag reservation retry) and its merge into main; `init --detect --json` followed by `init --yes --decide …` on fixture repos.
 - **launchset's own CI**: lint, typecheck, tests, `action/dist` up to date, docs build.
 
 ---
@@ -606,13 +686,13 @@ For humans. Every command, flag, config option and output shown must match the c
 - Targets: Docker, Web, Android, iOS, React Native, Capacitor, Expo, Custom
 - Build numbers (strategies, offset, store verification, migrating existing apps)
 - Release flow (workflows explained step by step)
-- Preview builds
+- Preview builds and prerelease branches
 - Hotfixes and maintenance branches
 - Partial releases
 - Manual targets (shipping a store app on demand, `launchset ship`)
 - GitHub App setup (step by step, permissions, secrets, action access setting)
 - Workflow recipes (docker/build-push-action, fastlane for Play and TestFlight, Gradle, xcodebuild)
-- Migrating from Changesets / moving an existing repo (`init`, `init --detect --json`, agent-assisted adoption with the adoption skill)
+- Migrating from Changesets / moving an existing repo (`init`, `init --detect --json`, agent-assisted adoption with the adoption skill; retiring tag-triggered workflows and Changesets pipelines; Changesets pre mode → prerelease branches)
 - CLI reference
 - Troubleshooting / FAQ (e.g. "release PR has no CI runs" → App token missing)
 
@@ -643,6 +723,8 @@ For AI agents moving an **existing repo** onto launchset. Repos will be migrated
   - a baseline tag for a version that has no release tag;
   - native projects that no workflow builds. Suggest `release: "manual"` for those, and explain what it means (9.8).
 - Find and explain the existing release machinery that will conflict: tag-triggered workflows, Changesets workflows and scripts, scripts that write version or build numbers, release instructions in `CLAUDE.md`/`AGENTS.md`/`README`. Propose removing or adapting each one, and do it only after the human agrees.
+- Keep existing conventions unless the human decides otherwise: the git tag format (`tags.release`) and Docker image tags (e.g. `v{version}`) that deploy tooling pulls.
+- Long-lived Changesets pre-mode branches (`.changeset/pre.json`): propose a prerelease branch entry (9.9) and run `init --convert-only` on that branch.
 - Move the team's existing build and upload steps into the generated workflows (`docker/build-push-action` tags and file, signing, fastlane, deploy steps), keeping secrets and environments as they are.
 - Run `init --yes --decide …` with the answers, then open a single PR with everything. The PR body lists the decisions, what was removed or changed, and the manual steps that remain (GitHub App installation, secrets, store credentials).
 - Don't migrate repos that are out of scope (for example independently versioned npm packages, 1.2). Say why instead.
@@ -665,7 +747,7 @@ These weren't discussed explicitly; they follow from the agreed design. Change t
 
 - Changeset folder `.launchset/`, config file `launchset.config.ts`, frontmatter key `bump`.
 - Marker tags are namespaced `launchset/<target>@<version>` to avoid clashing with other tools.
-- Partial releases get a `v{old}-partial` tag, because a GitHub Release needs a tag.
+- Partial releases get a tag outside the `v*` namespace (`launchset/partial/{version}`), because a GitHub Release needs a tag and existing `v*` tag workflows must not fire on it.
 - Release builds always check out the release commit (`release-sha`); later pushes don't auto-retry an unfinished release.
 - "Next free version" on main skips versions already taken by hotfixes.
 - Maintenance releases never move Docker `latest`/`{major}` tags and aren't marked "latest" on GitHub.
@@ -675,3 +757,8 @@ These weren't discussed explicitly; they follow from the agreed design. Change t
 - The PR check also fails when version files don't match the root version.
 - Manual targets (9.8) only ship already released versions, never lower than their last shipped version, and don't block the release tag. Added after validating the spec against existing projects.
 - `init` has a detection-only JSON mode with explicit decisions, and a separate adoption skill exists, because most repos will be migrated one at a time by agents.
+- Docker tags are templates (`v{version}` keeps today's `v`-prefixed images), and registry verify checks the rendered verify tag, not a fixed `image:{version}`.
+- `init` retires conflicting release machinery (tag-triggered workflows, Changesets pipelines, tag scripts, version-sync scripts) instead of leaving it in place, because launchset's App-token tags would trigger it.
+- `init` defaults to the highest version it finds and never lowers a version or baselines an unreleased version without confirmation.
+- Prereleases are tagged previews (9.9): a stable `X.Y.Z-<preid>.N` version, a tag and a GitHub pre-release, but nothing committed and no changesets consumed. This replaces Changesets pre mode without its state file.
+- Repos outside the demonsters org and build services outside GitHub Actions (Xcode Cloud) are out of scope for v1.
