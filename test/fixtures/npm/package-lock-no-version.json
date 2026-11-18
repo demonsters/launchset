@@ -1,0 +1,16 @@
+{
+  "name": "example",
+  "lockfileVersion": 3,
+  "requires": true,
+  "packages": {
+    "": {
+      "name": "example",
+      "dependencies": {
+        "left-pad": "1.3.0"
+      }
+    },
+    "node_modules/left-pad": {
+      "version": "1.3.0"
+    }
+  }
+}

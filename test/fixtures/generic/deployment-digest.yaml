@@ -1,0 +1,10 @@
+apiVersion: apps/v1
+kind: Deployment
+spec:
+  template:
+    spec:
+      containers:
+        - name: app
+          image: ghcr.io/org/app:1.4.0@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+        - name: sidecar
+          image: ghcr.io/org/app:1.4.0

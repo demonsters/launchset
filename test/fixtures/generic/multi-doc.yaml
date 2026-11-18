@@ -1,0 +1,12 @@
+---
+kind: ConfigMap
+metadata:
+  name: one
+data:
+  version: "1.4.0"
+---
+kind: Deployment
+metadata:
+  name: two
+spec:
+  replicas: 2

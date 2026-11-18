@@ -1,0 +1,10 @@
+apply plugin: "com.android.application"
+
+android {
+    namespace "com.example.crlf"
+    defaultConfig {
+        applicationId "com.example.crlf"
+        versionCode 7
+        versionName "0.7.0"
+    }
+}

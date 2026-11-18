@@ -1,0 +1,2 @@
+containers:
+  - image: ghcr.io/org/app@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef

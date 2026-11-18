@@ -1,0 +1,15 @@
+{
+	"expo": {
+		"name": "Example",
+		"slug": "example",
+		"version": "1.4.0",
+		"ios": {
+			"bundleIdentifier": "com.example.app",
+			"buildNumber": "12"
+		},
+		"android": {
+			"package": "com.example.app",
+			"versionCode": 12
+		}
+	}
+}

@@ -1,0 +1,5 @@
+{
+  "name": "example-crlf",
+  "version": "1.4.0",
+  "files": ["dist"]
+}

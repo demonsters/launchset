@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app
+  labels:
+    app.kubernetes.io/version: "1.4.0"
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: app
+  template:
+    metadata:
+      labels:
+        app: app
+    spec:
+      initContainers:
+        - name: migrate
+          image: ghcr.io/org/app:1.4.0
+          command: ["node", "migrate.js"]
+      containers:
+        - name: app
+          image: "ghcr.io/org/app:1.4.0"
+          ports:
+            - containerPort: 3000
+        - name: worker
+          image: ghcr.io/org/app-worker:1.4.0
+        - name: proxy
+          image: other.io/ghcr.io/org/app:1.4.0
+        - name: cache
+          image: redis:7.2
+        - name: untagged
+          image: ghcr.io/org/app

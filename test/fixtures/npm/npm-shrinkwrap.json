@@ -1,0 +1,15 @@
+{
+	"name": "@org/cli",
+	"version": "2.0.0-rc.1",
+	"lockfileVersion": 3,
+	"requires": true,
+	"packages": {
+		"": {
+			"name": "@org/cli",
+			"version": "2.0.0-rc.1",
+			"bin": {
+				"cli": "bin/cli.js"
+			}
+		}
+	}
+}
