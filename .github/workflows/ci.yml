@@ -21,6 +21,12 @@ jobs:
         with:
           fetch-depth: 0
       - uses: pnpm/action-setup@v4
+      # Node 24 is the GitHub Actions runtime of the bundled action: the smoke test runs the
+      # bundle with it (LAUNCHSET_NODE24). Node 26 runs everything else.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - run: echo "LAUNCHSET_NODE24=$(command -v node)" >> "$GITHUB_ENV"
       - uses: actions/setup-node@v5
         with:
           node-version: 26
@@ -42,3 +48,30 @@ jobs:
           name: action-bundle
           path: action/dist/
           if-no-files-found: error
+
+  action-smoke:
+    name: Run the local action
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: action-bundle
+          path: action/dist/
+      # `add` needs no token: it writes a changeset into this checkout.
+      - id: add
+        uses: ./action
+        with:
+          command: add
+          bump: none
+          message: CI smoke test
+      - name: Check the action's output
+        env:
+          CHANGESET: ${{ steps.add.outputs.path }}
+        run: |
+          test -n "$CHANGESET"
+          test -f "$CHANGESET"
+          grep -q "bump: none" "$CHANGESET"

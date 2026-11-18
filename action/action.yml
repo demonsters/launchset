@@ -31,7 +31,7 @@ inputs:
   target:
     description: >-
       Target name. Required for stamp, verify and mark. With release: the manual target to ship
-      (spec 9.8, mode ship). With preview-plan: an optional comma-separated list of targets that
+      (shipping it for an already released version). With preview-plan: an optional comma-separated list of targets that
       overrides the configured preview targets (used by workflow_dispatch).
     required: false
     default: ""
@@ -128,6 +128,21 @@ outputs:
     description: >-
       Set by release, preview-plan and stamp. "true" when the channel is prerelease, otherwise
       "false". A convenient condition for steps that publish only prereleases.
+  path:
+    description: >-
+      Set by add. The path of the new changeset file, relative to the repository root (for
+      example .launchset/brave-lions-sing.md). Use it to commit the file in a workflow.
+  skipped:
+    description: >-
+      Set by preview-plan. A short code (for example no-label or fork) when no preview is
+      planned for this run; empty otherwise. When it is set, matrix is [] and plan is empty.
+  skip-reason:
+    description: Set by preview-plan. The sentence that says why the preview was skipped.
+  comment-url:
+    description: Set by preview-comment on pull request previews. The URL of the sticky comment.
+  release-url:
+    description: >-
+      Set by preview-comment on prerelease branches. The URL of the GitHub pre-release.
 
 runs:
   using: node24
