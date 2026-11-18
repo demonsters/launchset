@@ -403,6 +403,30 @@ describe("lookups", () => {
     );
   });
 
+  it("serves later listings of a branch that look back no further from the first one", async () => {
+    let requests = 0;
+    const day = (d: number) => `2026-10-${String(d).padStart(2, "0")}T12:00:00Z`;
+    server.use(
+      http.get(`${REPO}/pulls`, () => {
+        requests++;
+        return HttpResponse.json(
+          [30, 20, 10].map((d) => rawPr(d, { updated_at: day(d), merged_at: day(d) })),
+        );
+      }),
+    );
+    const client = gh();
+    const first = await client.closedPrsInto("main", { updatedSince: "2026-10-05T00:00:00Z" });
+    expect(first.map((pr) => pr.number)).toEqual([30, 20, 10]);
+    const newer = await client.closedPrsInto("main", { updatedSince: "2026-10-15T00:00:00Z" });
+    expect(newer.map((pr) => pr.number)).toEqual([30, 20]);
+    expect(requests).toBe(1);
+    // Looking back further (or without a bound) lists again.
+    await client.closedPrsInto("main");
+    expect(requests).toBe(2);
+    await client.closedPrsInto("main", { updatedSince: "2026-10-01T00:00:00Z" });
+    expect(requests).toBe(2);
+  });
+
   it("lists every PR file across pages", async () => {
     server.use(
       http.get(`${REPO}/pulls/9/files`, ({ request }) => {

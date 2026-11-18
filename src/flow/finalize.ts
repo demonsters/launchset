@@ -183,11 +183,15 @@ export async function finalize(
   // Candidates whose partial tag already has its pre-release are done; the others (no partial
   // tag yet, or a pre-release that failed to be created) are superseded or completed.
   let unfinished: UnfinishedVersion[] = [];
+  /** Releases looked up so far (tag → release, `undefined`: there is none). */
+  const known = new Map<string, ExistingRelease | undefined>();
   if (plan.mode === "publish") {
     const partials = finalizeCandidates(config, tags, plan.version).flatMap((c) =>
       tags.index.partials.has(c.version) ? [partialTag(config.tags, c.version)] : [],
     );
-    const withRelease = new Set((await existingReleases(github, partials)).keys());
+    const partialReleases = await existingReleases(github, partials);
+    for (const tag of partials) known.set(tag, partialReleases.get(tag));
+    const withRelease = new Set(partialReleases.keys());
     unfinished = await unfinishedVersionsBefore(
       context,
       tags,
@@ -207,7 +211,15 @@ export async function finalize(
   for (const u of unfinished) {
     lookup.push(partialTag(config.tags, u.version), releaseTag(config.tags, u.version));
   }
-  const releases = await existingReleases(github, lookup);
+  const fetched = await existingReleases(
+    github,
+    lookup.filter((tag) => !known.has(tag)),
+  );
+  const releases = new Map<string, ExistingRelease>();
+  for (const tag of new Set(lookup)) {
+    const release = known.has(tag) ? known.get(tag) : fetched.get(tag);
+    if (release) releases.set(tag, release);
+  }
 
   const result = planFinalize({
     config,

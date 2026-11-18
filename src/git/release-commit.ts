@@ -7,10 +7,16 @@
  * commit as the original run.
  */
 
-import type { Git } from "./index.ts";
+import { type Git, topPathspec } from "./index.ts";
 
-/** Reads the root version at a commit; undefined when the file or field is missing. */
-export type ReadVersion = (sha: string) => Promise<string | undefined>;
+/**
+ * Reads the root version at a commit; undefined when the file or field is missing. `prefetch`
+ * (optional) reads the versions at many commits in one go, for the reads that follow.
+ */
+export interface ReadVersion {
+  (sha: string): Promise<string | undefined>;
+  prefetch?(shas: readonly string[]): Promise<void>;
+}
 
 export interface FindReleaseCommitOptions {
   /**
@@ -19,6 +25,9 @@ export interface FindReleaseCommitOptions {
    */
   paths?: string[];
 }
+
+/** Candidates whose versions are read per `git cat-file --batch`. */
+const BATCH = 64;
 
 /**
  * Read `version` from the JSON version file at commit `sha`. `file` is repo-relative (convert
@@ -30,10 +39,14 @@ export async function readRootVersion(
   file: string,
 ): Promise<string | undefined> {
   const text = await git.showFile(sha, file);
-  if (text === undefined) return undefined;
+  return text === undefined ? undefined : parseRootVersion(text, file, sha);
+}
+
+/** The `version` field of a JSON version file's text (`file` at `sha`, for the error). */
+function parseRootVersion(text: string, file: string, sha: string): string | undefined {
   let data: unknown;
   try {
-    data = JSON.parse(text.replace(/^﻿/, ""));
+    data = JSON.parse(text.replace(/^\uFEFF/, ""));
   } catch (error) {
     throw new Error(
       `Could not parse ${file} at commit ${sha.slice(0, 12)}: ${(error as Error).message}\n` +
@@ -47,17 +60,35 @@ export async function readRootVersion(
   return undefined;
 }
 
-/** A `readVersion` for a JSON version file, cached per sha. */
+/**
+ * A `readVersion` for a JSON version file, cached per sha. `prefetch` reads the file at many
+ * commits with one `git cat-file --batch`; a text is parsed only when its version is read.
+ */
 export function versionReader(git: Git, file: string): ReadVersion {
   const cache = new Map<string, Promise<string | undefined>>();
-  return (sha) => {
+  /** Prefetched file texts (`null`: no such file at that commit). */
+  const texts = new Map<string, string | null>();
+  const read: ReadVersion = (sha) => {
     let value = cache.get(sha);
     if (!value) {
-      value = readRootVersion(git, sha, file);
+      const text = texts.get(sha);
+      value =
+        text === undefined
+          ? readRootVersion(git, sha, file)
+          : Promise.resolve().then(() =>
+              text === null ? undefined : parseRootVersion(text, file, sha),
+            );
       cache.set(sha, value);
     }
     return value;
   };
+  read.prefetch = async (shas) => {
+    const wanted = [...new Set(shas)].filter((sha) => !cache.has(sha) && !texts.has(sha));
+    if (wanted.length === 0) return;
+    const blobs = await git.readBlobs(wanted.map((sha) => `${sha}:${file}`));
+    for (const sha of wanted) texts.set(sha, blobs.get(`${sha}:${file}`) ?? null);
+  };
+  return read;
 }
 
 /**
@@ -73,10 +104,17 @@ export async function findReleaseCommit(
 ): Promise<string | undefined> {
   if (options.paths?.length) {
     // `--first-parent` with a pathspec lists first-parent commits that changed one of the
-    // paths compared with their first parent: a superset of the version changes.
-    const candidates = await git.revList(ref, { firstParent: true, paths: options.paths });
-    for (const sha of candidates) {
-      if (await isVersionChange(git, sha, readVersion)) return sha;
+    // paths compared with their first parent: a superset of the version changes. `%P` prints
+    // the real parents (no parent rewriting without `--parents`).
+    const candidates = await firstParentCandidates(git, ref, options.paths);
+    for (let start = 0; start < candidates.length; start += BATCH) {
+      const batch = candidates.slice(start, start + BATCH);
+      await readVersion.prefetch?.(
+        batch.flatMap((c) => (c.firstParent ? [c.sha, c.firstParent] : [c.sha])),
+      );
+      for (const { sha, firstParent } of batch) {
+        if (await isVersionChange(sha, firstParent, readVersion)) return sha;
+      }
     }
     return undefined;
   }
@@ -97,27 +135,58 @@ export async function findReleaseCommit(
   return undefined;
 }
 
+/** First-parent commits of `ref` that changed `paths`, newest first, with their first parent. */
+async function firstParentCandidates(
+  git: Git,
+  ref: string,
+  paths: string[],
+): Promise<{ sha: string; firstParent: string | undefined }[]> {
+  const out = await git.run([
+    "-c",
+    "log.follow=false",
+    "log",
+    "--first-parent",
+    "--format=%H %P",
+    "--end-of-options",
+    ref,
+    "--",
+    ...paths.map(topPathspec),
+  ]);
+  return out
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => {
+      const [sha = "", firstParent] = line.split(" ");
+      return { sha, firstParent: firstParent || undefined };
+    });
+}
+
 /** True when the root version at `sha` differs from its first parent's (or `sha` is a root). */
-async function isVersionChange(git: Git, sha: string, readVersion: ReadVersion): Promise<boolean> {
-  const [firstParent] = await git.parents(sha);
+async function isVersionChange(
+  sha: string,
+  firstParent: string | undefined,
+  readVersion: ReadVersion,
+): Promise<boolean> {
   const version = await readVersion(sha);
   const parentVersion = firstParent === undefined ? undefined : await readVersion(firstParent);
   return version !== parentVersion;
 }
 
 /**
- * True when `ref` (default HEAD) changed the root version compared with its first parent.
- * A commit whose first parent has no root version (the version file appears, e.g. the merge
- * that adopts launchset, or a root commit) is not a release commit: it starts the version
- * line, it doesn't release it. `findReleaseCommit` still counts it, for explicit retries.
+ * True when `ref` (default HEAD; pass the known sha to save a lookup) changed the root version
+ * compared with its first parent. A commit whose first parent has no root version (the version
+ * file appears, e.g. the merge that adopts launchset, or a root commit) is not a release
+ * commit: it starts the version line, it doesn't release it. `findReleaseCommit` still counts
+ * it, for explicit retries.
  */
 export async function headIsReleaseCommit(
   git: Git,
   readVersion: ReadVersion,
   ref = "HEAD",
 ): Promise<boolean> {
-  const sha = await git.revParse(ref);
-  const [firstParent] = await git.parents(sha);
-  if (firstParent === undefined || (await readVersion(firstParent)) === undefined) return false;
-  return isVersionChange(git, sha, readVersion);
+  const [sha = "", firstParent] = await git.commitAndParents(ref);
+  if (firstParent === undefined) return false;
+  await readVersion.prefetch?.([sha, firstParent]);
+  if ((await readVersion(firstParent)) === undefined) return false;
+  return isVersionChange(sha, firstParent, readVersion);
 }

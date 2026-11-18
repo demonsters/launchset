@@ -9,15 +9,14 @@
 
 import type { ResolvedTarget } from "../core/config/schema.ts";
 import type { TargetPlan } from "../core/types.ts";
-import { verifyAppStore } from "./appstore.ts";
 import { verifyNpm } from "./npm.ts";
-import { verifyPlay } from "./play.ts";
 import { verifyRegistry } from "./registry.ts";
 import { type VerifyContext, VerifyError, type VerifyResult } from "./types.ts";
 
-export { type AppStoreCheck, createAscToken, verifyAppStore } from "./appstore.ts";
+// The store checks (appstore.ts, play.ts) load jose; runCheck imports them on demand.
+export type { AppStoreCheck } from "./appstore.ts";
 export { type NpmCheck, packageUrl, parseNpmrc, readPackageInfo, verifyNpm } from "./npm.ts";
-export { getPlayAccessToken, type PlayCheck, readServiceAccount, verifyPlay } from "./play.ts";
+export type { PlayCheck } from "./play.ts";
 export {
   findCredentials,
   parseChallenge,
@@ -49,10 +48,12 @@ async function runCheck(
   };
   if (kind === "store" && target.type === "android") {
     if (!target.store) throw missingConfig(target.name, "store.packageName");
+    const { verifyPlay } = await import("./play.ts");
     return verifyPlay({ ...store, packageName: target.store.packageName }, ctx);
   }
   if (kind === "store" && target.type === "ios") {
     if (!target.store) throw missingConfig(target.name, "store.appId");
+    const { verifyAppStore } = await import("./appstore.ts");
     return verifyAppStore({ ...store, appId: target.store.appId }, ctx);
   }
   if (kind === "registry" && target.type === "docker") {

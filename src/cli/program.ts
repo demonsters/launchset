@@ -22,10 +22,11 @@ import {
 } from "../flow/index.ts";
 import { previewPlan } from "../flow/preview.ts";
 import { Git } from "../git/index.ts";
-import { INIT_FLAGS, type InitOptions, packageFile, parseDecide, runInit } from "../init/index.ts";
+import { INIT_FLAGS, parseDecide } from "../init/flags.ts";
+import { packageFile } from "../init/package-files.ts";
+import type { InitOptions } from "../init/types.ts";
 import { exitCodeFor, reportError, UsageError } from "./errors.ts";
 import { type CliIo, processIo } from "./io.ts";
-import { clackAddPrompts } from "./prompts.ts";
 import { emit, type GlobalOpts, makeContext, readPlanInput, toJson } from "./run.ts";
 
 /** Exit code of the command that ran (0 until a command says otherwise). */
@@ -235,6 +236,8 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
         ...(io.now ? { now: io.now } : {}),
         ...(io.rng ? { rng: io.rng } : {}),
       };
+      // Loaded on demand: the init machinery is big and only this command needs it.
+      const { runInit } = await import("../init/index.ts");
       await runInit(options);
       return 0;
     },
@@ -275,7 +278,7 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
               : 'Pass the flags, e.g.: launchset add --bump patch --message "Fix the crash".',
           );
         }
-        const prompts = io.addPrompts ?? clackAddPrompts();
+        const prompts = io.addPrompts ?? (await import("./prompts.ts")).clackAddPrompts();
         bump = await prompts.bump();
         if (bump !== "none") message = await prompts.summary();
       }

@@ -81,49 +81,74 @@ export async function writePlannedChanges(changes: readonly PlannedChange[]): Pr
 }
 
 /**
- * A unified diff (git format, `a/`/`b/` prefixes) of planned changes, made with
- * `git diff --no-index` on temporary copies. Empty when nothing changes.
+ * A unified diff (git format, `a/`/`b/` prefixes) of planned changes, in their order, made with
+ * one `git diff --no-index` over temporary copies. Empty when nothing changes.
  */
 export async function unifiedDiff(changes: readonly PlannedChange[]): Promise<string> {
+  const changed = changes.filter((c) => c.before !== c.after);
+  if (changed.length === 0) return "";
   const dir = await mkdtemp(join(tmpdir(), "launchset-diff-"));
   try {
-    const git = new Git({ cwd: dir });
-    const parts: string[] = [];
-    for (const [index, change] of changes.entries()) {
-      if (change.before === change.after) continue;
-      const a = `a${index}/${change.path}`;
-      const b = `b${index}/${change.path}`;
-      if (change.before !== null) {
-        await mkdir(dirname(join(dir, a)), { recursive: true });
-        await writeFile(join(dir, a), change.before);
-      }
-      if (change.after !== null) {
-        await mkdir(dirname(join(dir, b)), { recursive: true });
-        await writeFile(join(dir, b), change.after);
-      }
-      const out = await git.run(
-        [
-          "diff",
-          "--no-index",
-          "--no-color",
-          "--no-ext-diff",
-          "--no-prefix",
-          "--",
-          change.before === null ? "/dev/null" : a,
-          change.after === null ? "/dev/null" : b,
-        ],
-        { okCodes: [1], raw: true },
-      );
-      parts.push(relabel(out, change.path, index));
+    const write = async (side: string, path: string, text: string | null) => {
+      if (text === null) return;
+      const file = join(dir, side, path);
+      await mkdir(dirname(file), { recursive: true });
+      await writeFile(file, text);
+    };
+    for (const change of changed) {
+      await write("a", change.path, change.before);
+      await write("b", change.path, change.after);
     }
-    return parts.join("");
+    await mkdir(join(dir, "a"), { recursive: true });
+    await mkdir(join(dir, "b"), { recursive: true });
+    const out = await new Git({ cwd: dir }).run(
+      [
+        "diff",
+        "--no-index",
+        "--no-color",
+        "--no-ext-diff",
+        "--no-prefix",
+        "--no-renames",
+        "--",
+        "a",
+        "b",
+      ],
+      { okCodes: [1], raw: true },
+    );
+    // git walks the directories with each level sorted: one file diff per changed path, in
+    // that order. Relabel each and put them back in the changes' order.
+    const files = splitFileDiffs(out);
+    const walked = changed.map((c) => c.path).sort(byTreeOrder);
+    if (files.length !== walked.length) {
+      throw new Error(`internal: ${files.length} file diffs for ${walked.length} changed files`);
+    }
+    const byPath = new Map(walked.map((path, i) => [path, relabel(files[i] ?? "", path)]));
+    return changed.map((c) => byPath.get(c.path) ?? "").join("");
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
 }
 
-/** Replace the temporary paths in a diff's header lines with `a/<path>` and `b/<path>`. */
-function relabel(diff: string, path: string, index: number): string {
+/** Paths in the order git walks a directory: segment by segment, each level sorted. */
+function byTreeOrder(a: string, b: string): number {
+  const left = a.split("/");
+  const right = b.split("/");
+  for (let i = 0; i < Math.min(left.length, right.length); i++) {
+    const x = left[i] as string;
+    const y = right[i] as string;
+    if (x !== y) return x < y ? -1 : 1;
+  }
+  return left.length - right.length;
+}
+
+/** A multi-file diff split at its `diff --git` lines. */
+function splitFileDiffs(diff: string): string[] {
+  const starts = [...diff.matchAll(/^diff --git /gm)].map((m) => m.index);
+  return starts.map((start, i) => diff.slice(start, starts[i + 1] ?? diff.length));
+}
+
+/** Replace the temporary paths in a file diff's header lines with `a/<path>` and `b/<path>`. */
+function relabel(diff: string, path: string): string {
   const lines = diff.split("\n");
   let inHeader = true;
   return lines
@@ -136,7 +161,7 @@ function relabel(diff: string, path: string, index: number): string {
       if (line.startsWith("diff --git ")) return `diff --git a/${path} b/${path}`;
       if (line.startsWith("--- ") && line !== "--- /dev/null") return `--- a/${path}`;
       if (line.startsWith("+++ ") && line !== "+++ /dev/null") return `+++ b/${path}`;
-      return line.replaceAll(`a${index}/`, "a/").replaceAll(`b${index}/`, "b/");
+      return line;
     })
     .join("\n");
 }

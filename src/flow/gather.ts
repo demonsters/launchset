@@ -386,6 +386,18 @@ export function changedFilesBetween(
 // ---------------------------------------------------------------------------
 // Everything at once
 
+/**
+ * `Promise.all` for independent reads, but a failure is the first failing one in argument
+ * order (as if they ran one after another), whichever failed first in time.
+ */
+export async function allInOrder<const T extends readonly unknown[]>(
+  promises: { [K in keyof T]: Promise<T[K]> },
+): Promise<T> {
+  const settled = await Promise.allSettled(promises);
+  for (const result of settled) if (result.status === "rejected") throw result.reason;
+  return settled.map((r) => (r as PromiseFulfilledResult<unknown>).value) as unknown as T;
+}
+
 /** The repo state most commands look at. */
 export interface RepoState {
   branch: string;
@@ -415,12 +427,14 @@ export async function gatherRepoState(
   options: GatherOptions = {},
 ): Promise<RepoState> {
   await syncTags(context, options.fetch ?? true);
-  const branch = await resolveBranch(context, options.branch);
-  const headSha = await context.git.headSha();
-  const version = await readRootVersion(context.config, context.cwd);
-  const changesetFiles = await readChangesetFiles(context, options.worktree ? {} : { ref: "HEAD" });
-  const tags = await readTagSnapshot(context);
-  const reachableReleases = await reachableReleaseVersions(context);
+  const [branch, headSha, version, changesetFiles, tags, reachableReleases] = await allInOrder([
+    resolveBranch(context, options.branch),
+    context.git.headSha(),
+    readRootVersion(context.config, context.cwd),
+    readChangesetFiles(context, options.worktree ? {} : { ref: "HEAD" }),
+    readTagSnapshot(context),
+    reachableReleaseVersions(context),
+  ]);
   const lastReleaseTag = lastReleaseTagOf(context, reachableReleases);
   const commitsSinceRelease = await commitsSince(context, lastReleaseTag);
   return {
@@ -449,6 +463,11 @@ export interface ReleaseState extends RepoState {
 export interface GatherReleaseOptions extends GatherOptions {
   /** Look up merged bot PRs (needs a GitHub client). Default: when a client exists. */
   botPrs?: boolean;
+  /**
+   * Check whether HEAD is the release commit (`headIsReleaseCommit`). Default true; `false`
+   * skips it (`version` never publishes, so HEAD is never treated as one).
+   */
+  releaseHead?: boolean;
 }
 
 /**
@@ -471,8 +490,9 @@ export async function gatherReleaseState(
   const reader = await rootVersionReader(context);
   const tagged = await taggedReleaseCommit(context, repo.tags, repo.version);
   const isRelease =
+    (options.releaseHead ?? true) &&
     (tagged === undefined || tagged === repo.headSha) &&
-    (await headIsReleaseCommit(context.git, reader));
+    (await headIsReleaseCommit(context.git, reader, repo.headSha));
   const releaseCommit =
     tagged ??
     (await findReleaseCommit(context.git, "HEAD", reader, {

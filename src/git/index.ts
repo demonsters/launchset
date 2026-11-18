@@ -524,8 +524,13 @@ export class Git {
 
   /** Parent shas of a commit, first parent first. Empty for a root commit. */
   async parents(sha: string): Promise<string[]> {
-    const out = await this.run(["rev-list", "--parents", "-n", "1", "--end-of-options", sha]);
-    return out.split(" ").slice(1).filter(Boolean);
+    return (await this.commitAndParents(sha)).slice(1);
+  }
+
+  /** The commit `ref` points to, then its parents (first parent first). */
+  async commitAndParents(ref: string): Promise<string[]> {
+    const out = await this.run(["rev-list", "--parents", "-n", "1", "--end-of-options", ref]);
+    return out.split(" ").filter(Boolean);
   }
 
   /** The tree and the parents (first parent first) of a commit. */

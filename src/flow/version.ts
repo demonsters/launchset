@@ -59,10 +59,10 @@ export async function version(
   const state = await gatherReleaseState(context, {
     branch,
     worktree: true,
+    releaseHead: false,
     ...(options.fetch !== undefined ? { fetch: options.fetch } : {}),
     ...(options.botPrs !== undefined ? { botPrs: options.botPrs } : {}),
   });
-  state.headIsReleaseCommit = false;
   const decision = planRelease(releaseInputFor(context, state, { kind: "push" }));
   const dryRun = options.dryRun ?? false;
   const warnings = [

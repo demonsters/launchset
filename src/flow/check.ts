@@ -16,6 +16,7 @@ import { GitHubError } from "../github/index.ts";
 import { checkConsistency, readRootVersion } from "../platforms/index.ts";
 import type { FlowContext, FlowResult } from "./context.ts";
 import {
+  allInOrder,
   baseBranchRef,
   changedFilesBetween,
   changesetDir,
@@ -223,21 +224,27 @@ export async function check(
     baseBranch,
     fork: options.pr?.fork ?? (payload ? isForkPr(payload) : false),
   };
-  const changedFiles = await changedFilesBetween(context, base, headSha);
   // Pending changesets, the version and the consistency check all describe the checked-out
   // commit: in Actions that's the merge commit, i.e. what the base branch will contain after
   // the merge (a changeset the base already released is gone there). Which changesets the PR
-  // itself adds comes from the diff above.
-  const changesets = await readChangesetFiles(context, { ref: "HEAD" });
+  // itself adds comes from the diff.
+  const [changedFiles, changesets, mismatches, version, tags, dir] = await allInOrder([
+    changedFilesBetween(context, base, headSha),
+    readChangesetFiles(context, { ref: "HEAD" }),
+    checkConsistency(config, context.cwd),
+    readRootVersion(config, context.cwd),
+    readTagSnapshot(context),
+    changesetDir(context),
+  ]);
   const result = evaluateCheck({
     config,
     pr,
     changedFiles,
     changesets,
-    mismatches: await checkConsistency(config, context.cwd),
-    version: await readRootVersion(config, context.cwd),
-    tags: await readTagSnapshot(context),
-    changesetDir: await changesetDir(context),
+    mismatches,
+    version,
+    tags,
+    changesetDir: dir,
     ...(options.docsUrl ? { docsUrl: options.docsUrl } : {}),
   });
 
@@ -284,10 +291,13 @@ async function pushCheck(
   options: CheckOptions,
 ): Promise<FlowResult<PushCheckData>> {
   await syncTags(context, options.fetch ?? false);
-  const reachableReleases = await reachableReleaseVersions(context);
+  const [reachableReleases, changesets] = await allInOrder([
+    reachableReleaseVersions(context),
+    readChangesetFiles(context),
+  ]);
   const result = evaluatePushCheck({
     config: context.config,
-    changesets: await readChangesetFiles(context),
+    changesets,
     commitsSinceRelease: await commitsSince(context, lastReleaseTagOf(context, reachableReleases)),
     reachableReleases,
   });
