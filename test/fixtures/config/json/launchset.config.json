@@ -1,0 +1,9 @@
+{
+  "$schema": "./node_modules/@demonsters/launchset/dist/launchset.schema.json",
+  "version": { "file": "version.json" },
+  "targets": {
+    "ios": { "type": "ios", "source": { "kind": "plist", "files": ["ios/App/Info.plist", "ios/Widget/Info.plist"] } },
+    "ios-xc": { "type": "ios", "source": { "kind": "xcconfig", "file": "config/Version.xcconfig" }, "release": "manual" },
+    "expo": { "type": "android", "source": { "kind": "expo" }, "release": "manual" }
+  }
+}

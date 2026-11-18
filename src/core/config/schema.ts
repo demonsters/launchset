@@ -8,7 +8,8 @@
  */
 
 import { z } from "zod";
-import { matchBranch } from "../branches.ts";
+import { isMaintenanceBranch, matchBranch } from "../branches.ts";
+import { LaunchsetError } from "../errors.ts";
 
 export const TARGET_NAME = /^[a-z0-9][a-z0-9-]*$/;
 
@@ -61,6 +62,24 @@ const yamlFileSchema = z.strictObject({
   key: nonEmpty,
 });
 
+/** Placeholders a regex `replace` may use (spec 6.6). */
+export const REGEX_REPLACE_PLACEHOLDERS = ["version", "major", "minor", "patch", "buildNumber"];
+
+/**
+ * Unknown placeholders in a regex `replace`. Other braces (JSON, code) stay literal, so only
+ * identifier-like `{name}` not preceded by `$` is checked: typos like `{versoin}` fail at load.
+ */
+function checkReplacePlaceholders(value: string, ctx: z.RefinementCtx): void {
+  for (const match of value.matchAll(/(?<!\$)\{([A-Za-z_][A-Za-z0-9_]*)\}/g)) {
+    if (!REGEX_REPLACE_PLACEHOLDERS.includes(match[1] as string)) {
+      ctx.addIssue({
+        code: "custom",
+        message: `unknown placeholder ${match[0]}: expected ${REGEX_REPLACE_PLACEHOLDERS.map((p) => `{${p}}`).join(", ")}`,
+      });
+    }
+  }
+}
+
 const regexFileSchema = z
   .strictObject({
     path: nonEmpty,
@@ -68,7 +87,7 @@ const regexFileSchema = z
     /** JavaScript regular expression source. Must match exactly once. */
     pattern: nonEmpty,
     /** Replacement with placeholders `{version}`, `{major}`, `{minor}`, `{patch}`, `{buildNumber}`. */
-    replace: z.string(),
+    replace: z.string().superRefine(checkReplacePlaceholders),
     /** Extra RegExp flags (`g` is not allowed; `m`, `s`, `i`, `u` are). */
     flags: z
       .string()
@@ -116,20 +135,83 @@ const commonTargetFields = {
   files: z.array(fileEntrySchema).default([]),
 };
 
-const dockerTagListSchema = z.array(nonEmpty).min(1, "expected at least one tag template");
+/** Placeholders a Docker tag template may use (spec 6.1). */
+export const DOCKER_TAG_PLACEHOLDERS = [
+  "version",
+  "major",
+  "minor",
+  "patch",
+  "preid",
+  "prNumber",
+  "branchSlug",
+  "sha",
+  "shortSha",
+  "buildNumber",
+] as const;
+
+/** Checks that every `{placeholder}` in a template is one of `allowed`. */
+const knownPlaceholders = (allowed: readonly string[]) => (value: string, ctx: z.RefinementCtx) => {
+  for (const match of value.matchAll(/\{([^{}]*)\}/g)) {
+    if (!allowed.includes(match[1] as string)) {
+      ctx.addIssue({
+        code: "custom",
+        message: `unknown placeholder ${match[0]}: expected ${allowed.map((p) => `{${p}}`).join(", ")}`,
+      });
+    }
+  }
+};
+
+/** OCI tag grammar. */
+const DOCKER_TAG = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/;
+
+/** Placeholders must be known, and the literal parts must fit the OCI tag grammar. */
+const dockerTagTemplate = nonEmpty.superRefine((value, ctx) => {
+  const allowed: readonly string[] = DOCKER_TAG_PLACEHOLDERS;
+  if ([...value.matchAll(/\{([^{}]*)\}/g)].some((m) => !allowed.includes(m[1] as string))) {
+    knownPlaceholders(allowed)(value, ctx);
+    return;
+  }
+  const sample = renderSample(value);
+  if (!DOCKER_TAG.test(sample)) {
+    ctx.addIssue({
+      code: "custom",
+      message: `"${value}" can't become a valid Docker tag (it renders like "${sample}"): use only letters, digits, _ . and -, don't start with . or -, and keep it under 128 characters`,
+    });
+  }
+});
+const dockerTagListSchema = z.array(dockerTagTemplate).min(1, "expected at least one tag template");
+
+/** An image name without tag or digest; `localhost:5000/app` has a port, not a tag. */
+const imageName = nonEmpty.superRefine((value, ctx) => {
+  const lastSegment = value.slice(value.lastIndexOf("/") + 1);
+  if (value.includes("@") || lastSegment.includes(":")) {
+    ctx.addIssue({
+      code: "custom",
+      message: `expected an image name without tag or digest, like "ghcr.io/org/app" (got "${value}"); set tags with "tags"`,
+    });
+  }
+});
 
 const dockerTargetSchema = z.strictObject({
   type: z.literal("docker"),
-  image: z.union([nonEmpty, z.array(nonEmpty).min(1, "expected at least one image")]),
+  image: z.union([imageName, z.array(imageName).min(1, "expected at least one image")], {
+    error: 'expected an image name like "ghcr.io/org/app", or a list of image names',
+  }),
   tags: z
-    .union([
-      dockerTagListSchema,
-      z.strictObject({
-        release: dockerTagListSchema.optional(),
-        preview: dockerTagListSchema.optional(),
-        prerelease: dockerTagListSchema.optional(),
-      }),
-    ])
+    .union(
+      [
+        dockerTagListSchema,
+        z.strictObject({
+          release: dockerTagListSchema.optional(),
+          preview: dockerTagListSchema.optional(),
+          prerelease: dockerTagListSchema.optional(),
+        }),
+      ],
+      {
+        error:
+          "expected a list of tag templates (the release list), or an object with release, preview and/or prerelease lists",
+      },
+    )
     .optional(),
   verify: z.array(z.literal("registry")).default([]),
   ...commonTargetFields,
@@ -137,7 +219,9 @@ const dockerTargetSchema = z.strictObject({
 
 const webTargetSchema = z.strictObject({
   type: z.literal("web"),
-  verify: z.array(z.never()).default([]),
+  verify: z
+    .array(z.never({ error: "web targets have no verify checks: remove this entry" }))
+    .default([]),
   ...commonTargetFields,
 });
 
@@ -170,12 +254,21 @@ const iosSourceSchema = z.discriminatedUnion("kind", [
     file: nonEmpty,
     xcodeTargets: xcodeTargets.optional(),
   }),
-  z.strictObject({
-    kind: z.literal("plist"),
-    /** One plist (`file`) or several (`files`). */
-    file: nonEmpty.optional(),
-    files: z.array(nonEmpty).min(1, "expected at least one Info.plist path").optional(),
-  }),
+  z
+    .strictObject({
+      kind: z.literal("plist"),
+      /** One plist (`file`) or several (`files`). */
+      file: nonEmpty.optional(),
+      files: z.array(nonEmpty).min(1, "expected at least one Info.plist path").optional(),
+    })
+    .superRefine((source, ctx) => {
+      if (source.file !== undefined && source.files !== undefined) {
+        ctx.addIssue({
+          code: "custom",
+          message: "use either file (one Info.plist) or files (several), not both",
+        });
+      }
+    }),
   z.strictObject({ kind: z.literal("xcconfig"), file: nonEmpty }),
   z.strictObject({
     kind: z.literal("capacitor"),
@@ -216,24 +309,32 @@ export type TargetType = z.output<typeof targetSchema>["type"];
 // ---------------------------------------------------------------------------
 // Previews (spec 9.7, 9.9)
 
-const previewTargetsSchema = z.union([z.literal("all"), z.array(nonEmpty)]);
+const previewTargetsSchema = z.union([z.literal("all"), z.array(nonEmpty)], {
+  error: 'expected "all" or a list of target names',
+});
 
-const previewBranchSchema = z.union([
-  nonEmpty,
-  z.strictObject({
-    /** Branch glob, e.g. `feature/*`. */
-    branch: nonEmpty,
-    targets: previewTargetsSchema.optional(),
-    /** Prerelease id (e.g. `alpha`): makes this a prerelease branch (spec 9.9). */
-    prerelease: z
-      .string()
-      .regex(
-        /^[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*$/,
-        "expected a prerelease id like alpha, beta or rc (letters, digits and dashes, not only digits)",
-      )
-      .optional(),
-  }),
-]);
+const previewBranchSchema = z.union(
+  [
+    nonEmpty,
+    z.strictObject({
+      /** Branch glob, e.g. `feature/*`. */
+      branch: nonEmpty,
+      targets: previewTargetsSchema.optional(),
+      /** Prerelease id (e.g. `alpha`): makes this a prerelease branch (spec 9.9). */
+      prerelease: z
+        .string()
+        .regex(
+          /^[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*$/,
+          "expected a prerelease id like alpha, beta or rc (letters, digits and dashes, not only digits)",
+        )
+        .optional(),
+    }),
+  ],
+  {
+    error:
+      'expected a branch glob like "develop" or "feature/*", or an object { branch, targets?, prerelease? }',
+  },
+);
 
 const previewSchema = z.strictObject({
   label: nonEmpty.default("launchset:preview"),
@@ -246,9 +347,11 @@ const previewSchema = z.strictObject({
 // Root
 
 const placeholderTemplate = (required: string[]) =>
-  nonEmpty.refine((value) => required.every((p) => value.includes(`{${p}}`)), {
-    message: `expected a template containing ${required.map((p) => `{${p}}`).join(" and ")}`,
-  });
+  nonEmpty
+    .refine((value) => required.every((p) => value.includes(`{${p}}`)), {
+      message: `expected a template containing ${required.map((p) => `{${p}}`).join(" and ")}`,
+    })
+    .superRefine(knownPlaceholders(required));
 
 export const configSchema = z.strictObject({
   version: z.strictObject({ file: nonEmpty.default("package.json") }).prefault({}),
@@ -260,7 +363,13 @@ export const configSchema = z.strictObject({
     })
     .prefault({}),
   baseBranch: nonEmpty.default("main"),
-  maintenanceBranches: nonEmpty.default("release/*.x"),
+  /** Branch pattern; its single `*` stands for `<major>.<minor>` (spec 8.2). */
+  maintenanceBranches: nonEmpty
+    .refine((value) => value.split("*").length === 2, {
+      message:
+        'expected a branch pattern with exactly one "*", which stands for <major>.<minor> (default "release/*.x")',
+    })
+    .default("release/*.x"),
   tags: z
     .strictObject({
       release: placeholderTemplate(["version"]).default("v{version}"),
@@ -271,7 +380,11 @@ export const configSchema = z.strictObject({
   buildNumber: buildNumberSchema.prefault({}),
   check: z.strictObject({ bots: z.array(nonEmpty).default(DEFAULT_BOTS) }).prefault({}),
   /** `false` disables previews and prerelease branches (needed for the `semver` strategy). */
-  preview: z.union([z.literal(false), previewSchema]).prefault({}),
+  preview: z
+    .union([z.literal(false), previewSchema], {
+      error: "expected false (to disable previews) or an object with preview settings",
+    })
+    .prefault({}),
   targets: z.record(z.string(), targetSchema),
 });
 
@@ -355,15 +468,19 @@ export interface ConfigIssue {
   message: string;
 }
 
-export class ConfigError extends Error {
+export class ConfigError extends LaunchsetError {
   readonly issues: ConfigIssue[];
+  readonly file?: string;
   constructor(issues: ConfigIssue[], file?: string) {
     const where = file ? ` in ${file}` : "";
     super(
+      "invalid-config",
       `Invalid launchset config${where}:\n${issues.map((i) => `  - ${i.path || "(root)"}: ${i.message}`).join("\n")}`,
+      { hint: "See the configuration reference in the launchset docs." },
     );
     this.name = "ConfigError";
     this.issues = issues;
+    if (file !== undefined) this.file = file;
   }
 }
 
@@ -389,6 +506,152 @@ function renderSample(template: string): string {
 
 function pathToString(path: ReadonlyArray<PropertyKey>): string {
   return path.map((p) => String(p)).join(".");
+}
+
+// ---------------------------------------------------------------------------
+// Readable zod issues
+
+export const UNKNOWN_KEY_MESSAGE =
+  "unknown key (check the spelling; see the configuration reference)";
+
+const TYPE_NAMES: Record<string, string> = {
+  string: "a string",
+  number: "a number",
+  int: "an integer",
+  boolean: "true or false",
+  array: "a list",
+  object: "an object",
+  record: "an object",
+  null: "null",
+  undefined: "nothing",
+};
+
+function typeOf(value: unknown): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "a list";
+  switch (typeof value) {
+    case "string":
+      return `the string ${JSON.stringify(value)}`;
+    case "number":
+      return `the number ${value}`;
+    case "boolean":
+      return String(value);
+    case "object":
+      return "an object";
+    default:
+      return typeof value;
+  }
+}
+
+function formatValues(values: readonly unknown[]): string {
+  const shown = values.map((v) => JSON.stringify(v));
+  return shown.length === 1 ? (shown[0] as string) : `one of ${shown.join(", ")}`;
+}
+
+/** Zod's own default messages start like this; anything else was written in this file. */
+const isDefaultMessage = (message: string) => /^Invalid (input|option|discriminator)/.test(message);
+
+/** True when a union branch failed only because the value has the wrong type. */
+function failedAtRoot(branch: readonly z.core.$ZodIssue[]): boolean {
+  return branch.every(
+    (i) => i.path.length === 0 && (i.code === "invalid_type" || i.code === "invalid_value"),
+  );
+}
+
+/**
+ * Turn zod issues into `ConfigIssue`s with readable messages and full paths. Parse with
+ * `{ reportInput: true }`: the input tells "missing" apart from "wrong value".
+ */
+export function formatZodIssues(
+  issues: readonly z.core.$ZodIssue[],
+  base: readonly PropertyKey[] = [],
+): ConfigIssue[] {
+  const out: ConfigIssue[] = [];
+  for (const issue of issues) {
+    const path = [...base, ...issue.path];
+    const at = pathToString(path);
+    const missing = issue.input === undefined;
+    switch (issue.code) {
+      case "unrecognized_keys":
+        for (const key of issue.keys) {
+          out.push({ path: pathToString([...path, key]), message: UNKNOWN_KEY_MESSAGE });
+        }
+        break;
+      case "invalid_union": {
+        if ("options" in issue && issue.discriminator && issue.options) {
+          const input = issue.input as Record<string, unknown> | undefined;
+          const value = input?.[issue.discriminator];
+          const expected = formatValues(issue.options);
+          out.push({
+            path: at,
+            message:
+              value === undefined
+                ? `required: expected ${expected}`
+                : `expected ${expected}, got ${typeOf(value)}`,
+          });
+          break;
+        }
+        const progressed = issue.errors.filter((branch) => !failedAtRoot(branch));
+        if (progressed.length === 1) {
+          out.push(...formatZodIssues(progressed[0] as z.core.$ZodIssue[], path));
+          break;
+        }
+        const message = isDefaultMessage(issue.message)
+          ? `expected ${issue.errors
+              .flat()
+              .map((i) =>
+                i.code === "invalid_type"
+                  ? (TYPE_NAMES[i.expected] ?? i.expected)
+                  : i.code === "invalid_value"
+                    ? formatValues(i.values)
+                    : i.message,
+              )
+              .join(" or ")}`
+          : issue.message;
+        out.push({
+          path: at,
+          message: missing ? `required: ${message}` : `${message}, got ${typeOf(issue.input)}`,
+        });
+        break;
+      }
+      case "invalid_type": {
+        if (!isDefaultMessage(issue.message)) {
+          out.push({ path: at, message: issue.message });
+          break;
+        }
+        const expected = TYPE_NAMES[issue.expected] ?? issue.expected;
+        out.push({
+          path: at,
+          message: missing
+            ? `required: expected ${expected}`
+            : `expected ${expected}, got ${typeOf(issue.input)}`,
+        });
+        break;
+      }
+      case "invalid_value": {
+        if (!isDefaultMessage(issue.message)) {
+          out.push({ path: at, message: issue.message });
+          break;
+        }
+        const expected = formatValues(issue.values);
+        out.push({
+          path: at,
+          message: missing
+            ? `required: expected ${expected}`
+            : `expected ${expected}, got ${typeOf(issue.input)}`,
+        });
+        break;
+      }
+      default:
+        out.push({
+          path: at,
+          message: isDefaultMessage(issue.message)
+            ? issue.message.replace(/^Invalid (input|option): /, "")
+            : issue.message,
+        });
+    }
+  }
+  return out;
 }
 
 function resolveTarget(
@@ -459,6 +722,19 @@ function semanticIssues(config: ResolvedConfig): ConfigIssue[] {
     issues.push({
       path: "targets",
       message: 'expected at least one target with release: "auto" (otherwise no release completes)',
+    });
+  }
+
+  if (config.tags.partial === config.tags.release) {
+    issues.push({
+      path: "tags.partial",
+      message: "must differ from tags.release (a partial release must never look like a release)",
+    });
+  }
+  if (isMaintenanceBranch(config, config.baseBranch)) {
+    issues.push({
+      path: "maintenanceBranches",
+      message: `pattern "${config.maintenanceBranches}" matches the base branch "${config.baseBranch}"`,
     });
   }
 
@@ -539,19 +815,27 @@ function semanticIssues(config: ResolvedConfig): ConfigIssue[] {
   return issues;
 }
 
+/** A top-level `$schema` key (for editor support in `launchset.config.json`) is allowed. */
+function withoutSchemaKey(input: unknown): unknown {
+  if (
+    input === null ||
+    typeof input !== "object" ||
+    Array.isArray(input) ||
+    !("$schema" in input)
+  ) {
+    return input;
+  }
+  const { $schema: _schema, ...rest } = input as Record<string, unknown>;
+  return rest;
+}
+
 /**
  * Validate and normalize a config object. Throws `ConfigError` listing every problem.
  */
 export function resolveConfig(input: unknown, options: { file?: string } = {}): ResolvedConfig {
-  const parsed = configSchema.safeParse(input);
+  const parsed = configSchema.safeParse(withoutSchemaKey(input), { reportInput: true });
   if (!parsed.success) {
-    throw new ConfigError(
-      parsed.error.issues.map((issue) => ({
-        path: pathToString(issue.path),
-        message: issue.message,
-      })),
-      options.file,
-    );
+    throw new ConfigError(formatZodIssues(parsed.error.issues), options.file);
   }
   const data = parsed.data;
   const preview: ResolvedPreview =
