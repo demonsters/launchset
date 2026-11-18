@@ -1,6 +1,6 @@
 /** Turning failures into the lines the CLI prints: `error:` and `hint:`, no stack. */
 
-import { LaunchsetError } from "../core/errors.ts";
+import { errorMessage, LaunchsetError } from "../core/errors.ts";
 import { GitError } from "../git/index.ts";
 import { GitHubError } from "../github/errors.ts";
 import { StampError } from "../platforms/types.ts";
@@ -39,7 +39,7 @@ const EMBEDDED_HINT = /\nHint: /;
 
 /** The message and hint, with a hint that is also embedded in the message printed once. */
 function messageAndHint(error: unknown): { message: string; hint?: string } {
-  const text = error instanceof Error ? error.message : String(error);
+  const text = errorMessage(error);
   const own = (error as { hint?: unknown } | null)?.hint;
   const match = EMBEDDED_HINT.exec(text);
   const message = match ? text.slice(0, match.index) : text;

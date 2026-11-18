@@ -7,7 +7,12 @@
 import { LaunchsetError } from "../core/errors.ts";
 import { planFinalize } from "../core/finalize.ts";
 import { planTarget } from "../core/outputs.ts";
-import { isoTime, normalizeVersionInput, unknownTarget } from "../core/plan-common.ts";
+import {
+  isoTime,
+  normalizeVersionInput,
+  renderSummary,
+  unknownTarget,
+} from "../core/plan-common.ts";
 import { isReleased, markerTag, releaseTag } from "../core/tags.ts";
 import type { Plan, TargetPlan } from "../core/types.ts";
 import { marketingVersion } from "../core/versions.ts";
@@ -15,7 +20,7 @@ import { type FlowContext, type FlowResult, requireGitHub } from "./context.ts";
 import { type ExecutedAction, executeFinalizeActions, existingReleases } from "./finalize.ts";
 import { changelogFilePath, readTagSnapshot, syncTags, tryResolveBranch } from "./gather.ts";
 import { checkHeadAtPlan, ensureTag, type TagResult } from "./git-ops.ts";
-import { appendAlerts, plain, requireReleasePlan, resolvePlan } from "./result.ts";
+import { plain, requireReleasePlan, resolvePlan } from "./result.ts";
 
 export interface MarkOptions {
   target: string;
@@ -100,7 +105,7 @@ export async function mark(
 
   const result = await ensureTag(context, marker, sha);
   const releaseUpdates: ExecutedAction[] = [];
-  let summaryExtra = "";
+  let releaseNote = "";
   if (byHand && target.release === "manual") {
     const github = requireGitHub(context, "Updating the GitHub Release of a hand-shipped target");
     const tags = await readTagSnapshot(context);
@@ -140,21 +145,21 @@ export async function mark(
     });
     const { executed } = await executeFinalizeActions(context, github, finalized.actions);
     releaseUpdates.push(...executed);
-    summaryExtra =
+    releaseNote =
       executed.length > 0
-        ? `\n\nUpdated the ${tag} GitHub Release: ${target.name} is listed as shipped.`
-        : `\n\nThe ${tag} GitHub Release already lists ${target.name} as shipped.`;
+        ? `Updated the ${tag} GitHub Release: ${target.name} is listed as shipped.`
+        : `The ${tag} GitHub Release already lists ${target.name} as shipped.`;
   }
 
   const verb = result === "created" ? "created" : "already exists";
   return {
     ok: true,
     outputs: { version, "release-sha": sha },
-    summary: appendAlerts(
-      `## launchset: mark ${options.target}\n\nMarker \`${marker}\` ${verb} at \`${sha.slice(0, 7)}\`.${summaryExtra}\n`,
-      "WARNING",
-      checkout ? [checkout] : [],
-    ),
+    summary: renderSummary({
+      title: `launchset: mark ${options.target}`,
+      paragraphs: [`Marker \`${marker}\` ${verb} at \`${sha.slice(0, 7)}\`.`, releaseNote],
+      warnings: checkout ? [checkout] : [],
+    }),
     lines: [
       ...(checkout ? [`warning: ${checkout}`] : []),
       `${marker} ${verb} at ${sha.slice(0, 7)}`,

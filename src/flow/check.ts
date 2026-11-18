@@ -11,6 +11,7 @@ import {
   type PushCheckResult,
 } from "../core/check.ts";
 import { LaunchsetError } from "../core/errors.ts";
+import { renderSummary } from "../core/plan-common.ts";
 import { GitHubError } from "../github/index.ts";
 import { checkConsistency, readRootVersion } from "../platforms/index.ts";
 import type { FlowContext, FlowResult } from "./context.ts";
@@ -298,10 +299,11 @@ async function pushCheck(
     commitsSinceRelease: await commitsSince(context, lastReleaseTagOf(context, reachableReleases)),
     reachableReleases,
   });
-  const summary =
-    result.warnings.length > 0
-      ? appendAlerts("## launchset check --push\n", "WARNING", result.warnings)
-      : "## launchset check --push\n\nNothing to warn about.\n";
+  const summary = renderSummary({
+    title: "launchset check --push",
+    paragraphs: result.warnings.length > 0 ? [] : ["Nothing to warn about."],
+    warnings: result.warnings,
+  });
   return {
     ok: true,
     outputs: {},

@@ -4,6 +4,7 @@
  */
 
 import { LaunchsetError } from "../core/errors.ts";
+import { renderSummary } from "../core/plan-common.ts";
 import { latestReleaseInLine, releaseTag } from "../core/tags.ts";
 import { maintenanceBranchName, type VersionLine } from "../core/versions.ts";
 import type { FlowContext, FlowResult } from "./context.ts";
@@ -81,7 +82,12 @@ export async function hotfix(
   return {
     ok: true,
     outputs: {},
-    summary: `## launchset: hotfix\n\nCreated \`${branch}\` at \`${tag}\` (\`${sha.slice(0, 7)}\`)${remote ? " and pushed it" : ""}.\n`,
+    summary: renderSummary({
+      title: "launchset: hotfix",
+      paragraphs: [
+        `Created \`${branch}\` at \`${tag}\` (\`${sha.slice(0, 7)}\`)${remote ? " and pushed it" : ""}.`,
+      ],
+    }),
     lines: [
       `Created ${branch} at ${tag} (${sha.slice(0, 7)})${remote ? " and pushed it" : " (no remote: not pushed)"}.`,
       `Next: git checkout ${branch}, then open PRs against it with patch changesets.`,

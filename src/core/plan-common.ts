@@ -4,15 +4,14 @@
  * markdown helpers. Pure.
  */
 
-import semver from "semver";
-import { computeBuildNumber, targetBuildNumber } from "./build-number.ts";
+import { type BuildNumberContext, computeBuildNumber, targetBuildNumber } from "./build-number.ts";
 import { ChangesetError, parseChangeset } from "./changesets.ts";
 import type { ResolvedConfig, ResolvedTarget } from "./config/schema.ts";
 import { dockerPlan } from "./docker-tags.ts";
 import { LaunchsetError } from "./errors.ts";
-import { indexTags, markerTag, type TagIndex } from "./tags.ts";
+import { indexTags, markerTag, releasesAfter, type TagIndex } from "./tags.ts";
 import type { Changeset, Channel, Plan, RunInfo, TargetPlan } from "./types.ts";
-import { isPlainVersion, marketingVersion } from "./versions.ts";
+import { highestVersion, isPlainVersion, marketingVersion } from "./versions.ts";
 
 // ---------------------------------------------------------------------------
 // Input snapshots
@@ -91,6 +90,13 @@ export function validChangesets(files: readonly ChangesetFile[]): Changeset[] {
   return files.flatMap((f) => (f.ok ? [f.changeset] : []));
 }
 
+/** The files that couldn't be parsed, as `{ path, error }`. */
+export function invalidChangesetFiles(
+  files: readonly ChangesetFile[],
+): { path: string; error: string }[] {
+  return files.flatMap((f) => (f.ok ? [] : [{ path: f.path, error: f.error }]));
+}
+
 /**
  * A committed marketing version that differs from the root version (spec 6.7). Matches
  * `platforms.Mismatch` structurally.
@@ -118,6 +124,8 @@ export function describeMismatch(mismatch: VersionMismatch): string {
 // ---------------------------------------------------------------------------
 // Versions
 
+export { highestVersion } from "./versions.ts";
+
 /**
  * Normalize a user-given version (`workflow_dispatch` input, `--version`): trims, drops a
  * leading `v`. Throws when the result isn't a plain `X.Y.Z`.
@@ -132,15 +140,6 @@ export function normalizeVersionInput(input: string, what = "version"): string {
     );
   }
   return version;
-}
-
-/** The highest version of a list, or `null`. */
-export function highestVersion(versions: Iterable<string>): string | null {
-  let best: string | null = null;
-  for (const version of versions) {
-    if (best === null || semver.gt(version, best)) best = version;
-  }
-  return best;
 }
 
 /** UTC day (`2026-11-18`) of a time. */
@@ -176,19 +175,28 @@ export interface TargetPlanContext {
   markerTemplate?: { tags: ResolvedConfig["tags"] };
 }
 
+/** The build number inputs of a run: time, version and the CI run number and attempt. */
+export function buildNumberContext(
+  now: Date | number,
+  version: string,
+  run: RunInfo | undefined,
+): BuildNumberContext {
+  const context: BuildNumberContext = { now, version };
+  if (run?.number !== undefined) context.runNumber = run.number;
+  if (run?.attempt !== undefined) context.runAttempt = run.attempt;
+  return context;
+}
+
 /**
  * The plan for one target: build number with the target's strategy (checked against its
  * limits, spec 6.3), marketing version (plain for iOS), marker (release channel) and Docker
  * data.
  */
 export function buildTargetPlan(target: ResolvedTarget, ctx: TargetPlanContext): TargetPlan {
-  const context: Parameters<typeof targetBuildNumber>[1] = {
-    now: ctx.now,
-    version: ctx.baseVersion,
-  };
-  if (ctx.run?.number !== undefined) context.runNumber = ctx.run.number;
-  if (ctx.run?.attempt !== undefined) context.runAttempt = ctx.run.attempt;
-  const buildNumber = targetBuildNumber(target, context);
+  const buildNumber = targetBuildNumber(
+    target,
+    buildNumberContext(ctx.now, ctx.baseVersion, ctx.run),
+  );
   const plan: TargetPlan = {
     name: target.name,
     type: target.type,
@@ -240,11 +248,11 @@ export function planBuildNumber(
   plan: Pick<Plan, "matrix" | "targets">,
   ctx: { now: Date | number; version: string; run?: RunInfo },
 ): number | null {
-  const context: Parameters<typeof computeBuildNumber>[1] = { now: ctx.now, version: ctx.version };
-  if (ctx.run?.number !== undefined) context.runNumber = ctx.run.number;
-  if (ctx.run?.attempt !== undefined) context.runAttempt = ctx.run.attempt;
   try {
-    return computeBuildNumber(config.buildNumber, context);
+    return computeBuildNumber(
+      config.buildNumber,
+      buildNumberContext(ctx.now, ctx.version, ctx.run),
+    );
   } catch (error) {
     const first = plan.matrix[0];
     if (error instanceof LaunchsetError && error.code === "no-run-number" && first) {
@@ -287,9 +295,8 @@ export function manualTargetStatuses(
         .filter(([version, targets]) => targets.has(target) && isPlainVersion(version))
         .map(([version]) => version),
     );
-    const releasesBehind = [...index.releases.keys()].filter(
-      (v) => lastShipped === null || semver.gt(v, lastShipped),
-    ).length;
+    const releasesBehind =
+      lastShipped === null ? index.releases.size : releasesAfter(index, lastShipped);
     return { target, lastShipped, releasesBehind };
   });
 }
@@ -327,6 +334,15 @@ export function firstLine(text: string): string {
   return text.trim().split(/\r?\n/)[0]?.trim() ?? "";
 }
 
+/** A GitHub markdown alert block: `> [!KIND]` then the text quoted line by line. */
+export function alert(kind: "NOTE" | "TIP" | "WARNING" | "CAUTION", text: string): string {
+  return `> [!${kind}]\n${text
+    .trimEnd()
+    .split("\n")
+    .map((l) => (l === "" ? ">" : `> ${l}`))
+    .join("\n")}`;
+}
+
 /** A job summary: a heading, paragraphs, then `> [!WARNING]` / `> [!NOTE]` blocks. */
 export function renderSummary(input: {
   title: string;
@@ -337,12 +353,6 @@ export function renderSummary(input: {
 }): string {
   const blocks = [`## ${input.title}`];
   for (const p of input.paragraphs ?? []) if (p.trim() !== "") blocks.push(p.trimEnd());
-  const alert = (kind: string, text: string) =>
-    `> [!${kind}]\n${text
-      .trimEnd()
-      .split("\n")
-      .map((l) => (l === "" ? ">" : `> ${l}`))
-      .join("\n")}`;
   for (const f of input.failures ?? []) blocks.push(alert("CAUTION", f));
   for (const w of input.warnings ?? []) blocks.push(alert("WARNING", w));
   for (const n of input.notices ?? []) blocks.push(alert("NOTE", n));

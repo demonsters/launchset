@@ -16,11 +16,13 @@
  */
 
 import { isChangesetPath } from "../core/changesets.ts";
-import { LaunchsetError } from "../core/errors.ts";
+import { errorMessage, LaunchsetError } from "../core/errors.ts";
 import { actionOutputs, parsePlan } from "../core/outputs.ts";
 import {
+  alert,
   type ChangesetFile,
   code,
+  invalidChangesetFiles,
   renderSummary,
   snapshotTags,
   validChangesets,
@@ -254,21 +256,13 @@ function skipResult(
   };
 }
 
-function alert(kind: "NOTE" | "WARNING", body: string): string {
-  return `> [!${kind}]\n${body
-    .trimEnd()
-    .split("\n")
-    .map((l) => (l === "" ? ">" : `> ${l}`))
-    .join("\n")}`;
-}
-
 /** Outcome of one tag reservation attempt. */
 type Reservation = "reserved" | "taken";
 
 const AUTH_FAILURE = /\b403\b|denied|not allowed|authentication failed|could not read username/i;
 
 function reservationFailure(tag: string, error: unknown): LaunchsetError {
-  const detail = error instanceof Error ? error.message : String(error);
+  const detail = errorMessage(error);
   const stderr = error instanceof GitError ? error.stderr : detail;
   if (AUTH_FAILURE.test(stderr) || AUTH_FAILURE.test(detail)) {
     return new LaunchsetError(
@@ -430,7 +424,7 @@ export async function previewPlan(
   if (decision.kind === "skip") {
     return skipResult({ code: decision.code, reason: decision.reason }, decision.summary);
   }
-  const invalidChangesets = files.flatMap((f) => (f.ok ? [] : [{ path: f.path, error: f.error }]));
+  const invalidChangesets = invalidChangesetFiles(files);
   let attempts: number | undefined;
   const extra: string[] = [];
   if (decision.preview === "prerelease" && options.dryRun) {

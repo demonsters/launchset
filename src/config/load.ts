@@ -4,8 +4,8 @@
  * references exists. I/O lives here; validation rules live in `src/core/config/schema.ts`.
  */
 
-import { readdir, readFile, stat } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { readdir, readFile } from "node:fs/promises";
+import { isAbsolute, join, resolve } from "node:path";
 import { createJiti } from "jiti";
 import { glob, isDynamicPattern } from "tinyglobby";
 import {
@@ -17,6 +17,7 @@ import {
   resolveConfig,
 } from "../core/config/schema.ts";
 import { LaunchsetError } from "../core/errors.ts";
+import { statOrNull, toRel } from "./fs.ts";
 
 /** Config file names, in the order they're reported. */
 export const CONFIG_FILE_NAMES = [
@@ -33,22 +34,6 @@ export interface LoadedConfig {
   file: string;
   /** Absolute path of the directory paths in the config are relative to. */
   root: string;
-}
-
-/** Repo-relative POSIX path for messages. */
-function display(root: string, path: string): string {
-  const rel = relative(root, path);
-  return (rel === "" ? "." : rel).split(sep).join("/");
-}
-
-async function statOrNull(path: string) {
-  try {
-    return await stat(path);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-    if ((error as NodeJS.ErrnoException).code === "ENOTDIR") return null;
-    throw error;
-  }
 }
 
 /**
@@ -159,7 +144,7 @@ interface Resolved {
 
 function makeFile(root: string, field: string, format: SourceFormat, path: string): SourceFile {
   const absolute = isAbsolute(path) ? path : resolve(root, path);
-  return { field, format, path: display(root, absolute), absolute };
+  return { field, format, path: toRel(root, absolute), absolute };
 }
 
 async function collectSourceFiles(target: ResolvedTarget, root: string): Promise<Resolved> {
@@ -187,8 +172,8 @@ async function collectSourceFiles(target: ResolvedTarget, root: string): Promise
       issues.push({
         path: field,
         message: info
-          ? `expected the .xcodeproj directory, got a file: ${display(root, dir)}`
-          : `Xcode project not found: ${display(root, dir)}`,
+          ? `expected the .xcodeproj directory, got a file: ${toRel(root, dir)}`
+          : `Xcode project not found: ${toRel(root, dir)}`,
       });
       return;
     }
@@ -217,7 +202,7 @@ async function collectSourceFiles(target: ResolvedTarget, root: string): Promise
         if (g?.isFile() && k?.isFile()) {
           issues.push({
             path: `${base}.dir`,
-            message: `both ${display(root, resolve(root, groovy))} and build.gradle.kts exist: use source { kind: "gradle", file } to pick one`,
+            message: `both ${toRel(root, resolve(root, groovy))} and build.gradle.kts exist: use source { kind: "gradle", file } to pick one`,
           });
         } else if (g?.isFile()) {
           files.push(makeFile(root, `${base}.dir`, "gradle", groovy));
@@ -226,7 +211,7 @@ async function collectSourceFiles(target: ResolvedTarget, root: string): Promise
         } else {
           issues.push({
             path: `${base}.dir`,
-            message: `file not found: ${display(root, resolve(root, groovy))} (or build.gradle.kts)`,
+            message: `file not found: ${toRel(root, resolve(root, groovy))} (or build.gradle.kts)`,
           });
         }
         break;
@@ -278,7 +263,7 @@ export async function resolveSourcePaths(
 export async function expandFilePattern(pattern: string, root: string): Promise<string[]> {
   if (!isDynamicPattern(pattern)) {
     const info = await statOrNull(resolve(root, pattern));
-    return info?.isFile() ? [display(root, resolve(root, pattern))] : [];
+    return info?.isFile() ? [toRel(root, resolve(root, pattern))] : [];
   }
   const matches = await glob([pattern], {
     cwd: root,
@@ -308,8 +293,8 @@ export async function checkReferencedFiles(
       issues.push({
         path: field,
         message: info
-          ? `not a file: ${display(absRoot, absolute)}`
-          : `file not found: ${display(absRoot, absolute)}`,
+          ? `not a file: ${toRel(absRoot, absolute)}`
+          : `file not found: ${toRel(absRoot, absolute)}`,
       });
     }
   };
@@ -348,7 +333,7 @@ export async function checkReferencedFiles(
 export async function loadConfig(cwd: string): Promise<LoadedConfig> {
   const root = resolve(cwd);
   const file = await findConfigFile(root);
-  const name = display(root, file);
+  const name = toRel(root, file);
   const raw = await readConfigFile(file);
   const config = resolveConfig(raw, { file: name });
   const issues = await checkReferencedFiles(config, root);

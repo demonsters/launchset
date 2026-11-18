@@ -15,7 +15,9 @@
  */
 
 import { isMap, isScalar, isSeq, type Pair, parseDocument, type YAMLMap } from "yaml";
-import { joinRel, lineAt, linesOf, normalizeRel } from "./fs.ts";
+import { escapeRegExp } from "../core/regex.ts";
+import { lineOf } from "../core/text.ts";
+import { joinRel, linesOf, normalizeRel } from "./fs.ts";
 import { matchesFilter } from "./github-filter.ts";
 import type { Evidence, MachineryAction, MachineryItem, MachineryKind } from "./types.ts";
 import {
@@ -337,7 +339,7 @@ function triggerDrafts(
     const ignore = t.tagsIgnore.map((p) => p.value);
     const firing = samples.filter((s) => !matchesFilter(ignore, s.tag));
     if (firing.length > 0) {
-      const line = lineAt(
+      const line = lineOf(
         workflow.text,
         (t.tagsIgnorePair.key as { range?: number[] }).range?.[0] ?? 0,
       );
@@ -353,7 +355,7 @@ function triggerDrafts(
       drafts.push(d);
     }
   } else if (t.unfilteredPush && publishes) {
-    const line = lineAt(
+    const line = lineOf(
       workflow.text,
       ((t.pushPair ?? t.pair)?.key as { range?: number[] } | undefined)?.range?.[0] ?? 0,
     );
@@ -464,14 +466,14 @@ function stepReferences(workflow: Workflow, job: WorkflowJob, step: WorkflowStep
   if (!step.id) return [];
   const [start, end] = step.node.range ?? [0, 0];
   const [jobStart, jobEnd] = job.node.range ?? [0, workflow.text.length];
-  const pattern = new RegExp(`\\bsteps\\.${step.id.replace(/[-]/g, "\\-")}\\.`, "g");
+  const pattern = new RegExp(`\\bsteps\\.${escapeRegExp(step.id)}\\.`, "g");
   const found: Evidence[] = [];
   for (const m of workflow.text.matchAll(pattern)) {
     const at = m.index;
     if (at < jobStart || at >= jobEnd || (at >= start && at < end)) continue;
     found.push({
       path: workflow.path,
-      line: lineAt(workflow.text, at),
+      line: lineOf(workflow.text, at),
       note: `uses steps.${step.id} outputs: check it once the step is gone`,
     });
   }
@@ -734,7 +736,7 @@ function gitlabDrafts(path: string, text: string): Draft[] {
       /"tags"/.test(onlyText) ||
       /(?<![!])\$CI_COMMIT_TAG(?!\s*==\s*null)(?!\s*==\s*"")/.test(rulesText);
     if (!onTags) continue;
-    const line = lineAt(text, (pair.key as { range?: number[] }).range?.[0] ?? 0);
+    const line = lineOf(text, (pair.key as { range?: number[] }).range?.[0] ?? 0);
     drafts.push({
       kinds: ["tag-trigger"],
       path,
@@ -769,9 +771,7 @@ function referencesFile(segment: string, file: string, packageDir: string): bool
         ? file.slice(packageDir.length + 1)
         : undefined;
   if (rel === undefined) return false;
-  return new RegExp(
-    `(?:^|[\\s"'=/])(?:\\./)?${rel.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}(?:$|[\\s"'])`,
-  ).test(segment);
+  return new RegExp(`(?:^|[\\s"'=/])(?:\\./)?${escapeRegExp(rel)}(?:$|[\\s"'])`).test(segment);
 }
 
 function scriptDrafts(pkg: PackageScripts, scriptPaths: string[]): Draft[] {

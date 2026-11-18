@@ -37,6 +37,7 @@ import { installHook } from "./hooks.ts";
 import { readPackageFile } from "./package-files.ts";
 import { clackPrompter } from "./prompter.ts";
 import { applyRetirement } from "./retire.ts";
+import { jsonFormatting } from "./text-edit.ts";
 
 const PLACEHOLDER_WARNING = (p: PlannedConversion) =>
   `${p.from} has a bump but no summary; ${p.to} got a TODO placeholder summary.`;
@@ -434,15 +435,10 @@ async function writeAll(
   } else if (d.packageJson?.version === undefined) {
     const text = ctx.packageJsonText;
     const tree = parseTree(text);
-    const indent = /\n([ \t]+)"/.exec(text)?.[1] ?? "  ";
     const edited = applyEdits(
       text,
       modify(text, ["version"], version, {
-        formattingOptions: {
-          insertSpaces: !indent.includes("\t"),
-          tabSize: indent.includes("\t") ? 1 : indent.length,
-          eol: text.includes("\r\n") ? "\r\n" : "\n",
-        },
+        formattingOptions: jsonFormatting(text),
         // Right after "name" when there is one, else first.
         getInsertionIndex: () => {
           const props = tree?.children ?? [];

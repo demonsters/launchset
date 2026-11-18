@@ -17,6 +17,7 @@
  */
 
 import { findNodeAtLocation, type Node } from "jsonc-parser";
+import { indentAt } from "../core/text.ts";
 import { assertBuildNumber, assertIosMarketing } from "./ios-version.ts";
 import { assertUniquePath } from "./json.ts";
 import {
@@ -50,12 +51,6 @@ function indentUnit(text: string): string {
   return " ".repeat(indent ? indent.length : 2);
 }
 
-/** Leading whitespace of the line that contains `offset`. */
-function lineIndent(text: string, offset: number): string {
-  const lineStart = text.lastIndexOf("\n", offset - 1) + 1;
-  return /^[ \t]*/.exec(text.slice(lineStart))?.[0] ?? "";
-}
-
 /**
  * Splice that adds `"name": <value>` as the last property of `obj`, touching only the text right
  * after the last property (or inside an empty `{}`). `value(indent)` renders the value for a
@@ -75,14 +70,14 @@ function insertProperty(
   if (last) {
     const at = last.offset + last.length;
     if (!multiline) return { start: at, end: at, text: `, ${key}: ${value(null)}` };
-    const indent = lineIndent(text, last.offset);
+    const indent = indentAt(text, last.offset);
     return { start: at, end: at, text: `,${eol}${indent}${key}: ${value(indent)}` };
   }
   // Empty object: `{}` becomes a one-property object, laid out like its surroundings.
   const start = obj.offset;
   const end = obj.offset + obj.length;
   if (!text.includes("\n")) return { start, end, text: `{${key}: ${value(null)}}` };
-  const outer = lineIndent(text, obj.offset);
+  const outer = indentAt(text, obj.offset);
   const inner = outer + unit;
   return { start, end, text: `{${eol}${inner}${key}: ${value(inner)}${eol}${outer}}` };
 }

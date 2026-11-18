@@ -4,6 +4,7 @@
  */
 
 import { isMaintenanceBranch } from "../core/branches.ts";
+import { renderSummary } from "../core/plan-common.ts";
 import { planRelease } from "../core/release.ts";
 import {
   type PlannedChange,
@@ -103,7 +104,13 @@ export async function version(
   return {
     ok: true,
     outputs: { version: content.version },
-    summary: `## launchset: version\n\n${dryRun ? "Would set" : "Set"} the version to **${content.version}**.\n\n${changed.map((c) => `- ${c.status} \`${c.path}\``).join("\n")}\n`,
+    summary: renderSummary({
+      title: "launchset: version",
+      paragraphs: [
+        `${dryRun ? "Would set" : "Set"} the version to **${content.version}**.`,
+        changed.map((c) => `- ${c.status} \`${c.path}\``).join("\n"),
+      ],
+    }),
     lines: lines.map((l) => (l.startsWith("warning:") || l.startsWith("note:") ? plain(l) : l)),
     data: { version: content.version, changed, dryRun, diff },
   };

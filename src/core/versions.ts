@@ -9,6 +9,15 @@ import { LaunchsetError } from "./errors.ts";
 import { escapeRegExp } from "./regex.ts";
 import { BUMPS, type Bump, type Changeset } from "./types.ts";
 
+/** The highest version of a list, or `null`. */
+export function highestVersion(versions: Iterable<string>): string | null {
+  let best: string | null = null;
+  for (const version of versions) {
+    if (best === null || semver.gt(version, best)) best = version;
+  }
+  return best;
+}
+
 /** A plain `X.Y.Z` version (no prerelease, no build metadata). */
 const PLAIN_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 

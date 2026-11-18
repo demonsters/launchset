@@ -14,6 +14,7 @@ import {
   describeMismatch,
   firstLine,
   highestVersion,
+  invalidChangesetFiles,
   type ManualTargetStatus,
   manualTargetStatuses,
   plural,
@@ -69,7 +70,7 @@ export function computeStatus(input: StatusInput): StatusData {
   const { config } = input;
   const index = input.tags.index;
   const valid = validChangesets(input.changesets);
-  const invalid = input.changesets.flatMap((f) => (f.ok ? [] : [{ path: f.path, error: f.error }]));
+  const invalid = invalidChangesetFiles(input.changesets);
   const botPrs = [...(input.botPrs ?? [])];
   const maintenance = isMaintenanceBranch(config, input.branch);
   const warnings = input.changesets.flatMap((f) => (f.ok ? f.warnings : []));

@@ -5,7 +5,7 @@
 
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { errorDetail, paren, readJson, send } from "./http.ts";
+import { basicAuth, errorDetail, paren, readJson, send } from "./http.ts";
 import { redactUrls } from "./redact.ts";
 import { type VerifyContext, VerifyError, type VerifyResult } from "./types.ts";
 
@@ -128,11 +128,11 @@ export function packageRequest(registry: string, name: string): PackageRequest {
   if (base.protocol !== "https:" && base.protocol !== "http:") {
     throw new VerifyError(`The npm registry "${redactUrls(registry)}" must be an http(s) URL.`);
   }
-  let basicAuth: string | undefined;
+  let authorization: string | undefined;
   if (base.username || base.password) {
     const user = decodeURIComponent(base.username);
     const pass = decodeURIComponent(base.password);
-    basicAuth = `Basic ${Buffer.from(`${user}:${pass}`).toString("base64")}`;
+    authorization = basicAuth(user, pass);
     base.username = "";
     base.password = "";
   }
@@ -142,7 +142,10 @@ export function packageRequest(registry: string, name: string): PackageRequest {
   const encoded = name.startsWith("@")
     ? `@${encodeURIComponent(name.slice(1))}`
     : encodeURIComponent(name);
-  return { url: `${base.toString()}${encoded}`, ...(basicAuth ? { basicAuth } : {}) };
+  return {
+    url: `${base.toString()}${encoded}`,
+    ...(authorization ? { basicAuth: authorization } : {}),
+  };
 }
 
 /** `packageRequest(...).url`. */
@@ -154,7 +157,7 @@ export function packageUrl(registry: string, name: string): string {
 export async function verifyNpm(check: NpmCheck, ctx: VerifyContext): Promise<VerifyResult> {
   const packageFile = check.packageFile ?? "package.json";
   const info = await readPackageInfo(packageFile, ctx);
-  const { url, basicAuth } = packageRequest(info.registry, info.name);
+  const { url, basicAuth: urlAuth } = packageRequest(info.registry, info.name);
   const registry = redactUrls(info.registry);
   const tokenEnv = NPM_TOKEN_ENV.find((name) => ctx.env[name]?.trim());
   const headers: Record<string, string> = {
@@ -162,13 +165,13 @@ export async function verifyNpm(check: NpmCheck, ctx: VerifyContext): Promise<Ve
   };
   // A token wins over credentials embedded in the registry URL.
   if (tokenEnv) headers.authorization = `Bearer ${ctx.env[tokenEnv]?.trim()}`;
-  else if (basicAuth) headers.authorization = basicAuth;
+  else if (urlAuth) headers.authorization = urlAuth;
   const ref = `${info.name}@${check.version}`;
 
   const response = await send(ctx, API, url, { headers });
   if (response.status === 404) {
     const note =
-      tokenEnv || basicAuth
+      tokenEnv || urlAuth
         ? ""
         : ` (no ${NPM_TOKEN_ENV.join(" or ")} was set; a private package also answers 404 without a token)`;
     return {
@@ -179,7 +182,7 @@ export async function verifyNpm(check: NpmCheck, ctx: VerifyContext): Promise<Ve
   if (!response.ok) {
     const auth = tokenEnv
       ? `with the token from ${tokenEnv}`
-      : basicAuth
+      : urlAuth
         ? "with the credentials from the registry URL"
         : "without a token";
     const hint =

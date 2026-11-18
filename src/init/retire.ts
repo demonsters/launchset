@@ -8,16 +8,11 @@
 import { rm, writeFile } from "node:fs/promises";
 import { findNodeAtLocation, type Node as JsonNode, parseTree } from "jsonc-parser";
 import { isMap, isScalar, isSeq, type Pair, type YAMLMap, type YAMLSeq } from "yaml";
-import { absolute, lineAt, lineEnd, lineStart, linesOf, readTextOrNull } from "./fs.ts";
+import { escapeRegExp } from "../core/regex.ts";
+import { detectEol, indentAt, lineEnd, lineOf, lineStart } from "../core/text.ts";
+import { absolute, linesOf, readTextOrNull } from "./fs.ts";
 import type { Edit, MachineryFinding } from "./machinery.ts";
-import {
-  eolOf,
-  indentAt,
-  pairLines,
-  removeListEntry,
-  removeSeqItem,
-  SpliceSet,
-} from "./text-edit.ts";
+import { pairLines, removeListEntry, removeSeqItem, SpliceSet } from "./text-edit.ts";
 import type { Change, MachineryAction } from "./types.ts";
 import {
   isBlock,
@@ -60,7 +55,7 @@ const NO_TAGS = (indent: string, eol: string) =>
 /** Apply the workflow ops of one file (all computed on the original text). */
 export function retireWorkflow(workflow: Workflow, ops: Op[]): WorkflowResult {
   const text = workflow.text;
-  const eol = eolOf(text);
+  const eol = detectEol(text);
   const edits = new SpliceSet();
   const notes: string[] = [];
   const followUps: string[] = [];
@@ -161,7 +156,7 @@ export function retireWorkflow(workflow: Workflow, ops: Op[]): WorkflowResult {
     edits.remove(s, e);
     notes.push(`removed job "${job.id}" (all its steps conflicted)`);
     refChecks.push({
-      pattern: new RegExp(`\\bneeds\\.${escapeId(job.id)}\\.`, "g"),
+      pattern: new RegExp(`\\bneeds\\.${escapeRegExp(job.id)}\\.`, "g"),
       message: (line) =>
         `Check ${workflow.path}:${line}: it uses needs.${job.id}, but init removed the job "${job.id}".`,
     });
@@ -187,7 +182,7 @@ export function retireWorkflow(workflow: Workflow, ops: Op[]): WorkflowResult {
       if (!step.id) continue;
       const id = step.id;
       refChecks.push({
-        pattern: new RegExp(`\\bsteps\\.${escapeId(id)}\\.`, "g"),
+        pattern: new RegExp(`\\bsteps\\.${escapeRegExp(id)}\\.`, "g"),
         message: (line) =>
           `Check ${workflow.path}:${line}: it uses steps.${id}, but init removed that step.`,
       });
@@ -303,13 +298,9 @@ export function retireWorkflow(workflow: Workflow, ops: Op[]): WorkflowResult {
   const out = edits.apply(text);
   for (const check of refChecks) {
     for (const m of out.matchAll(check.pattern))
-      followUps.push(check.message(lineAt(out, m.index)));
+      followUps.push(check.message(lineOf(out, m.index)));
   }
   return { text: out, notes, followUps };
-}
-
-function escapeId(id: string): string {
-  return id.replace(/[.*+?^${}()|[\]\\/-]/g, "\\$&");
 }
 
 /** Remove `&&`-separated parts from a script command, keeping the other separators as written. */

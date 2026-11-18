@@ -4,7 +4,7 @@
  * superseded partial release. Pure.
  */
 
-import { code, joinWords } from "./plan-common.ts";
+import { alert, code, joinWords } from "./plan-common.ts";
 
 /** The state of one manual target for one released version (spec 9.8). */
 export type ManualTargetEntry =
@@ -183,8 +183,10 @@ export function renderPartialReleaseBody(input: PartialReleaseBodyInput): string
       ? input.section.trim()
       : `_No section for ${input.version} in ${input.changelogFile}._`;
   return [
-    `> [!WARNING]`,
-    `> ${input.tag} was never fully released: ${input.supersededBy} superseded it before every auto target shipped. It never gets a release tag.`,
+    alert(
+      "WARNING",
+      `${input.tag} was never fully released: ${input.supersededBy} superseded it before every auto target shipped. It never gets a release tag.`,
+    ),
     "",
     `- Shipped: ${list(input.shipped)}`,
     `- Not shipped: ${list(input.missing)}`,

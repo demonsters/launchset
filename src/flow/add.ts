@@ -13,6 +13,7 @@ import {
   serializeChangeset,
 } from "../core/changesets.ts";
 import { LaunchsetError } from "../core/errors.ts";
+import { renderSummary } from "../core/plan-common.ts";
 import { BUMPS, type Bump } from "../core/types.ts";
 import type { FlowContext, FlowResult } from "./context.ts";
 
@@ -71,7 +72,10 @@ export async function add(context: FlowContext, options: AddOptions): Promise<Fl
   return {
     ok: true,
     outputs: {},
-    summary: `## launchset: add\n\nCreated \`${path}\` (${bump}).\n`,
+    summary: renderSummary({
+      title: "launchset: add",
+      paragraphs: [`Created \`${path}\` (${bump}).`],
+    }),
     lines: [path],
     data: { path, absolute, bump, summary },
   };

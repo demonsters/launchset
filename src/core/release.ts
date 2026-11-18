@@ -27,10 +27,12 @@ import {
   hasMarker,
   highestMarkerVersion,
   isReleased,
+  lastReleaseTag,
   latestRelease,
   missingAutoTargets,
   releaseTag,
   takenVersions,
+  versionTagShas,
 } from "./tags.ts";
 import type { Changeset, Plan, RunInfo } from "./types.ts";
 import {
@@ -147,12 +149,6 @@ function assertPlainRoot(version: string, file: string): void {
       },
     );
   }
-}
-
-/** The tag of the highest reachable release, or `null`. */
-function lastReleaseTag(input: ReleaseInput): string | null {
-  const last = highestVersion(input.reachableReleases);
-  return last === null ? null : releaseTag(input.config.tags, last);
 }
 
 interface BasePlanFields {
@@ -388,7 +384,7 @@ export function planRelease(input: ReleaseInput): ReleaseDecision {
     return finish(plan, { notices, warnings });
   }
   if (commits.length > 0) {
-    const since = lastReleaseTag(input);
+    const since = lastReleaseTag(input.config.tags, input.reachableReleases);
     warnings.push(commitsWithoutChangesetWarning(commits, since));
     return finish(plan, { notices, warnings, unreleasedCommits: { since, commits } });
   }
@@ -438,13 +434,7 @@ function planPublish(
 
 /** Commit of a marker tag of `version` (markers sit on the release commit). */
 function markerCommit(input: ReleaseInput, version: string): string | undefined {
-  for (const marker of input.tags.index.markerTags) {
-    if (marker.version === version) {
-      const sha = input.tags.shas.get(marker.tag);
-      if (sha) return sha;
-    }
-  }
-  return undefined;
+  return versionTagShas(input.tags, version, { partial: false })[0];
 }
 
 /** Commits newer than `sha` (the list is newest first); all of them when `sha` isn't in it. */

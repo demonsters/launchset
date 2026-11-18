@@ -2,6 +2,7 @@
 
 import { LaunchsetError } from "../core/errors.ts";
 import { parsePlan } from "../core/outputs.ts";
+import { alert } from "../core/plan-common.ts";
 import type { Plan } from "../core/types.ts";
 
 /** Append `> [!KIND]` alert blocks to a rendered job summary. */
@@ -11,14 +12,7 @@ export function appendAlerts(
   texts: readonly string[],
 ): string {
   if (texts.length === 0) return summary;
-  const blocks = texts.map(
-    (text) =>
-      `> [!${kind}]\n${text
-        .trimEnd()
-        .split("\n")
-        .map((l) => (l === "" ? ">" : `> ${l}`))
-        .join("\n")}`,
-  );
+  const blocks = texts.map((text) => alert(kind, text));
   return `${summary.trimEnd()}\n\n${blocks.join("\n\n")}\n`;
 }
 

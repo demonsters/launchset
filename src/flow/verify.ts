@@ -5,12 +5,12 @@
 
 import { LaunchsetError } from "../core/errors.ts";
 import { actionOutputs, planTarget } from "../core/outputs.ts";
-import { unknownTarget } from "../core/plan-common.ts";
+import { renderSummary, unknownTarget } from "../core/plan-common.ts";
 import type { Plan } from "../core/types.ts";
 import { VerifyError, verifyTarget } from "../verify/index.ts";
 import type { FlowContext, FlowResult } from "./context.ts";
 import { checkHeadAtPlan } from "./git-ops.ts";
-import { appendAlerts, resolvePlan } from "./result.ts";
+import { resolvePlan } from "./result.ts";
 
 export interface VerifyOptions {
   target: string;
@@ -65,11 +65,14 @@ export async function verify(
   return {
     ok: true,
     outputs,
-    summary: appendAlerts(
-      `## launchset: verify ${options.target}\n\n${targetPlan.marketingVersion}${targetPlan.buildNumber !== null ? ` (build ${targetPlan.buildNumber})` : ""}: **${verdict}**.\n\n${result.message}\n`,
-      "WARNING",
-      checkout ? [checkout] : [],
-    ),
+    summary: renderSummary({
+      title: `launchset: verify ${options.target}`,
+      paragraphs: [
+        `${targetPlan.marketingVersion}${targetPlan.buildNumber !== null ? ` (build ${targetPlan.buildNumber})` : ""}: **${verdict}**.`,
+        result.message,
+      ],
+      warnings: checkout ? [checkout] : [],
+    }),
     lines: [
       `${options.target}: ${verdict} (${result.message})`,
       ...(checkout ? [`warning: ${checkout}`] : []),

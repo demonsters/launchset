@@ -14,7 +14,6 @@ import {
   code,
   describeMismatch,
   firstLine,
-  highestVersion,
   plural,
   renderSummary,
   type TagSnapshot,
@@ -23,7 +22,7 @@ import {
 } from "./plan-common.ts";
 import { commitsWithoutChangesetWarning } from "./release.ts";
 import { isReleasePrBranch } from "./release-pr.ts";
-import { releaseTag, takenVersions } from "./tags.ts";
+import { lastReleaseTag, takenVersions } from "./tags.ts";
 import type { Bump, Changeset } from "./types.ts";
 import {
   maintenanceViolations,
@@ -373,11 +372,10 @@ export function evaluatePushCheck(input: PushCheckInput): PushCheckResult {
     if (!file.ok) warnings.push(`invalid changeset: ${file.error}`);
   }
   if (input.changesets.length === 0 && input.commitsSinceRelease.length > 0) {
-    const last = highestVersion(input.reachableReleases);
     warnings.push(
       commitsWithoutChangesetWarning(
         input.commitsSinceRelease,
-        last === null ? null : releaseTag(input.config.tags, last),
+        lastReleaseTag(input.config.tags, input.reachableReleases),
       ),
     );
   }

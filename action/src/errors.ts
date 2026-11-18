@@ -1,6 +1,6 @@
 /** How a failure is shown in the step error and the job summary. */
 
-import { isLaunchsetError } from "../../src/core/errors.ts";
+import { errorMessage, isLaunchsetError } from "../../src/core/errors.ts";
 
 export interface FormattedError {
   /** The message, as thrown. */
@@ -15,7 +15,7 @@ export interface FormattedError {
  * the hint is only returned when the message doesn't contain it yet.
  */
 export function formatError(error: unknown): FormattedError {
-  const message = error instanceof Error ? error.message : String(error);
+  const message = errorMessage(error);
   const raw = isLaunchsetError(error)
     ? error.hint
     : (error as { hint?: unknown } | null | undefined)?.hint;

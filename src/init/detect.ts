@@ -9,6 +9,7 @@ import { parse as parseYaml } from "yaml";
 import { CONFIG_FILE_NAMES } from "../config/load.ts";
 import { computeBuildNumber } from "../core/build-number.ts";
 import { DEFAULT_DOCKER_TAGS } from "../core/config/schema.ts";
+import { lineOf } from "../core/text.ts";
 import { Git } from "../git/index.ts";
 import { expoAndroid, expoIos } from "../platforms/expo.ts";
 import { gradle } from "../platforms/gradle.ts";
@@ -28,7 +29,6 @@ import {
   isDirectory,
   isFile,
   joinRel,
-  lineAt,
   MAX_SCAN_BYTES,
   readTextOrNull,
   statOrNull,
@@ -590,7 +590,7 @@ export async function detect(root: string, options: { now?: Date } = {}): Promis
     const versionNode = pkg.tree ? findNodeAtLocation(pkg.tree, ["version"]) : undefined;
     if (typeof versionNode?.value === "string") {
       packageJson.version = versionNode.value;
-      packageJson.line = lineAt(pkg.text, versionNode.offset);
+      packageJson.line = lineOf(pkg.text, versionNode.offset);
     }
   }
   const workspaces = await workspaceDirs(root, pkg?.tree, notes);
@@ -818,7 +818,7 @@ export async function detect(root: string, options: { now?: Date } = {}): Promis
         versions.push({
           source: "docker-package",
           path: t.docker.packageJson,
-          line: lineAt(sub.text, node.offset),
+          line: lineOf(sub.text, node.offset),
           key: "version",
           value: node.value,
           plain: plainVersion(node.value),
@@ -939,7 +939,7 @@ export async function detect(root: string, options: { now?: Date } = {}): Promis
       const [key, value] = prop.children ?? [];
       if (typeof key?.value === "string" && typeof value?.value === "string") {
         entry.scripts[key.value] = value.value;
-        entry.lines[key.value] = lineAt(p.text, key.offset);
+        entry.lines[key.value] = lineOf(p.text, key.offset);
       }
     }
     packages.push(entry);
@@ -1005,7 +1005,7 @@ export async function detect(root: string, options: { now?: Date } = {}): Promis
       notes.push({
         level: "warning",
         path: "package.json",
-        line: lineAt(pkg.text, node.parent?.offset ?? node.offset),
+        line: lineOf(pkg.text, node.parent?.offset ?? node.offset),
         message: `"${key}" holds ${tool} configuration: launchset replaces ${tool}; remove the key once the move is done.`,
         manual: true,
       });

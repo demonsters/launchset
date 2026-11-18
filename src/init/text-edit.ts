@@ -4,8 +4,9 @@
  */
 
 import { isSeq, type Node, type Pair, type Scalar, type YAMLSeq } from "yaml";
+import { detectEol, lineEnd, lineStart } from "../core/text.ts";
 import type { Splice } from "../platforms/types.ts";
-import { lineEnd, lineStart, linesOf } from "./fs.ts";
+import { linesOf } from "./fs.ts";
 
 /** Collects splices; removals that contain others win, partial overlaps are a bug. */
 export class SpliceSet {
@@ -92,15 +93,18 @@ export function removeSeqItem(text: string, seq: YAMLSeq, item: Node, edits: Spl
   edits.remove(before ? r[0] - before[0].length : r[0], r[1]);
 }
 
-/** Indentation of the line containing `offset`. */
-export function indentAt(text: string, offset: number): string {
-  const start = lineStart(text, offset);
-  return /^[ \t]*/.exec(text.slice(start))?.[0] ?? "";
-}
-
-/** The file's line ending. */
-export function eolOf(text: string): string {
-  return text.includes("\r\n") ? "\r\n" : "\n";
+/** jsonc-parser formatting options matching a JSON text: its indentation and line ending. */
+export function jsonFormatting(text: string): {
+  insertSpaces: boolean;
+  tabSize: number;
+  eol: string;
+} {
+  const indent = /\n([ \t]+)"/.exec(text)?.[1] ?? "  ";
+  return {
+    insertSpaces: !indent.includes("\t"),
+    tabSize: indent.includes("\t") ? 1 : indent.length,
+    eol: detectEol(text),
+  };
 }
 
 /** Removes 1-based line numbers from a text file. */

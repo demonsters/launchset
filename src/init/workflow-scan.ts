@@ -17,7 +17,8 @@ import {
   type YAMLMap,
   type YAMLSeq,
 } from "yaml";
-import { joinRel, lineAt, linesOf, normalizeRel } from "./fs.ts";
+import { lineOf } from "../core/text.ts";
+import { joinRel, linesOf, normalizeRel } from "./fs.ts";
 import type { DetectedPlatform } from "./types.ts";
 
 export interface ScalarRef {
@@ -96,7 +97,7 @@ export interface Workflow {
 function scalarRef(text: string, node: unknown): ScalarRef | undefined {
   if (!isScalar(node) || node.range === undefined || node.range === null) return undefined;
   if (node.value === null || node.value === undefined) return undefined;
-  return { value: String(node.value), node, line: lineAt(text, node.range[0]) };
+  return { value: String(node.value), node, line: lineOf(text, node.range[0]) };
 }
 
 export function pairOf(map: YAMLMap, key: string): Pair | undefined {
@@ -137,7 +138,7 @@ function parseTriggers(text: string, root: YAMLMap): WorkflowTriggers {
   if (!pair) return triggers;
   triggers.pair = pair;
   const value = pair.value;
-  const onLine = lineAt(text, (pair.key as Scalar).range?.[0] ?? 0);
+  const onLine = lineOf(text, (pair.key as Scalar).range?.[0] ?? 0);
   if (isScalar(value) || isSeq(value)) {
     const names = scalars(text, value).map((r) => r.value);
     triggers.onBranchPush = names.includes("push");
@@ -153,7 +154,7 @@ function parseTriggers(text: string, root: YAMLMap): WorkflowTriggers {
     triggers.release = {
       pair: release,
       types: types ? scalars(text, types.value).map((r) => r.value) : null,
-      line: lineAt(text, (release.key as Scalar).range?.[0] ?? 0),
+      line: lineOf(text, (release.key as Scalar).range?.[0] ?? 0),
     };
   }
   const push = pairOf(value, "push");
@@ -206,7 +207,7 @@ function parseStep(text: string, node: YAMLMap, index: number): WorkflowStep {
   const step: WorkflowStep = {
     index,
     node,
-    line: lineAt(text, node.range?.[0] ?? 0),
+    line: lineOf(text, node.range?.[0] ?? 0),
     with: withValues,
     withPairs,
     env: envOf(pairOf(node, "env")?.value),
@@ -253,7 +254,7 @@ function parseJobs(text: string, root: YAMLMap): { jobs: WorkflowJob[]; map?: YA
       id: String(item.key.value),
       pair: item as Pair,
       node,
-      line: lineAt(text, (item.key as Scalar).range?.[0] ?? 0),
+      line: lineOf(text, (item.key as Scalar).range?.[0] ?? 0),
       env: envOf(pairOf(node, "env")?.value),
       steps,
       needs,
@@ -829,7 +830,7 @@ function addMetadata(
 function entryLine(text: string, ref: ScalarRef, entry: string): number {
   const [start, end] = ref.node.range ?? [0, 0];
   const index = text.indexOf(entry, start);
-  return index !== -1 && index < end ? lineAt(text, index) : ref.line;
+  return index !== -1 && index < end ? lineOf(text, index) : ref.line;
 }
 
 // ---------------------------------------------------------------------------

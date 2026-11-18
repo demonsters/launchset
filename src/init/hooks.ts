@@ -6,8 +6,9 @@
 import { chmod, writeFile } from "node:fs/promises";
 import { applyEdits, findNodeAtLocation, modify, parseTree } from "jsonc-parser";
 import { isMap, parseDocument, type YAMLMap } from "yaml";
+import { detectEol, lineStart } from "../core/text.ts";
 import { absolute, isDirectory, readTextOrNull } from "./fs.ts";
-import { eolOf } from "./text-edit.ts";
+import { jsonFormatting } from "./text-edit.ts";
 import type { Change, DetectedHook } from "./types.ts";
 
 export const HOOK_COMMAND = "npx @demonsters/launchset check --push";
@@ -73,7 +74,7 @@ export async function installHook(
           },
         };
       }
-      const eol = eolOf(text);
+      const eol = detectEol(text);
       const sep = text === "" || text.endsWith("\n") ? "" : eol;
       await writeFile(file, `${text}${sep}${HOOK_COMMAND}${eol}`);
       return {
@@ -93,16 +94,9 @@ export async function installHook(
         typeof existing?.value === "string" && existing.value.trim() !== ""
           ? `${existing.value} && ${HOOK_COMMAND}`
           : HOOK_COMMAND;
-      const indent = /\n([ \t]+)"/.exec(text)?.[1] ?? "  ";
       const out = applyEdits(
         text,
-        modify(text, [...base, "pre-push"], value, {
-          formattingOptions: {
-            insertSpaces: !indent.includes("\t"),
-            tabSize: indent.includes("\t") ? 1 : indent.length,
-            eol: eolOf(text),
-          },
-        }),
+        modify(text, [...base, "pre-push"], value, { formattingOptions: jsonFormatting(text) }),
       );
       await writeFile(file, out);
       return {
@@ -135,7 +129,7 @@ export async function installHook(
 
 /** Insert the command into a lefthook config; `null` when its shape isn't supported. */
 export function addLefthookCommand(text: string): string | null {
-  const eol = eolOf(text);
+  const eol = detectEol(text);
   const doc = parseDocument(text);
   if (doc.errors.length > 0 || (doc.contents !== null && !isMap(doc.contents))) return null;
   const root = doc.contents as YAMLMap | null;
@@ -150,9 +144,9 @@ export function addLefthookCommand(text: string): string | null {
   const firstKey = commands.items[0]?.key as { range?: [number, number, number] } | undefined;
   const keyStart = firstKey?.range?.[0];
   if (keyStart === undefined) return null;
-  const lineStart = text.lastIndexOf("\n", keyStart - 1) + 1;
-  const indent = text.slice(lineStart, keyStart);
+  const start = lineStart(text, keyStart);
+  const indent = text.slice(start, keyStart);
   if (!/^[ ]+$/.test(indent)) return null;
   const inner = `${indent}${indent.length >= 4 ? indent.slice(0, indent.length / 2) : "  "}`;
-  return `${text.slice(0, lineStart)}${indent}launchset:${eol}${inner}run: ${HOOK_COMMAND}${eol}${text.slice(lineStart)}`;
+  return `${text.slice(0, start)}${indent}launchset:${eol}${inner}run: ${HOOK_COMMAND}${eol}${text.slice(start)}`;
 }

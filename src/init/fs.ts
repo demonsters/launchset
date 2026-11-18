@@ -1,8 +1,9 @@
 /** Small file helpers for init. Paths given to callers are repo-relative POSIX. */
 
-import { readFile, stat } from "node:fs/promises";
-import { relative, resolve, sep } from "node:path";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { glob } from "tinyglobby";
+import { statOrNull } from "../config/fs.ts";
 
 /** Directories init never looks into. */
 export const IGNORED_DIRS = [
@@ -21,15 +22,7 @@ export const IGNORED_DIRS = [
 /** Files larger than this are skipped by the text scans. */
 export const MAX_SCAN_BYTES = 1024 * 1024;
 
-export async function statOrNull(path: string) {
-  try {
-    return await stat(path);
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ENOENT" || code === "ENOTDIR") return null;
-    throw error;
-  }
-}
+export { statOrNull };
 
 export async function isFile(path: string): Promise<boolean> {
   return (await statOrNull(path))?.isFile() ?? false;
@@ -48,12 +41,6 @@ export async function readTextOrNull(path: string): Promise<string | null> {
     if (code === "ENOENT" || code === "ENOTDIR" || code === "EISDIR") return null;
     throw error;
   }
-}
-
-/** Repo-relative POSIX path (`.` for the root itself). */
-export function toRel(root: string, absolute: string): string {
-  const rel = relative(root, absolute);
-  return (rel === "" ? "." : rel).split(sep).join("/");
 }
 
 /** `join` for repo-relative POSIX paths, where `.` is the root. */
@@ -109,24 +96,6 @@ export async function globRel(
     ...(options.deep === undefined ? {} : { deep: options.deep }),
   });
   return found.map((p) => joinRel(base, p.replace(/\/+$/, ""))).sort();
-}
-
-/** 1-based line number of a character offset. */
-export function lineAt(text: string, offset: number): number {
-  let line = 1;
-  for (let i = 0; i < offset && i < text.length; i++) if (text.charCodeAt(i) === 10) line++;
-  return line;
-}
-
-/** Start offset of the line containing `offset`. */
-export function lineStart(text: string, offset: number): number {
-  return text.lastIndexOf("\n", offset - 1) + 1;
-}
-
-/** Offset just after the newline ending the line that contains `offset` (or the text end). */
-export function lineEnd(text: string, offset: number): number {
-  const index = text.indexOf("\n", offset);
-  return index === -1 ? text.length : index + 1;
 }
 
 /** The text's lines with their start offsets (line endings excluded from `text`). */

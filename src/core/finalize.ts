@@ -33,7 +33,9 @@ import {
   markersFor,
   missingAutoTargets,
   partialTag,
+  releasesAfter,
   releaseTag,
+  versionTagShas,
 } from "./tags.ts";
 import type { Plan } from "./types.ts";
 import { isPlainVersion } from "./versions.ts";
@@ -171,26 +173,13 @@ export function finalizeCandidates(
   releasesWithTag?: ReadonlySet<string>,
 ): UnfinishedVersion[] {
   const auto = new Set(autoTargets(config));
-  const shaOf = (v: string): string | undefined => {
-    const partial = tags.index.partials.get(v);
-    if (partial !== undefined) {
-      const sha = tags.shas.get(partial);
-      if (sha) return sha;
-    }
-    for (const marker of tags.index.markerTags) {
-      if (marker.version !== v) continue;
-      const sha = tags.shas.get(marker.tag);
-      if (sha) return sha;
-    }
-    return undefined;
-  };
   const candidates: UnfinishedVersion[] = [];
   for (const [v, targets] of tags.index.markers) {
     if (!isPlainVersion(v) || !semver.lt(v, version) || tags.index.releases.has(v)) continue;
     if (![...targets].some((t) => auto.has(t))) continue;
     const partial = tags.index.partials.get(v);
     if (partial !== undefined && releasesWithTag?.has(partial)) continue;
-    const sha = shaOf(v);
+    const sha = versionTagShas(tags, v, { partial: true })[0];
     if (sha !== undefined) candidates.push({ version: v, sha });
   }
   return candidates.sort((a, b) => semver.compare(a.version, b.version));
@@ -227,10 +216,7 @@ function manualEntries(
 
 /** True when no release is higher than `version`. */
 function isHighestRelease(tags: TagSnapshot, version: string): boolean {
-  for (const released of tags.index.releases.keys()) {
-    if (semver.gt(released, version)) return false;
-  }
-  return true;
+  return releasesAfter(tags.index, version) === 0;
 }
 
 interface ReleaseActionInput {

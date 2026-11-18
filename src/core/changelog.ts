@@ -6,6 +6,7 @@
 
 import semver from "semver";
 import { LaunchsetError } from "./errors.ts";
+import { detectEol } from "./text.ts";
 import type { Changeset } from "./types.ts";
 
 export const CHANGELOG_TITLE = "# Changelog";
@@ -226,10 +227,6 @@ export function hasSection(text: string, version: string): boolean {
 
 // ---------------------------------------------------------------------------
 // Insertion
-
-function detectEol(text: string): string {
-  return text.includes("\r\n") ? "\r\n" : "\n";
-}
 
 const startsWithBlankLine = (text: string) => /^[ \t]*\r?\n/.test(text);
 const endsWithBlankLine = (text: string) => /(?:^|\n)[ \t]*\r?\n$/.test(text);

@@ -13,7 +13,7 @@
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { errorDetail, paren, send } from "./http.ts";
+import { basicAuth, errorDetail, paren, send } from "./http.ts";
 import { type VerifyContext, VerifyError, type VerifyResult } from "./types.ts";
 
 export const REGISTRY_ENV = {
@@ -330,7 +330,7 @@ export function parseChallenge(header: string | null): Challenge | undefined {
 }
 
 function basicHeader(credentials: Credentials): string {
-  return `Basic ${Buffer.from(`${credentials.username}:${credentials.password}`).toString("base64")}`;
+  return basicAuth(credentials.username, credentials.password);
 }
 
 async function fetchBearerToken(

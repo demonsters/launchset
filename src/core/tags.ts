@@ -7,7 +7,7 @@ import semver from "semver";
 import type { ResolvedConfig } from "./config/schema.ts";
 import { LaunchsetError } from "./errors.ts";
 import { escapeRegExp } from "./regex.ts";
-import { isPlainVersion, type VersionLine, versionParts } from "./versions.ts";
+import { highestVersion, isPlainVersion, type VersionLine, versionParts } from "./versions.ts";
 
 export type TagTemplates = ResolvedConfig["tags"];
 
@@ -179,12 +179,31 @@ export function indexTags(tagNames: Iterable<string>, config: IndexTagsConfig): 
   return index;
 }
 
-function highest(versions: Iterable<string>): string | null {
-  let best: string | null = null;
-  for (const version of versions) {
-    if (best === null || semver.gt(version, best)) best = version;
+/** The release tag of the highest version in `versions`, or `null`. */
+export function lastReleaseTag(tags: TagTemplates, versions: Iterable<string>): string | null {
+  const last = highestVersion(versions);
+  return last === null ? null : releaseTag(tags, last);
+}
+
+/**
+ * Commits the tags of `version` point to: its partial tag's first (with `partial`), then each
+ * marker tag's, in tag order. Markers and partial tags sit on the release commit.
+ */
+export function versionTagShas(
+  tags: { index: TagIndex; shas: ReadonlyMap<string, string> },
+  version: string,
+  options: { partial: boolean },
+): string[] {
+  const names: string[] = [];
+  const partial = options.partial ? tags.index.partials.get(version) : undefined;
+  if (partial !== undefined) names.push(partial);
+  for (const marker of tags.index.markerTags) {
+    if (marker.version === version) names.push(marker.tag);
   }
-  return best;
+  return names.flatMap((name) => {
+    const sha = tags.shas.get(name);
+    return sha ? [sha] : [];
+  });
 }
 
 /** Released versions, newest first. */
@@ -194,12 +213,12 @@ export function releasedVersions(index: TagIndex): string[] {
 
 /** The highest released version, or `null`. Prerelease and partial tags never count. */
 export function latestRelease(index: TagIndex): string | null {
-  return highest(index.releases.keys());
+  return highestVersion(index.releases.keys());
 }
 
 /** The highest released version in a `major.minor` line (hotfix base, spec 9.5). */
 export function latestReleaseInLine(index: TagIndex, line: VersionLine): string | null {
-  return highest(
+  return highestVersion(
     [...index.releases.keys()].filter((v) => {
       const parts = versionParts(v);
       return parts.major === line.major && parts.minor === line.minor;
@@ -246,7 +265,7 @@ export function hasMarker(index: TagIndex, target: string, version: string): boo
 
 /** The highest version `target` has a marker for ("never backwards", spec 9.8), or `null`. */
 export function highestMarkerVersion(index: TagIndex, target: string): string | null {
-  return highest(
+  return highestVersion(
     [...index.markers.entries()].filter(([, targets]) => targets.has(target)).map(([v]) => v),
   );
 }

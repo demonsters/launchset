@@ -53,19 +53,7 @@ export class StampError extends Error {
   }
 }
 
-/** Detects the line ending used by a file, to use it for anything a stamper inserts. */
-export function detectEol(text: string): "\r\n" | "\n" {
-  return text.includes("\r\n") ? "\r\n" : "\n";
-}
-
-/** 1-based line number of a character offset. */
-export function lineOf(text: string, offset: number): number {
-  let line = 1;
-  for (let i = 0; i < offset && i < text.length; i++) {
-    if (text.charCodeAt(i) === 10) line++;
-  }
-  return line;
-}
+export { detectEol, lineOf } from "../core/text.ts";
 
 /** A range in the original text to replace. */
 export interface Splice {

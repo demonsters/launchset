@@ -6,9 +6,9 @@
 
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { detectEol } from "../core/text.ts";
 import { absolute, readTextOrNull } from "./fs.ts";
 import { readPackageFile } from "./package-files.ts";
-import { eolOf } from "./text-edit.ts";
 import type { Change } from "./types.ts";
 
 export const AGENTS_START = "<!-- launchset:start -->";
@@ -18,7 +18,7 @@ export const AGENTS_PATH = "AGENTS.md";
 
 /** `existing` with the launchset section added or replaced. */
 export function upsertAgentsSection(existing: string | null, snippet: string): string {
-  const eol = existing ? eolOf(existing) : "\n";
+  const eol = existing ? detectEol(existing) : "\n";
   const body = snippet.replace(/\r\n/g, "\n").trim().split("\n").join(eol);
   const block = `${AGENTS_START}${eol}${body}${eol}${AGENTS_END}`;
   if (existing === null || existing.trim() === "") return `${block}${eol}`;

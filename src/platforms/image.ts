@@ -16,6 +16,7 @@
  * `read` returns one FoundValue per occurrence (key = image, value = tag).
  */
 
+import { escapeRegExp } from "../core/regex.ts";
 import { applySplices, type FoundValue, lineOf, StampError, type TextStamper } from "./types.ts";
 
 export interface ImageRefsOptions {
@@ -41,9 +42,7 @@ const AFTER_TAG = /^(?:$|[\s"',\]})#])/;
 
 function scan(text: string, images: string[], file: string): Occurrence[] {
   if (images.length === 0) throw new StampError(file, "no images given to stamp");
-  const names = [...images]
-    .sort((a, b) => b.length - a.length)
-    .map((i) => i.replace(/[.*+?^${}()|[\]\\/-]/g, "\\$&"));
+  const names = [...images].sort((a, b) => b.length - a.length).map(escapeRegExp);
   // The tag candidate is greedy; its real end is decided below.
   const re = new RegExp(
     `(?<![A-Za-z0-9_.\\-/@])(${names.join("|")})(?![A-Za-z0-9_.\\-/])(?::([A-Za-z0-9_][A-Za-z0-9_.\\-]*))?(@[^\\s"']+)?`,

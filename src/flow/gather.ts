@@ -17,7 +17,7 @@ import {
   type BotPrInfo,
   type ChangesetFile,
   type CommitInfo,
-  highestVersion,
+  invalidChangesetFiles,
   readChangesetFile,
   snapshotTags,
   type TagSnapshot,
@@ -25,7 +25,7 @@ import {
 } from "../core/plan-common.ts";
 import type { ReleaseEvent, ReleaseInput } from "../core/release.ts";
 import type { ChangesetOrigin } from "../core/release-pr.ts";
-import { releaseTag } from "../core/tags.ts";
+import { lastReleaseTag, versionTagShas } from "../core/tags.ts";
 import type { Changeset } from "../core/types.ts";
 import type { ChangedFile, Git, TagRef } from "../git/index.ts";
 import {
@@ -74,8 +74,7 @@ export async function reachableReleaseVersions(
 
 /** The tag of the highest version in `versions`, or `null`. */
 export function lastReleaseTagOf(context: FlowContext, versions: readonly string[]): string | null {
-  const last = highestVersion(versions);
-  return last === null ? null : releaseTag(context.config.tags, last);
+  return lastReleaseTag(context.config.tags, versions);
 }
 
 // ---------------------------------------------------------------------------
@@ -150,9 +149,7 @@ export async function readChangesetFiles(
 
 /** The valid changesets; throws `invalid-changeset` listing every file that can't be parsed. */
 export function requireValidChangesets(files: readonly ChangesetFile[]): Changeset[] {
-  const error = invalidChangesetsError(
-    files.flatMap((f) => (f.ok ? [] : [{ path: f.path, error: f.error }])),
-  );
+  const error = invalidChangesetsError(invalidChangesetFiles(files));
   if (error) throw error;
   return validChangesets(files);
 }
@@ -299,15 +296,8 @@ export async function taggedReleaseCommit(
   version: string,
   head = "HEAD",
 ): Promise<string | undefined> {
-  const names: string[] = [];
-  const partial = tags.index.partials.get(version);
-  if (partial) names.push(partial);
-  for (const marker of tags.index.markerTags) {
-    if (marker.version === version) names.push(marker.tag);
-  }
-  for (const name of names) {
-    const sha = tags.shas.get(name);
-    if (sha && (await context.git.isAncestor(sha, head))) return sha;
+  for (const sha of versionTagShas(tags, version, { partial: true })) {
+    if (await context.git.isAncestor(sha, head)) return sha;
   }
   return undefined;
 }
@@ -472,9 +462,7 @@ export async function gatherReleaseState(
 ): Promise<ReleaseState> {
   const repo = await gatherRepoState(context, options);
   const changesets = validChangesets(repo.changesetFiles);
-  const invalidChangesets = repo.changesetFiles.flatMap((f) =>
-    f.ok ? [] : [{ path: f.path, error: f.error }],
-  );
+  const invalidChangesets = invalidChangesetFiles(repo.changesetFiles);
   const reader = await rootVersionReader(context);
   const tagged = await taggedReleaseCommit(context, repo.tags, repo.version);
   const isRelease =

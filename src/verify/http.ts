@@ -24,6 +24,11 @@ export async function send(
   }
 }
 
+/** A `Basic …` Authorization header value. */
+export function basicAuth(user: string, pass: string): string {
+  return `Basic ${Buffer.from(`${user}:${pass}`).toString("base64")}`;
+}
+
 /** Error text including the `cause` chain (undici puts the useful part in `cause`). */
 export function describeError(error: unknown): string {
   const parts: string[] = [];
