@@ -312,6 +312,22 @@ export function insertSectionSorted(
 }
 
 /**
+ * The whole section for `version`, heading included, exactly as written (LF line endings,
+ * trailing blank lines trimmed, one final newline); for the changelog backport (spec 9.5).
+ * `null` when there is no such section.
+ */
+export function extractSectionWithHeading(text: string, version: string): string | null {
+  const headings = findHeadings(text);
+  const heading = headings.find((h) => h.version !== null && semver.eq(h.version, version));
+  if (!heading) return null;
+  const section = text
+    .slice(heading.start, sectionEnd(text, headings, heading))
+    .replace(/\r\n/g, "\n")
+    .trimEnd();
+  return `${section}\n`;
+}
+
+/**
  * The body of the section for `version` (without its heading), LF line endings, surrounding
  * blank lines trimmed; for GitHub Release bodies. `null` when there is no such section.
  */
