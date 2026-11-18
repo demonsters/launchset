@@ -176,10 +176,13 @@ describe("release workflow: npm target", () => {
   const steps = () => jobOf("launchset-release.yml", "build").steps;
   const publishGuard = "matrix.target == 'npm' && steps.verify.outputs.already-published != 'true'";
 
-  it("verifies against the registry with the npm token", () => {
+  it("verifies and publishes with npm trusted publishing (OIDC), no long-lived token", () => {
     const verify = steps().find((s) => s.id === "verify");
     expect(verify?.with?.command).toBe("verify");
-    expect(verify?.env?.NODE_AUTH_TOKEN).toBe("${{ secrets.NPM_TOKEN }}");
+    expect(verify?.env?.NODE_AUTH_TOKEN).toBeUndefined();
+    const text = readFileSync(join(root, ".github/workflows/launchset-release.yml"), "utf8");
+    expect(text).not.toContain("NPM_TOKEN");
+    expect(text).toMatch(/\n {6}id-token: write\n/);
   });
 
   it("builds, then publishes with the dist-tag unless already published", () => {
@@ -191,7 +194,7 @@ describe("release workflow: npm target", () => {
     expect(list[build]?.if).toBe(publishGuard);
     expect(list[publish]?.if).toBe(publishGuard);
     expect(list[publish]?.run).toBe("npm publish --tag ${{ steps.stamp.outputs.dist-tag }}");
-    expect(list[publish]?.env?.NODE_AUTH_TOKEN).toBe("${{ secrets.NPM_TOKEN }}");
+    expect(list[publish]?.env?.NODE_AUTH_TOKEN).toBeUndefined();
     // The package stays private.
     expect(list[publish]?.run).not.toContain("--access");
   });

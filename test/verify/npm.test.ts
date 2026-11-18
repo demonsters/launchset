@@ -264,3 +264,80 @@ describe("verifyNpm", () => {
     );
   });
 });
+
+describe("verifyNpm with trusted publishing (OIDC)", () => {
+  const OIDC_ENV = {
+    ACTIONS_ID_TOKEN_REQUEST_URL: "https://pipelines.actions.example/token?api-version=2.0",
+    ACTIONS_ID_TOKEN_REQUEST_TOKEN: "runner-request-token",
+  };
+  const EXCHANGE =
+    "https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/@demonsters%2flaunchset";
+
+  function oidcProvider(seen: { audience?: string | null; auth?: string | null } = {}) {
+    server.use(
+      http.get("https://pipelines.actions.example/token", ({ request }) => {
+        seen.audience = new URL(request.url).searchParams.get("audience");
+        seen.auth = request.headers.get("authorization");
+        return HttpResponse.json({ value: "github-oidc-jwt" });
+      }),
+    );
+    return seen;
+  }
+
+  it("exchanges the workflow's OIDC token and reads the private package with it", async () => {
+    const cwd = await repo({ "package.json": { name: "@demonsters/launchset" } });
+    const provider = oidcProvider();
+    const exchange: { auth?: string | null } = {};
+    server.use(
+      http.post(EXCHANGE, ({ request }) => {
+        exchange.auth = request.headers.get("authorization");
+        return HttpResponse.json({ token: "npm-short-lived" });
+      }),
+    );
+    const seen = packument("https://registry.npmjs.org/@demonsters%2Flaunchset", ["1.0.0"]);
+    const result = await verifyNpm({ version: "1.0.0" }, makeCtx(OIDC_ENV, cwd));
+    expect(result.alreadyPublished).toBe(true);
+    expect(provider).toEqual({
+      audience: "npm:registry.npmjs.org",
+      auth: "Bearer runner-request-token",
+    });
+    expect(exchange.auth).toBe("Bearer github-oidc-jwt");
+    expect(seen.auth).toBe("Bearer npm-short-lived");
+  });
+
+  it("goes on without a token when npm has no trusted publisher (first publish), and says so", async () => {
+    const cwd = await repo({ "package.json": { name: "@demonsters/launchset" } });
+    oidcProvider();
+    server.use(
+      http.post(EXCHANGE, () => HttpResponse.json({ error: "not found" }, { status: 404 })),
+    );
+    const seen = packument("https://registry.npmjs.org/@demonsters%2Flaunchset", 404);
+    const result = await verifyNpm({ version: "1.0.0" }, makeCtx(OIDC_ENV, cwd));
+    expect(result.alreadyPublished).toBe(false);
+    expect(seen.auth).toBeNull();
+    expect(result.message).toContain("no trusted publisher");
+  });
+
+  it("fails clearly when the job can't get an OIDC token", async () => {
+    const cwd = await repo({ "package.json": { name: "@demonsters/launchset" } });
+    server.use(
+      http.get("https://pipelines.actions.example/token", () =>
+        HttpResponse.json({ message: "no" }, { status: 403 }),
+      ),
+    );
+    await expect(verifyNpm({ version: "1.0.0" }, makeCtx(OIDC_ENV, cwd))).rejects.toThrow(
+      /id-token: write/,
+    );
+  });
+
+  it("prefers an explicit token over OIDC", async () => {
+    const cwd = await repo({ "package.json": { name: "@demonsters/launchset" } });
+    const seen = packument("https://registry.npmjs.org/@demonsters%2Flaunchset", ["1.0.0"]);
+    const result = await verifyNpm(
+      { version: "1.0.0" },
+      makeCtx({ ...OIDC_ENV, NODE_AUTH_TOKEN: "classic" }, cwd),
+    );
+    expect(result.alreadyPublished).toBe(true);
+    expect(seen.auth).toBe("Bearer classic");
+  });
+});

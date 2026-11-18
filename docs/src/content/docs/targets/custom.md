@@ -65,7 +65,10 @@ npm: {
 - The version or the package doesn't exist (404): `false`.
 - Any other error (auth, network) fails the step. It is never treated as "not published".
 
-For private packages set `LAUNCHSET_NPM_TOKEN` or `NODE_AUTH_TOKEN`. The first wins.
+Private packages need read access. Two ways:
+
+- **npm trusted publishing (recommended, no token to rotate).** On npmjs.com, open the package's **Settings → Trusted publishing**, add GitHub Actions with your repository and the release workflow's file name, and give the build job `permissions: id-token: write`. `npm publish` then authenticates through the workflow's OIDC token, and `verify` exchanges the same token for a short-lived read token. Trusted publishing can only be set up for a package that exists, so publish the first version once by hand (or with a token).
+- **A token:** set `LAUNCHSET_NPM_TOKEN` or `NODE_AUTH_TOKEN` (the first wins) for `verify`, and `NODE_AUTH_TOKEN` for `npm publish`.
 
 Publish with the `dist-tag` output, so a hotfix doesn't move `latest`:
 
@@ -77,10 +80,11 @@ Publish with the `dist-tag` output, so a hotfix doesn't move `latest`:
     registry-url: https://registry.npmjs.org
 - run: npm publish --tag ${{ steps.stamp.outputs.dist-tag }}
   if: matrix.target == 'npm' && steps.verify.outputs.already-published != 'true'
-  env:
-    NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+  # With a token instead of trusted publishing:
+  # env:
+  #   NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 ```
 
-`dist-tag` is `latest` for base-branch releases, `release-<major>.<minor>` on maintenance branches, the prerelease id for prereleases and `pr-<n>` or the branch slug for previews. For npm trusted publishing, give the job `id-token: write` and drop the token.
+`dist-tag` is `latest` for base-branch releases, `release-<major>.<minor>` on maintenance branches, the prerelease id for prereleases and `pr-<n>` or the branch slug for previews.
 
 If the root `package.json` is published, a `package-lock.json` or `npm-shrinkwrap.json` next to it gets its root version updated together with `package.json`. pnpm, Yarn and Bun lockfiles don't store the root version and need nothing.

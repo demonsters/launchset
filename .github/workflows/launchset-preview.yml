@@ -18,7 +18,7 @@
 #   - the `npm` step replaces the template's example (the template's `workflow_dispatch` on
 #     another branch plans a `preview`-channel build and publishes nothing).
 #
-# npm auth: NPM_TOKEN, see the comment at the top of launchset-release.yml.
+# npm auth: trusted publishing (OIDC), see the comment at the top of launchset-release.yml.
 name: Launchset preview
 
 on:
@@ -90,7 +90,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      # id-token: write # for npm trusted publishing instead of an NPM_TOKEN (see launchset-release.yml)
+      # npm trusted publishing (OIDC): `npm publish` and `launchset verify` get short-lived tokens.
+      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -123,8 +124,6 @@ jobs:
           command: verify
           target: ${{ matrix.target }}
           plan: ${{ needs.plan.outputs.plan }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       # ---------------------------------------------------------------------------------------
       # --- npm (npm package) ---
@@ -141,9 +140,6 @@ jobs:
       - name: Publish npm
         if: matrix.target == 'npm' && steps.stamp.outputs.channel == 'prerelease' && steps.verify.outputs.already-published != 'true'
         run: npm publish --tag ${{ steps.stamp.outputs.dist-tag }}
-        env:
-          # Or use npm trusted publishing: give this job `id-token: write` and drop the token.
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       # ---------------------------------------------------------------------------------------
 
   comment:
