@@ -1,0 +1,34 @@
+# --- @@target@@ (android): example steps, uncomment and adapt ---
+# `stamp` already wrote versionName and versionCode into the Gradle files. `channel` picks the
+# Google Play track: release -> production, prerelease -> beta, preview -> internal.
+# Secrets are referenced by name only: add them as repository or organization secrets.
+#
+# - name: Set up Java (@@target@@)
+#   if: @@if@@
+#   uses: actions/setup-java@v5
+#   with:
+#     distribution: temurin
+#     java-version: "21"
+# - name: Build the app bundle (@@target@@)
+#   if: @@if@@
+#   working-directory: @@android_dir@@
+#   run: ./gradlew bundleRelease
+#   env:
+#     LAUNCHSET_VERSION: ${{ steps.stamp.outputs.version }}
+#     LAUNCHSET_BUILD_NUMBER: ${{ steps.stamp.outputs.build-number }}
+#     LAUNCHSET_CHANNEL: ${{ steps.stamp.outputs.channel }}
+#     ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+#     ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+#     ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+#     ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+# - name: Upload to Google Play (@@target@@)
+#   if: @@if@@
+#   working-directory: @@android_dir@@
+#   run: |
+#     bundle exec fastlane supply \
+#       --aab app/build/outputs/bundle/release/app-release.aab \
+#       --track "$PLAY_TRACK" \
+#       --package_name "@@package_name@@"
+#   env:
+#     PLAY_TRACK: ${{ steps.stamp.outputs.channel == 'release' && 'production' || (steps.stamp.outputs.channel == 'prerelease' && 'beta' || 'internal') }}
+#     SUPPLY_JSON_KEY_DATA: ${{ secrets.LAUNCHSET_PLAY_SERVICE_ACCOUNT_JSON }}

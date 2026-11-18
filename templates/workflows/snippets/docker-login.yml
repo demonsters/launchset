@@ -1,0 +1,9 @@
+# Log in to the registry. In the release workflow this runs before `verify` on purpose: for a
+# private package the registry check needs read access. The login also covers the push below.
+- name: Log in to @@registry_name@@
+  if: @@if@@
+  uses: docker/login-action@v3
+  with:
+    @@registry_line@@
+    username: @@username@@
+    password: @@password@@

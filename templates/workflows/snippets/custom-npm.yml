@@ -1,0 +1,18 @@
+# --- @@target@@ (npm package) ---
+# Publishes releases (skipped when `verify` finds this version on the registry) and
+# prereleases. PR and branch previews are not published to npm.
+- uses: actions/setup-node@v5
+  if: @@if@@
+  with:
+    node-version: 24
+    registry-url: https://registry.npmjs.org
+# - run: npm ci && npm run build   # build first, if the package needs it
+#   if: @@if@@
+- name: Publish @@target@@ (npm)
+  if: @@if@@
+  # The dist-tag is `latest` for base-branch releases, so a hotfix on a maintenance branch
+  # does not move `latest`. Add --access public for a public scoped package.
+  run: npm publish --tag ${{ steps.stamp.outputs.dist-tag }}
+  env:
+    # Or use npm trusted publishing: give this job `id-token: write` and drop the token.
+    NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

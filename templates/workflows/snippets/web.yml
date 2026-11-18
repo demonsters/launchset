@@ -1,0 +1,13 @@
+# --- @@target@@ (web): your build and deploy steps, e.g. ---
+# The root package.json already has the version. `stamp` also wrote it into any extra `files`
+# of this target.
+#
+# - run: npm ci && npm run build
+#   if: @@if@@
+#   env:
+#     LAUNCHSET_VERSION: ${{ steps.stamp.outputs.version }}
+#     LAUNCHSET_BUILD_NUMBER: ${{ steps.stamp.outputs.build-number }}
+#     LAUNCHSET_CHANNEL: ${{ steps.stamp.outputs.channel }}
+# - name: Deploy (@@target@@)
+#   if: @@if@@
+#   run: ./scripts/deploy-web.sh   # your own deploy
