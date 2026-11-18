@@ -66,7 +66,16 @@ async function git(
 ): Promise<{ ok: boolean; stdout: string }> {
   try {
     const { stdout } = await execFileAsync("git", ["-C", repoDir, ...args], {
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+      // The identity goes through the environment: GIT_AUTHOR_* / GIT_COMMITTER_* set by a
+      // workflow would otherwise win over `-c user.name`.
+      env: {
+        ...process.env,
+        GIT_TERMINAL_PROMPT: "0",
+        GIT_AUTHOR_NAME: COMMITTER_NAME,
+        GIT_AUTHOR_EMAIL: COMMITTER_EMAIL,
+        GIT_COMMITTER_NAME: COMMITTER_NAME,
+        GIT_COMMITTER_EMAIL: COMMITTER_EMAIL,
+      },
       maxBuffer: 64 * 1024 * 1024,
     });
     return { ok: true, stdout: stdout.trim() };
@@ -170,10 +179,6 @@ export async function publishAction(options: PublishActionOptions): Promise<Publ
     log(`${tag} already exists with the same files (${commit.slice(0, 7)}): nothing to commit.`);
   } else {
     await git(repoDir, [
-      "-c",
-      `user.name=${COMMITTER_NAME}`,
-      "-c",
-      `user.email=${COMMITTER_EMAIL}`,
       "-c",
       "commit.gpgsign=false",
       "-c",
