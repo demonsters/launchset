@@ -1,0 +1,16 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci && npm run build
+      - name: Staging image
+        run: |
+          docker build -t ghcr.io/acme/app:latest .
+          docker push ghcr.io/acme/app:latest
+          echo "pushed"

@@ -1,0 +1,8 @@
+{
+  "expo": {
+    "name": "Expo App",
+    "version": "1.9.0",
+    "ios": { "buildNumber": "12" },
+    "android": { "versionCode": 12 }
+  }
+}
