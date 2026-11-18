@@ -65,7 +65,7 @@ const planSchema = z.looseObject({
 
 const PLAN_HINT =
   // biome-ignore lint/suspicious/noTemplateCurlyInString: a GitHub Actions expression, not a JS template.
-  'Pass the plan job\'s output: plan: "${{ needs.launchset.outputs.plan }}" (and add the launchset job to needs).';
+  'In a workflow, pass the launchset job\'s output: plan: "${{ needs.launchset.outputs.plan }}" (and add the launchset job to needs). On the CLI, pass --plan <json> or --plan @plan.json, or set LAUNCHSET_PLAN.';
 
 /**
  * Parse and validate the `plan` input (JSON from the `plan` output). Throws a
