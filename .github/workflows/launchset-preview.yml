@@ -1,0 +1,185 @@
+# launchset's own preview workflow: installable prereleases of the npm package. A push to a
+# `next/*` branch publishes `X.Y.Z-next.N` to the npm dist-tag `next` and creates a GitHub
+# pre-release (spec 9.9), so other demonsters repos can try a change with
+# `npm i @demonsters/launchset@next` before it is released. Nothing is committed, no changesets
+# are consumed and no marker or release tags are created.
+#
+#   plan     decides the version, build number and targets (and reserves the prerelease tag)
+#   build    one job per target: stamp -> verify -> build and publish
+#   comment  creates the GitHub pre-release
+#
+# Adapted from the generated template (`renderWorkflows` with actionRef "./action"):
+#   - launchset runs its own freshly built action, so every job that uses `./action` installs
+#     and builds it first (`action/dist` is not committed).
+#   - no `pull_request` trigger (and no fork notice): a label preview would build an npm package
+#     nobody can install, because PR and branch previews are never published to npm. Only
+#     `next/*` pushes (prereleases) are. The GitHub Action is not previewed at all: the action
+#     repo's `v1` tag must only ever point at real releases.
+#   - the `npm` step replaces the template's example (the template's `workflow_dispatch` on
+#     another branch plans a `preview`-channel build and publishes nothing).
+#
+# npm auth: NPM_TOKEN, see the comment at the top of launchset-release.yml.
+name: Launchset preview
+
+on:
+  push:
+    branches:
+      - "next/*"
+  workflow_dispatch:
+    inputs:
+      targets:
+        description: >-
+          Comma-separated target names to build. Default: the preview targets from the launchset
+          config.
+        required: false
+        type: string
+
+# Prerelease branches must build every push, so they never cancel. Other runs (a manual run on
+# some other branch) are replaced by a newer one.
+concurrency:
+  group: launchset-preview-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref_name, 'next/') }}
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    name: Plan preview
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      plan: ${{ steps.plan.outputs.plan }}
+      version: ${{ steps.plan.outputs.version }}
+      build-number: ${{ steps.plan.outputs.build-number }}
+      channel: ${{ steps.plan.outputs.channel }}
+      release-sha: ${{ steps.plan.outputs.release-sha }}
+    steps:
+      # The App token is needed to push the reservation tag on prerelease branches.
+      - id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.LAUNCHSET_APP_ID }}
+          private-key: ${{ secrets.LAUNCHSET_APP_PRIVATE_KEY }}
+      - uses: actions/checkout@v5
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          fetch-depth: 0
+      # Build the local action.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 26
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build:action
+      - id: plan
+        uses: ./action
+        with:
+          command: preview-plan
+          token: ${{ steps.app-token.outputs.token }}
+          # Only set by workflow_dispatch: restricts the preview to these targets.
+          target: ${{ inputs.targets }}
+
+  build:
+    name: Preview ${{ matrix.target }}
+    needs: plan
+    if: needs.plan.result == 'success' && needs.plan.outputs.matrix != '' && needs.plan.outputs.matrix != '[]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # id-token: write # for npm trusted publishing instead of an NPM_TOKEN (see launchset-release.yml)
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.plan.outputs.release-sha || github.sha }}
+      # Build the local action, and install the dependencies the build steps need.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 26
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build:action
+
+      # Writes the preview version and build number into this target's files (this checkout only).
+      - id: stamp
+        uses: ./action
+        with:
+          command: stamp
+          target: ${{ matrix.target }}
+          plan: ${{ needs.plan.outputs.plan }}
+
+      # Has this prerelease version already been published (a re-run of a failed job)?
+      - id: verify
+        uses: ./action
+        with:
+          command: verify
+          target: ${{ matrix.target }}
+          plan: ${{ needs.plan.outputs.plan }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # ---------------------------------------------------------------------------------------
+      # --- npm (npm package) ---
+      # Publishes prereleases only (`steps.stamp.outputs.channel` is `prerelease` on a `next/*`
+      # branch, `preview` for a manual run elsewhere). The dist-tag is the preid, `next`.
+      - run: pnpm build
+        if: matrix.target == 'npm' && steps.stamp.outputs.channel == 'prerelease' && steps.verify.outputs.already-published != 'true'
+      # Set up after `pnpm install`: its .npmrc would send a placeholder token to the registry.
+      - uses: actions/setup-node@v5
+        if: matrix.target == 'npm' && steps.stamp.outputs.channel == 'prerelease' && steps.verify.outputs.already-published != 'true'
+        with:
+          node-version: 26
+          registry-url: https://registry.npmjs.org
+      - name: Publish npm
+        if: matrix.target == 'npm' && steps.stamp.outputs.channel == 'prerelease' && steps.verify.outputs.already-published != 'true'
+        run: npm publish --tag ${{ steps.stamp.outputs.dist-tag }}
+        env:
+          # Or use npm trusted publishing: give this job `id-token: write` and drop the token.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # ---------------------------------------------------------------------------------------
+
+  comment:
+    name: Preview comment
+    needs: [plan, build]
+    # Also when a build failed: the pre-release shows which target failed. Not when the plan
+    # was skipped.
+    if: always() && needs.plan.result != 'skipped'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read # lists the jobs of this run, for the per-target links
+      contents: read
+    steps:
+      # On prerelease branches this job creates the GitHub pre-release, which needs the App.
+      - id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.LAUNCHSET_APP_ID }}
+          private-key: ${{ secrets.LAUNCHSET_APP_PRIVATE_KEY }}
+      - uses: actions/checkout@v5
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          fetch-depth: 0
+      # Build the local action.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 26
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build:action
+      - uses: ./action
+        with:
+          command: preview-comment
+          token: ${{ steps.app-token.outputs.token }}
+          plan: ${{ needs.plan.outputs.plan }}
+        env:
+          # The default token (actions: read) reads the job results; the App token writes.
+          GITHUB_TOKEN: ${{ github.token }}

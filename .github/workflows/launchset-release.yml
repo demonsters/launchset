@@ -1,0 +1,255 @@
+# launchset's own release workflow. A push to main (or a maintenance branch) either updates the
+# release PR or, when the release PR was just merged, builds and ships both targets:
+#
+#   npm     `@demonsters/launchset`, published to the private @demonsters scope on npm
+#   action  the bundled GitHub Action, published to the public repo demonsters/launchset-action
+#
+#   launchset  decides the mode (publish, ship, release-pr, none) and the plan
+#   build      one job per target: stamp -> verify -> build and publish -> mark
+#   finalize   creates the release tag and the GitHub Release once both targets shipped
+#
+# Adapted from the generated template (`renderWorkflows` with actionRef "./action"):
+#   - launchset runs its own freshly built action, so every job that uses `./action` installs
+#     and builds it first (`action/dist` is not committed).
+#   - the `npm` and `action` build steps below replace the template's examples.
+#
+# Secrets (names only; values live in the repo or org settings):
+#   LAUNCHSET_APP_ID, LAUNCHSET_APP_PRIVATE_KEY  the "launchset" GitHub App (org secrets). It
+#                                                 must also be installed on demonsters/launchset-action.
+#   NPM_TOKEN                                     npm granular access token for @demonsters/launchset.
+#
+# npm auth: a token, not trusted publishing (OIDC). Reasons:
+#   1. npm trusted publishers are configured on the package's settings page, so the package must
+#      already exist: the first publish (1.0.0) needs a token anyway.
+#   2. `verify: ["npm"]` reads the registry. The package is private, so that read needs a token
+#      too; OIDC only authenticates `npm publish`. Without it, verify would see a 404 for an
+#      already published version, think it is new, and the re-run would fail on publish.
+#   3. Trusted publishing from a private repo for a private package works as far as we know, but
+#      it can't be tried before the first publish, and it adds no provenance there.
+# To switch later (once 1.0.0 is on npm): add the trusted publisher in the package settings on
+# npmjs.com (repository demonsters/launchset, workflow launchset-release.yml, no environment),
+# give the `build` job `id-token: write`, and remove NODE_AUTH_TOKEN from the publish step. Keep
+# a read-only token in NPM_TOKEN for the verify step. The same applies to launchset-preview.yml.
+name: Launchset release
+
+on:
+  push:
+    branches:
+      - "main"
+      - "release/*.x"
+  workflow_dispatch:
+    inputs:
+      target:
+        description: >-
+          Manual target to ship (for example an iOS app that is not built on every release).
+          Leave empty to retry an unfinished release of the current version.
+        required: false
+        type: string
+      version:
+        description: >-
+          Released version to ship, used together with target. Default: the latest release on
+          this branch.
+        required: false
+        type: string
+
+concurrency:
+  group: launchset-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  launchset:
+    name: Plan release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      mode: ${{ steps.launchset.outputs.mode }}
+      matrix: ${{ steps.launchset.outputs.matrix }}
+      plan: ${{ steps.launchset.outputs.plan }}
+      version: ${{ steps.launchset.outputs.version }}
+      build-number: ${{ steps.launchset.outputs.build-number }}
+      channel: ${{ steps.launchset.outputs.channel }}
+      release-sha: ${{ steps.launchset.outputs.release-sha }}
+    steps:
+      # A GitHub App token, not GITHUB_TOKEN: events caused by GITHUB_TOKEN do not trigger other
+      # workflows, so the release PR would never run its checks.
+      - id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.LAUNCHSET_APP_ID }}
+          private-key: ${{ secrets.LAUNCHSET_APP_PRIVATE_KEY }}
+      - uses: actions/checkout@v5
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          fetch-depth: 0
+      # Build the local action.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 26
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build:action
+      - id: launchset
+        uses: ./action
+        with:
+          command: release
+          token: ${{ steps.app-token.outputs.token }}
+          target: ${{ inputs.target }}
+          version: ${{ inputs.version }}
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: launchset
+    # Only for publish and ship, and only when there is something to build (a matrix without
+    # values is an error in GitHub Actions).
+    if: contains(fromJSON('["publish","ship"]'), needs.launchset.outputs.mode) && needs.launchset.outputs.matrix != '[]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # id-token: write # for npm trusted publishing instead of an NPM_TOKEN (see the top)
+    strategy:
+      # One failing target must not stop the others: re-run the failed job afterwards.
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.launchset.outputs.matrix) }}
+    steps:
+      # Always build the release commit, never a later one.
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.launchset.outputs.release-sha }}
+      # Build the local action, and install the dependencies the build steps need.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 26
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build:action
+
+      # Writes the version and build number into this target's files (in this checkout only).
+      # The root package.json gets the release version too.
+      - id: stamp
+        uses: ./action
+        with:
+          command: stamp
+          target: ${{ matrix.target }}
+          plan: ${{ needs.launchset.outputs.plan }}
+
+      # Checks the registry for the npm target: has this version already been published?
+      # Sets `already-published`, which the npm steps below use to skip themselves. The action
+      # target has no check: scripts/publish-action.ts is idempotent by itself.
+      - id: verify
+        uses: ./action
+        with:
+          command: verify
+          target: ${{ matrix.target }}
+          plan: ${{ needs.launchset.outputs.plan }}
+        env:
+          # Credentials for the npm check (secret, referenced by name only). The package is
+          # private, so the registry only answers with a token.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # ---------------------------------------------------------------------------------------
+      # --- npm (npm package) ---
+      # Builds and publishes @demonsters/launchset (skipped when `verify` finds this version on
+      # the registry). The dist-tag is `latest` for base-branch releases, so a hotfix on a
+      # maintenance branch does not move `latest`. No --access flag: the package stays private.
+      - run: pnpm build
+        if: matrix.target == 'npm' && steps.verify.outputs.already-published != 'true'
+      # Set up after `pnpm install`: its .npmrc would send a placeholder token to the registry.
+      - uses: actions/setup-node@v5
+        if: matrix.target == 'npm' && steps.verify.outputs.already-published != 'true'
+        with:
+          node-version: 26
+          registry-url: https://registry.npmjs.org
+      - name: Publish npm
+        if: matrix.target == 'npm' && steps.verify.outputs.already-published != 'true'
+        run: npm publish --tag ${{ steps.stamp.outputs.dist-tag }}
+        env:
+          # Or use npm trusted publishing: give this job `id-token: write` and drop the token.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # --- action (the bundled GitHub Action) ---
+      # Publishes to the public repo demonsters/launchset-action: commit the bundle, tag
+      # v{version}, move the major tag (v1). Idempotent: if v{version} exists with the same
+      # files, nothing happens; with different files the step fails.
+      # The App token is minted for that one repository, with contents: write only. It needs the
+      # launchset App to be installed on demonsters/launchset-action.
+      - id: action-repo-token
+        if: matrix.target == 'action'
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.LAUNCHSET_APP_ID }}
+          private-key: ${{ secrets.LAUNCHSET_APP_PRIVATE_KEY }}
+          owner: demonsters
+          repositories: launchset-action
+          permission-contents: write
+      - uses: actions/checkout@v5
+        if: matrix.target == 'action'
+        with:
+          repository: demonsters/launchset-action
+          token: ${{ steps.action-repo-token.outputs.token }}
+          path: launchset-action-repo
+          # All history and tags: the script looks for an existing v{version}.
+          fetch-depth: 0
+      - name: Publish the action
+        if: matrix.target == 'action'
+        env:
+          VERSION: ${{ steps.stamp.outputs.version }}
+        run: |
+          node scripts/build-action.ts --out launchset-action-repo
+          node scripts/publish-action.ts --repo-dir launchset-action-repo --version "$VERSION"
+      # ---------------------------------------------------------------------------------------
+
+      # Records that this target shipped (the marker tag). Runs after the steps above succeeded,
+      # and also when the version was already published. The token is minted here, not at the
+      # start of the job, because it expires after an hour.
+      - id: mark-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.LAUNCHSET_APP_ID }}
+          private-key: ${{ secrets.LAUNCHSET_APP_PRIVATE_KEY }}
+      - uses: ./action
+        with:
+          command: mark
+          target: ${{ matrix.target }}
+          plan: ${{ needs.launchset.outputs.plan }}
+          token: ${{ steps.mark-token.outputs.token }}
+
+  finalize:
+    name: Finalize release
+    needs: [launchset, build]
+    # Runs even when a build failed, to report which targets are missing.
+    if: always() && contains(fromJSON('["publish","ship"]'), needs.launchset.outputs.mode)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.LAUNCHSET_APP_ID }}
+          private-key: ${{ secrets.LAUNCHSET_APP_PRIVATE_KEY }}
+      - uses: actions/checkout@v5
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          ref: ${{ needs.launchset.outputs.release-sha }}
+          fetch-depth: 0
+      # Build the local action.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 26
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build:action
+      # Creates the release tag and the GitHub Release when every auto target has shipped.
+      - uses: ./action
+        with:
+          command: finalize
+          token: ${{ steps.app-token.outputs.token }}
+          plan: ${{ needs.launchset.outputs.plan }}

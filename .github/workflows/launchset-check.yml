@@ -1,0 +1,46 @@
+# launchset's own PR check: every PR needs a changeset (or `bump: none`), unless it comes from a
+# bot or is the release PR. It keeps one sticky comment on the PR.
+#
+# Adapted from the generated template (`renderWorkflows` with actionRef "./action"). The
+# difference: launchset runs its own freshly built action, so the job installs and builds it
+# first (`action/dist` is not committed). test/dogfood checks that the file stays in line
+# with the template.
+name: Launchset check
+
+on:
+  pull_request:
+    # `edited` and the label events matter: they re-run the check when the PR description or
+    # labels change.
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+    # The base branch, the maintenance branches (hotfixes) and the prerelease branches.
+    branches:
+      - "main"
+      - "release/*.x"
+      - "next/*"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  check:
+    name: Changeset check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # The check compares against the base branch and the last release tag.
+          fetch-depth: 0
+      # Build the local action (launchset checks itself with the code of the PR).
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 26
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build:action
+      - uses: ./action
+        with:
+          command: check
+          # The check only reads and comments, so the default token is enough.
+          token: ${{ secrets.GITHUB_TOKEN }}
