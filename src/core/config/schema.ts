@@ -509,7 +509,10 @@ function semanticIssues(config: ResolvedConfig): ConfigIssue[] {
     }
     if (target.type === "ios") {
       if (target.verify.includes("store") && !target.store) {
-        issues.push({ path: `${base}.store.appId`, message: 'verify: ["store"] needs store.appId' });
+        issues.push({
+          path: `${base}.store.appId`,
+          message: 'verify: ["store"] needs store.appId',
+        });
       }
       if (target.source.kind === "plist" && target.source.files.length === 0) {
         issues.push({
@@ -543,14 +546,23 @@ export function resolveConfig(input: unknown, options: { file?: string } = {}): 
   const parsed = configSchema.safeParse(input);
   if (!parsed.success) {
     throw new ConfigError(
-      parsed.error.issues.map((issue) => ({ path: pathToString(issue.path), message: issue.message })),
+      parsed.error.issues.map((issue) => ({
+        path: pathToString(issue.path),
+        message: issue.message,
+      })),
       options.file,
     );
   }
   const data = parsed.data;
   const preview: ResolvedPreview =
     data.preview === false
-      ? { enabled: false, label: "launchset:preview", rebuildOnPush: true, branches: [], targets: "all" }
+      ? {
+          enabled: false,
+          label: "launchset:preview",
+          rebuildOnPush: true,
+          branches: [],
+          targets: "all",
+        }
       : {
           enabled: true,
           ...data.preview,
