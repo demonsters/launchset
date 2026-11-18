@@ -46,16 +46,17 @@ Adjust the order if you find a better one, but keep the dependencies.
 | # | Phase | Spec | Model |
 |---|---|---|---|
 | 0 | Repo setup: pnpm, TS strict, Biome, vitest, bundler, CI workflow for launchset itself, folder layout | 13, 14 | you or sonnet |
-| 1 | Core: config schema + loader, changeset parse/write, bump + next-free version, maintenance rules, preview versions, build-number strategies, changelog rendering, plan/state logic | 4, 5, 7.1–7.2, 8, 12, 9.3 logic, 9.6 | opus |
+| 1 | Core: config schema + loader, changeset parse/write, bump + next-free version, maintenance rules, preview and prerelease versions, build-number strategies, changelog rendering, Docker tag template rendering, plan/state logic incl. manual targets (`ship` mode) | 4, 5, 6.1 templates, 7.1–7.2, 8, 12, 9.3 logic, 9.6, 9.8 | opus |
 | 2 | Stampers: Android (gradle, kts, properties), iOS (pbxproj, plist, xcconfig), Expo, Capacitor aliases, json/yaml/regex, consistency check. Can be split into two parallel agents (Android + generic / iOS + Expo) | 6 | sonnet |
-| 3 | Git wrapper + GitHub integration: release PR, sticky comments, tags, releases, bot-PR detection, finalize, supersede, backport | 9.1–9.6 | opus |
+| 3 | Git wrapper + GitHub integration: release PR, sticky comments, tags, releases, bot-PR detection, finalize, supersede, backport, manual-target Release updates, prerelease tag reservation | 9.1–9.6, 9.8, 9.9 | opus |
 | 4 | Store and registry verification clients | 7.3, 7.4 | opus |
-| 5 | CLI commands incl. `init` and `hotfix` | 11 | sonnet |
+| 5 | CLI commands incl. `hotfix` and `ship` | 11 | sonnet |
+| 5b | `init`: detection (incl. existing release machinery), canonical version, retiring conflicting workflows/scripts, `--detect --json` / `--decide` | 11.1 | opus |
 | 6 | GitHub Action (bundled single file) + workflow templates | 9.3, 9.7, 10 | sonnet |
-| 7 | Previews end to end (preview-plan, docker preview tags, preview comment) | 9.7 | sonnet |
+| 7 | Previews and prerelease branches end to end (preview-plan, docker preview/prerelease tags, prerelease tag + GitHub pre-release, preview comment) | 9.7, 9.9 | sonnet |
 | 8 | End-to-end lifecycle tests with temporary git repos | 14 | sonnet |
 | 9 | Dogfooding: launchset's own launchset config and release workflows | 15 | sonnet |
-| 10 | Docs site (Astro Starlight) and agent skill | 16 | sonnet, reviewed by opus |
+| 10 | Docs site (Astro Starlight), agent skill and adoption skill | 16 | sonnet, reviewed by opus |
 | 11 | Final full-codebase review and refactor | all | you (opus) |
 
 ### Phase 10: docs and skill
