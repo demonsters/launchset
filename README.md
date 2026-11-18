@@ -1,4 +1,6 @@
-# launchset
+<p align="center"><img src="assets/logo.svg" alt="" width="120"></p>
+
+<h1 align="center">launchset</h1>
 
 Changesets-style releases for repos where **one version** drives **many targets**: Docker images, Android, iOS and web apps, built from one repo and released together.
 

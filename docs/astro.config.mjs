@@ -33,6 +33,10 @@ export default defineConfig({
   integrations: [
     starlight({
       title: "launchset",
+      logo: {
+        light: "./src/assets/logo-mark-light.svg",
+        dark: "./src/assets/logo-mark-dark.svg",
+      },
       description:
         "Changesets-style releases for repos where one version drives many targets: Docker images, Android, iOS and web apps.",
       social: [
