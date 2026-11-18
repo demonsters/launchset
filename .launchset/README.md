@@ -18,6 +18,6 @@ Add offline mode to the mobile app.
 
 Create one with `npx @demonsters/launchset add`, or write the file by hand.
 
-launchset collects the changesets into a release PR (`Release vX.Y.Z`). Merging that PR releases every target. Don't edit version numbers, build numbers or `CHANGELOG.md` by hand, and don't create `v*` or `launchset/*` tags.
+launchset collects the changesets into a release PR (`Release vX.Y.Z`). Merging that PR releases every target. Don't edit version numbers, build numbers or `CHANGELOG.md` by hand, and don't create `v*` or `launchset/*` tags (or whatever `tags` in `launchset.config.*` sets).
 
 See the launchset docs for more: https://github.com/demonsters/launchset/tree/main/docs

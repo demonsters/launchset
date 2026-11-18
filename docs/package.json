@@ -1,0 +1,22 @@
+{
+  "name": "docs",
+  "type": "module",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "generate": "node scripts/generate.ts",
+    "check:generated": "node scripts/generate.ts --check",
+    "predev": "node scripts/generate.ts",
+    "dev": "astro dev",
+    "start": "astro dev",
+    "prebuild": "node scripts/generate.ts",
+    "build": "astro build",
+    "preview": "astro preview",
+    "astro": "astro"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "^0.43.1",
+    "astro": "^7.3.6",
+    "sharp": "^0.35.3"
+  }
+}
