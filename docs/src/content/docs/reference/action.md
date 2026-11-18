@@ -117,7 +117,7 @@ Which outputs a command sets is in the description. Outputs that don't apply are
 | `LAUNCHSET_PLAY_SERVICE_ACCOUNT_JSON` | `verify` | Service account key for Google Play. `verify` accepts it raw or base64-encoded. Store it raw if fastlane `supply` uses the same secret. |
 | `LAUNCHSET_ASC_KEY_ID`, `LAUNCHSET_ASC_ISSUER_ID`, `LAUNCHSET_ASC_PRIVATE_KEY` | `verify` | App Store Connect API key. `verify` accepts the `.p8` raw or base64-encoded. Store it raw if fastlane `key_content` uses the same secret. |
 | `LAUNCHSET_REGISTRY_USERNAME`, `LAUNCHSET_REGISTRY_PASSWORD`, `LAUNCHSET_REGISTRY_HOST` | `verify` | Registry credentials, for one registry (`LAUNCHSET_REGISTRY_HOST`, default the first image's registry). The Docker config file is used for other registries. |
-| `LAUNCHSET_NPM_TOKEN`, `NODE_AUTH_TOKEN` | `verify` | Token for private npm packages. The first wins. Without one, inside GitHub Actions with `id-token: write`, `verify` uses npm trusted publishing (OIDC). |
+| `LAUNCHSET_NPM_TOKEN`, `NODE_AUTH_TOKEN` | `verify` | Token for private npm packages (a read-only token is enough). The first wins. npm trusted publishing can't replace it: its tokens can only publish. |
 | `LAUNCHSET_TOKEN`, `GITHUB_TOKEN` | CLI | GitHub token when `--token` isn't given. |
 | `LAUNCHSET_PLAN` | CLI | The plan, when `--plan` isn't given. |
 | `LAUNCHSET_DEBUG` | CLI | Print stack traces. |

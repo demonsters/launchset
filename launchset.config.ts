@@ -23,10 +23,12 @@ export default {
   targets: {
     npm: {
       type: "custom",
-      // The root package.json: its name and the registry come from there (spec 7.5). The
-      // package is private (`access: restricted`), so the workflow gives `verify` a token.
+      // The root package.json: its name and the registry come from there (spec 7.5).
       npm: { package: "package.json" },
-      verify: ["npm"],
+      // No `verify`: the package is private, and the workflow publishes with npm trusted
+      // publishing, whose tokens can't read packages. Without a read token, `verify` can't tell
+      // whether a version is published. The publish step is idempotent instead: it treats
+      // "already published" as done, see launchset-release.yml.
     },
     action: {
       type: "custom",

@@ -65,10 +65,13 @@ npm: {
 - The version or the package doesn't exist (404): `false`.
 - Any other error (auth, network) fails the step. It is never treated as "not published".
 
-Private packages need read access. Two ways:
+A private package needs a token that can read it: set `LAUNCHSET_NPM_TOKEN` or `NODE_AUTH_TOKEN` (the first wins) for `verify`. Use a read-only granular token. Without one, npm answers 404 for a private package, and `verify` reports it as not published.
 
-- **npm trusted publishing (recommended, no token to rotate).** On npmjs.com, open the package's **Settings → Trusted publishing**, add GitHub Actions with your repository and the release workflow's file name, and give the build job `permissions: id-token: write`. `npm publish` then authenticates through the workflow's OIDC token, and `verify` exchanges the same token for a short-lived read token. Trusted publishing can only be set up for a package that exists, so publish the first version once by hand (or with a token).
-- **A token:** set `LAUNCHSET_NPM_TOKEN` or `NODE_AUTH_TOKEN` (the first wins) for `verify`, and `NODE_AUTH_TOKEN` for `npm publish`.
+`npm publish` can use npm trusted publishing instead of a token. On npmjs.com, open the package's **Settings → Trusted publishing**, add GitHub Actions with your repository and the release workflow's file name, and give the build job `permissions: id-token: write`. Trusted publishing can only be set up for a package that exists, so publish the first version once by hand (or with a token).
+
+:::caution
+Trusted publishing only covers publishing. Its short-lived tokens can't read a package, so `verify` can't use them: for a private package, `verify` still needs a read token. If you don't want any npm secret, leave `verify` off the target and make the publish step treat "already published" as success. A re-run then goes straight on to `mark`. launchset's own [release workflow](https://github.com/demonsters/launchset/blob/main/.github/workflows/launchset-release.yml) does this.
+:::
 
 Publish with the `dist-tag` output, so a hotfix doesn't move `latest`:
 
@@ -80,7 +83,7 @@ Publish with the `dist-tag` output, so a hotfix doesn't move `latest`:
     registry-url: https://registry.npmjs.org
 - run: npm publish --tag ${{ steps.stamp.outputs.dist-tag }}
   if: matrix.target == 'npm' && steps.verify.outputs.already-published != 'true'
-  # With a token instead of trusted publishing:
+  # With a token instead of trusted publishing (verify needs its own read token either way):
   # env:
   #   NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 ```

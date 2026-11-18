@@ -5,7 +5,7 @@
 # are consumed and no marker or release tags are created.
 #
 #   plan     decides the version, build number and targets (and reserves the prerelease tag)
-#   build    one job per target: stamp -> verify -> build and publish
+#   build    one job per target: stamp -> build and publish
 #   comment  creates the GitHub pre-release
 #
 # Adapted from the generated template (`renderWorkflows` with actionRef "./action"):
@@ -90,7 +90,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      # npm trusted publishing (OIDC): `npm publish` and `launchset verify` get short-lived tokens.
+      # npm trusted publishing (OIDC): `npm publish` gets a short-lived token.
       id-token: write
     strategy:
       fail-fast: false
@@ -117,29 +117,40 @@ jobs:
           target: ${{ matrix.target }}
           plan: ${{ needs.plan.outputs.plan }}
 
-      # Has this prerelease version already been published (a re-run of a failed job)?
-      - id: verify
-        uses: ./action
-        with:
-          command: verify
-          target: ${{ matrix.target }}
-          plan: ${{ needs.plan.outputs.plan }}
+      # No `verify` step: trusted-publishing tokens can't read the private package (see
+      # launchset-release.yml). The publish step is idempotent instead.
 
       # ---------------------------------------------------------------------------------------
       # --- npm (npm package) ---
       # Publishes prereleases only (`steps.stamp.outputs.channel` is `prerelease` on a `next/*`
       # branch, `preview` for a manual run elsewhere). The dist-tag is the preid, `next`.
       - run: pnpm build
-        if: matrix.target == 'npm' && steps.stamp.outputs.channel == 'prerelease' && steps.verify.outputs.already-published != 'true'
+        if: matrix.target == 'npm' && steps.stamp.outputs.channel == 'prerelease'
       # Set up after `pnpm install`: its .npmrc would send a placeholder token to the registry.
       - uses: actions/setup-node@v5
-        if: matrix.target == 'npm' && steps.stamp.outputs.channel == 'prerelease' && steps.verify.outputs.already-published != 'true'
+        if: matrix.target == 'npm' && steps.stamp.outputs.channel == 'prerelease'
         with:
           node-version: 26
           registry-url: https://registry.npmjs.org
       - name: Publish npm
-        if: matrix.target == 'npm' && steps.stamp.outputs.channel == 'prerelease' && steps.verify.outputs.already-published != 'true'
-        run: npm publish --tag ${{ steps.stamp.outputs.dist-tag }}
+        if: matrix.target == 'npm' && steps.stamp.outputs.channel == 'prerelease'
+        # Idempotent, like in launchset-release.yml: a re-run after this version reached npm
+        # counts as done.
+        env:
+          DIST_TAG: ${{ steps.stamp.outputs.dist-tag }}
+        run: |
+          set +e
+          output=$(npm publish --tag "$DIST_TAG" 2>&1)
+          status=$?
+          set -e
+          echo "$output"
+          if [ "$status" -ne 0 ]; then
+            if grep -qiE "cannot publish over the previously published versions|EPUBLISHCONFLICT" <<<"$output"; then
+              echo "::notice::This version of @demonsters/launchset is already on npm; nothing to publish."
+              exit 0
+            fi
+            exit "$status"
+          fi
       # ---------------------------------------------------------------------------------------
 
   comment:
