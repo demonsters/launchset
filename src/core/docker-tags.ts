@@ -33,11 +33,6 @@ export interface DockerTagContext {
   createdAt: string;
 }
 
-/** Placeholders used by a template, in order. */
-export function templatePlaceholders(template: string): string[] {
-  return Array.from(template.matchAll(PLACEHOLDER), (m) => m[1] as string);
-}
-
 /** Placeholder values for a run; a missing key means "no value in this run". */
 export function dockerTagValues(
   ctx: DockerTagContext,

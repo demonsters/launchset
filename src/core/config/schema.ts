@@ -120,10 +120,6 @@ const fileEntrySchema = z.discriminatedUnion("kind", [
 ]);
 
 export type FileEntry = z.output<typeof fileEntrySchema>;
-export type JsonFileEntry = z.output<typeof jsonFileSchema>;
-export type YamlFileEntry = z.output<typeof yamlFileSchema>;
-export type RegexFileEntry = z.output<typeof regexFileSchema>;
-export type ImageFileEntry = z.output<typeof imageFileSchema>;
 
 // ---------------------------------------------------------------------------
 // Targets (spec 6)
@@ -420,7 +416,6 @@ export type ResolvedDockerTarget = ResolvedCommon &
 export type ResolvedWebTarget = ResolvedCommon &
   Omit<Parsed<"web">, keyof ResolvedCommon> & { verify: never[] };
 export type ResolvedAndroidTarget = ResolvedCommon & Omit<Parsed<"android">, keyof ResolvedCommon>;
-export type AndroidSource = Parsed<"android">["source"];
 type ParsedIosSource = Parsed<"ios">["source"];
 /** iOS source with plist `file`/`files` normalized to `files`. */
 export type IosSource =

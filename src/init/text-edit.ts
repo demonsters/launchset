@@ -6,7 +6,6 @@
 import { isSeq, type Node, type Pair, type Scalar, type YAMLSeq } from "yaml";
 import { detectEol, lineEnd, lineStart } from "../core/text.ts";
 import type { Splice } from "../platforms/types.ts";
-import { linesOf } from "./fs.ts";
 
 /** Collects splices; removals that contain others win, partial overlaps are a bug. */
 export class SpliceSet {
@@ -105,14 +104,6 @@ export function jsonFormatting(text: string): {
     tabSize: indent.includes("\t") ? 1 : indent.length,
     eol: detectEol(text),
   };
-}
-
-/** Removes 1-based line numbers from a text file. */
-export function removeLines(text: string, numbers: Iterable<number>, edits: SpliceSet): void {
-  const wanted = new Set(numbers);
-  for (const line of linesOf(text)) {
-    if (wanted.has(line.number)) edits.remove(line.start, lineEnd(text, line.start));
-  }
 }
 
 /**

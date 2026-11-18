@@ -152,13 +152,6 @@ export async function readChangesetFiles(
   return files.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 }
 
-/** The valid changesets; throws `invalid-changeset` listing every file that can't be parsed. */
-export function requireValidChangesets(files: readonly ChangesetFile[]): Changeset[] {
-  const error = invalidChangesetsError(invalidChangesetFiles(files));
-  if (error) throw error;
-  return validChangesets(files);
-}
-
 /** The `invalid-changeset` error for unparsable files, or undefined when there are none. */
 export function invalidChangesetsError(
   files: readonly { path: string; error: string }[],
@@ -219,11 +212,6 @@ export async function tryResolveBranch(context: FlowContext): Promise<string | u
   }
 }
 
-/** The event payload's `inputs` (workflow_dispatch), as strings. */
-export function dispatchInputs(context: FlowContext): Record<string, string> {
-  return eventInfo(context)?.inputs ?? {};
-}
-
 export interface ReleaseEventOptions {
   event?: ReleaseEvent;
   target?: string;
@@ -243,7 +231,7 @@ export function releaseEventFor(
   if (options.event) return options.event;
   const dispatch = context.event?.name === "workflow_dispatch";
   if (!dispatch && !options.target) return { kind: "push" };
-  const inputs = dispatch ? dispatchInputs(context) : {};
+  const inputs = dispatch ? (eventInfo(context)?.inputs ?? {}) : {};
   const event: ReleaseEvent = { kind: "dispatch" };
   const target = options.target || inputs.target;
   const version = options.version || inputs.version;
