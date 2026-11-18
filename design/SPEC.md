@@ -3,7 +3,8 @@
 Status: agreed design, ready to build. Last updated 2026-11-18.
 
 Package: `@demonsters/launchset` (private npm package, demonsters org).
-Repo: https://github.com/demonsters/launchset (private). The CLI, the GitHub Action, the docs site and the agent skill all live in this one repo.
+Repo: https://github.com/demonsters/launchset (private). The CLI, the GitHub Action source, the docs site and the agent skills live in this repo.
+Action: https://github.com/demonsters/launchset-action (**public**). It contains only the released, bundled action (section 10), so any repo in any org can use it without access settings. launchset may be open-sourced later; the public bundle already makes the core readable, which is accepted.
 
 ---
 
@@ -32,7 +33,6 @@ Developers describe each change in a small changeset file in their PR. Commit me
 - Expo OTA updates / `runtimeVersion` handling: issue [#1](https://github.com/demonsters/launchset/issues/1).
 - Store-ready release notes per platform: issue [#2](https://github.com/demonsters/launchset/issues/2). Unknown changeset frontmatter keys must be kept (not rejected) so #2 can add a field later.
 - Running the actual builds or store uploads.
-- Repos outside the demonsters org: the private action and the GitHub App only work there.
 - Build services that run outside GitHub Actions (Xcode Cloud, Codemagic). Expo EAS is covered by the `eas` build-number strategy (7.2). A generic `external` strategy can be added when a project needs it.
 
 ---
@@ -338,7 +338,7 @@ For `docker` targets: check if the **verify tag** already exists. That is the fi
 
 Events caused by the default `GITHUB_TOKEN` don't trigger other workflows. A release PR opened with it would never run CI (so required checks block merging) and tags pushed with it wouldn't trigger tag workflows. So:
 
-- The demonsters org has a **GitHub App** ("launchset"), created by an org owner in the browser. The agent building launchset can't create it; the docs must explain how, step by step.
+- Each org that uses launchset has its own **GitHub App** (for demonsters: "launchset"), created by an org owner in the browser. The agent building launchset can't create it; the docs must explain how, step by step. Because the action is public (section 10), another org only needs to create its own App and secrets.
 - Repository permissions: **Contents: read & write**, **Pull requests: read & write**, Metadata: read (automatic). Verify during implementation whether anything else is needed (for example Issues: write for labels or comments, Checks: read) and document the final list.
 - Org secrets: `LAUNCHSET_APP_ID`, `LAUNCHSET_APP_PRIVATE_KEY`.
 - Workflows mint a token with `actions/create-github-app-token` and pass it to the launchset action as `token`.
@@ -374,7 +374,7 @@ Trigger: `push` to the base branch and maintenance branches, plus `workflow_disp
    - Title `Release v1.5.0`; body is the changelog section that will be added, plus a short "merging this releases all targets" note.
    - If the release PR is open and nothing is pending anymore, close it.
 3. **`ship`**: started by `workflow_dispatch` with a `target` input (9.8). Output: `matrix` with just that target, the `version` to ship (input, default the latest release on this branch), a fresh `build-number`, `channel=release`, and `release-sha` = the commit of `v{version}`. The `build` job runs as usual; `finalize` only updates the GitHub Release (9.8).
-4. **`none`**: nothing to do.
+4. **`none`**: nothing to do. If there are commits since the last release tag but **no** changeset is pending at all, the job summary shows a warning listing those commits ("N commits since v1.4.0 and no pending changeset: they won't be released"). There's no per-commit check: several commits often share one changeset.
 
 Normally a push is never both: a publish push is the release PR merge, which used up all changesets. If changesets do exist at a publish commit (for example someone pushed one straight to main together with a version change), publish wins and release-pr runs on the next push.
 
@@ -394,13 +394,13 @@ build:
     - uses: actions/checkout@v4
       with: { ref: "${{ needs.launchset.outputs.release-sha }}" }
     - id: stamp
-      uses: demonsters/launchset/action@v1
+      uses: demonsters/launchset-action@v1
       with: { command: stamp, target: "${{ matrix.target }}", plan: "${{ needs.launchset.outputs.plan }}" }
     - id: verify
-      uses: demonsters/launchset/action@v1
+      uses: demonsters/launchset-action@v1
       with: { command: verify, target: "${{ matrix.target }}", plan: "${{ needs.launchset.outputs.plan }}" }
     # --- your build + upload steps, e.g. per target with if: matrix.target == 'android' ---
-    - uses: demonsters/launchset/action@v1
+    - uses: demonsters/launchset-action@v1
       with: { command: mark, target: "${{ matrix.target }}", plan: "...", token: "${{ steps.app-token.outputs.token }}" }
 ```
 
@@ -507,14 +507,13 @@ A push to a matching branch runs the preview workflow (9.7), with these differen
 
 ## 10. The GitHub Action
 
-- Lives at `action/` in the launchset repo: `action/action.yml`, `runs.using: node24`, `main: dist/index.js`.
-- `dist/index.js` is a **single bundled file** that includes the CLI core and all dependencies, and is committed. CI in the launchset repo fails if `dist` is out of date. Consumer repos never install anything from npm.
-- Used as `demonsters/launchset/action@v1`.
-- Inputs: `command` (`check` | `release` | `stamp` | `verify` | `mark` | `finalize` | `preview-plan` | `preview-comment`), `token`, `target`, `version` (with `release` + `target`: ship a manual target, 9.8), `plan`, `working-directory`.
+- **Source** lives at `action/` in the launchset repo (`action/action.yml`, `action/src/index.ts`). The build produces `action/dist/index.js`: a **single bundled file** that includes the CLI core and all dependencies. It is a build output in the launchset repo (not committed there).
+- **Published** to the separate public repo `demonsters/launchset-action` by launchset's own release (section 15): a commit with `action.yml` at the repo root, `dist/index.js`, a README and a LICENSE, tagged `v1.2.3`, with the moving major tag `v1` updated. Consumer repos never install anything from npm.
+- Used as `demonsters/launchset-action@v1`. launchset's own workflows use the freshly built local action (`uses: ./action`), so they never depend on the public repo.
+- Inputs: `command` (`check` | `release` | `stamp` | `verify` | `mark` | `finalize` | `preview-plan` | `preview-comment` | `add`), `token`, `target`, `bump` and `message` (for `add`: write a changeset in a workflow, e.g. from a bot's workflow, without npm access), `version` (with `release` + `target`: ship a manual target, 9.8), `plan`, `working-directory`.
 - Outputs (depending on command): `mode` (`publish` | `ship` | `release-pr` | `none`), `matrix`, `plan`, `version`, `build-number`, `channel` (`release` | `prerelease` | `preview`), `release-sha`, `already-published`, `docker-tags`, `docker-labels`, `dist-tag` (npm dist-tag suggestion: `latest` for base-branch releases, `release-<major>.<minor>` on maintenance branches, `<preid>` for prereleases, `pr-<n>` / `<branchSlug>` for previews), `pr-number`.
 - Writes a readable job summary (`$GITHUB_STEP_SUMMARY`) for every command.
-- Versioning of launchset itself: tags `v1.2.3` plus a moving major tag `v1`.
-- Because the repo is private, other demonsters repos can only use the action after an org owner enables **Settings → Actions → General → Access → "Accessible from repositories in the 'demonsters' organization"**. Document this.
+- Versioning: the action repo's tags follow launchset's version (`v1.2.3`) plus a moving major tag `v1`.
 
 ---
 
@@ -528,7 +527,7 @@ Rules for every command: no interactive prompt when stdin isn't a TTY or `--yes`
 |---|---|
 | `launchset init` | Set up a repo (11.1). |
 | `launchset add` | Create a changeset. Interactive (bump + summary), or `--bump <type> --message <text>`. `--empty` = `bump: none`. Prints the created path. |
-| `launchset status` | Pending changesets, bump, next version, consistency check, last release, unfinished releases, last shipped version per manual target (9.8). `--json`. Exit code 1 with `--require-changeset` if none pending vs a base ref (`--since <ref>`). |
+| `launchset status` | Pending changesets, bump, next version, consistency check, last release, unfinished releases, last shipped version per manual target (9.8), and the "commits since the last release but no changeset" warning (9.3). `--json`. Exit code 1 with `--require-changeset` if none pending vs a base ref (`--since <ref>`). |
 | `launchset version` | Apply pending changesets locally (what the release PR commit does). For debugging and manual use. `--dry-run` prints the diff. |
 | `launchset plan` | Print the release plan (mode, matrix, version, build number) as JSON. `--preview` for preview mode. |
 | `launchset stamp --target <name>` | Write version + build number into the target's files. Accepts `--plan <json>` or `--version`/`--build-number`/`--channel`. |
@@ -537,7 +536,7 @@ Rules for every command: no interactive prompt when stdin isn't a TTY or `--yes`
 | `launchset ship --target <name>` | Prepare a manual target for a hand-made build of a released version: check HEAD is at `v{version}`, compute a build number, stamp (9.8). `--version` (default: latest release), `--force`, `--json`. |
 | `launchset finalize` | Create the release tag + GitHub Release when complete; handle supersede and backport. |
 | `launchset hotfix <major.minor>` | Create a maintenance branch (9.5). |
-| `launchset check` | Run the PR check logic (used by the action; also usable locally against a base ref). |
+| `launchset check` | Run the PR check logic (used by the action; also usable locally against a base ref). `--push`: for a pre-push hook on the base branch. It warns (exit 0) when commits since the last release exist and no changeset is pending at all, and never blocks. |
 
 The GitHub-facing commands work from the CLI too when given `GITHUB_TOKEN`/`--token` and repo info, but they're mainly called by the action.
 
@@ -575,7 +574,7 @@ The GitHub-facing commands work from the CLI too when given `GITHUB_TOKEN`/`--to
    - `--baseline` forces it.
 6. **Convert** existing `.changeset/*.md` (4.2). `launchset init --convert-only` runs only this step, e.g. on a Changesets pre-mode branch (9.9).
 7. **Agent skill**: offer to install `.claude/skills/launchset/SKILL.md` and add a short launchset section to `AGENTS.md` (create it if missing) for non-Claude agents.
-8. Print the manual steps that remain: GitHub App + secrets, store credential secrets, action access setting.
+8. Print the manual steps that remain: GitHub App + secrets, store credential secrets. Offer to add `launchset check --push` to an existing pre-push hook setup (simple-git-hooks, husky, lefthook) for repos that push straight to the base branch.
 
 `--yes` accepts all defaults; every question has a flag.
 
@@ -636,7 +635,7 @@ src/
 action/
   action.yml
   src/index.ts
-  dist/index.js  (committed bundle)
+  dist/index.js  (build output, published to demonsters/launchset-action, not committed)
 templates/
   workflows/     # used by init
 skills/
@@ -662,14 +661,14 @@ Keep `core/` free of I/O so it can be tested with plain inputs.
 - **Verify**: mocked Play, App Store Connect and registry responses incl. "already published" and "store is ahead"; registry verify uses the rendered verify tag (`v{version}` templates).
 - **init detection**: fixture repos with tag-triggered workflows, a Changesets pipeline, a version-sync script, a `v`-prefixed `docker/build-push-action`, mismatched versions where the root is lower (no lowering by default), and an unreleased root version (no baseline by default).
 - **End to end**: real temporary git repos with a local bare remote, running the CLI through a full lifecycle: init → add → version → plan → stamp → mark → finalize; a hotfix line; a superseded partial release; a preview; a manual target shipped by hand two releases later (`ship` → `mark --version`); a prerelease branch with two concurrent pushes (tag reservation retry) and its merge into main; `init --detect --json` followed by `init --yes --decide …` on fixture repos.
-- **launchset's own CI**: lint, typecheck, tests, `action/dist` up to date, docs build.
+- **launchset's own CI**: lint, typecheck, tests, action bundle builds and a smoke test that runs the local action (`uses: ./action`), docs build.
 
 ---
 
 ## 15. launchset releases itself
 
 launchset uses launchset (dogfooding):
-- Targets: `npm` (custom, root `package.json`; the workflow runs `npm publish` to the private `@demonsters` scope) and `action` (custom; the workflow moves the `v1` major tag to the release commit).
+- Targets: `npm` (custom, root `package.json`; the workflow runs `npm publish` to the private `@demonsters` scope) and `action` (custom; the workflow builds the bundle and publishes it to `demonsters/launchset-action`: commit, tag `v{version}`, move `v1`. It needs a token with write access to that repo, from the launchset App installed there).
 - npm auth for publishing: prefer npm trusted publishing (OIDC from GitHub Actions) if it works for a private package from a private repo; otherwise an `NPM_TOKEN` secret. Document which one was chosen.
 
 ---
@@ -691,7 +690,9 @@ For humans. Every command, flag, config option and output shown must match the c
 - Hotfixes and maintenance branches
 - Partial releases
 - Manual targets (shipping a store app on demand, `launchset ship`)
-- GitHub App setup (step by step, permissions, secrets, action access setting)
+- GitHub App setup (step by step, permissions, secrets; also for orgs other than demonsters)
+- Repos that push straight to the base branch (one changeset per change, not per commit; the release PR as the review point; the pre-push hook)
+- Bot PRs from your own workflows: write a changeset in the bot's workflow (the action's `add` command, or a hand-written `.launchset/*.md` file, with `bump: patch` or `bump: none`), and open the PR with an App token instead of `GITHUB_TOKEN`, so CI and `launchset-check` run on it
 - Workflow recipes (docker/build-push-action, fastlane for Play and TestFlight, Gradle, xcodebuild)
 - Setting up native store pipelines step by step: Apple certificates, provisioning profiles and the App Store Connect API key; the Play upload key and service account; which GitHub secrets to create and how to test them with a preview build. Written so a human can follow it with an agent guiding them (16.3)
 - Migrating from Changesets / moving an existing repo (`init`, `init --detect --json`, agent-assisted adoption with the adoption skill; retiring tag-triggered workflows and Changesets pipelines; Changesets pre mode → prerelease branches)
@@ -707,6 +708,7 @@ For AI agents working **in repos that use launchset** (not in the launchset repo
 - Every PR needs a changeset. Create it with `npx @demonsters/launchset add --bump <type> --message "<summary>"`, or write the file by hand (show the exact format) if the CLI isn't available (the package is private, so npm auth may be missing).
 - How to pick the bump: major (breaking for users or API clients), minor (new features), patch (fixes), none (no release needed: docs, CI, tests only).
 - How to write a good summary: user-facing, one line, past or present tense consistently, no PR number (launchset adds it).
+- When pushing straight to the base branch (no PR): make sure a changeset covers the work before pushing. One changeset per change, not per commit; edit an existing pending changeset if the work extends it.
 - Never edit version numbers, build numbers or `CHANGELOG.md` by hand; never create `v*` or `launchset/*` tags; never edit the release PR.
 - On a `release/X.Y.x` branch only patch or none.
 - Preview builds: add the `launchset:preview` label.
@@ -738,7 +740,7 @@ For AI agents moving an **existing repo** onto launchset. Repos will be migrated
 ## 17. Manual steps for the demonsters team (not for the building agent)
 
 1. Create the GitHub App, install it on the repos using launchset, add `LAUNCHSET_APP_ID` and `LAUNCHSET_APP_PRIVATE_KEY` as org secrets.
-2. Enable action access for org repos in `demonsters/launchset` settings (section 10).
+2. Create the public repo `demonsters/launchset-action` and install the App on it, so launchset's release can publish the action (sections 10, 15).
 3. Add store credentials as secrets where `verify: ["store"]` is used.
 4. Set up npm publishing auth for `@demonsters/launchset` (section 15).
 5. Decide where the docs site is hosted.
@@ -765,4 +767,6 @@ These weren't discussed explicitly; they follow from the agreed design. Change t
 - `init` retires conflicting release machinery (tag-triggered workflows, Changesets pipelines, tag scripts, version-sync scripts) instead of leaving it in place, because launchset's App-token tags would trigger it.
 - `init` defaults to the highest version it finds and never lowers a version or baselines an unreleased version without confirmation.
 - Prereleases are tagged previews (9.9): a stable `X.Y.Z-<preid>.N` version, a tag and a GitHub pre-release, but nothing committed and no changesets consumed. This replaces Changesets pre mode without its state file.
-- Repos outside the demonsters org and build services outside GitHub Actions (Xcode Cloud) are out of scope for v1.
+- Build services outside GitHub Actions (Xcode Cloud) are out of scope for v1.
+- The action is published to a separate public repo (`demonsters/launchset-action`), so other orgs can use it with their own GitHub App and no org access settings are needed.
+- Direct pushes to the base branch are fine. There's no per-commit check; launchset only warns when commits exist since the last release and no changeset is pending at all.

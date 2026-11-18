@@ -75,13 +75,13 @@ When everything is built:
 1. **Review the whole codebase** against the spec, section by section. Make a checklist from the spec and tick off each requirement with the file that implements it and the test that covers it. Anything missing gets built or recorded.
 2. **Correctness review**: hunt for bugs in the risky parts (plan/state machine, version calculation, tag handling, text-preserving edits, auth). If the `/code-review` skill is available, run it at `high` on the full branch as an extra check.
 3. **Refactor pass**: remove duplication, dead code and leftover TODOs; make naming consistent; check module boundaries (`core/` stays free of I/O); simplify where possible. If the `/simplify` skill is available, use it. Keep all tests green after each step.
-4. **Verify from scratch**: fresh clone of the branch → `pnpm install` → `pnpm lint && pnpm typecheck && pnpm test` → build → `action/dist` up to date → docs build.
+4. **Verify from scratch**: fresh clone of the branch → `pnpm install` → `pnpm lint && pnpm typecheck && pnpm test` → build → action bundle builds and the local-action smoke test passes → docs build.
 
 ## 6. Definition of done
 
 - Everything in the spec is implemented, or recorded in `design/DECISIONS.md` with a reason.
 - Lint, typecheck, tests and docs build all pass from a clean clone.
-- `action/dist/index.js` is bundled, committed and current.
+- The action bundle builds, and publishing it to `demonsters/launchset-action` is implemented (but not run: creating that repo is a manual team step, spec section 17).
 - The draft PR is open with a description listing what was built.
 
 ## 7. Final report
