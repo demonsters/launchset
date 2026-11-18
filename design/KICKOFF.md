@@ -7,7 +7,9 @@ You are the lead engineer for **launchset**, a Changesets-style release tool for
 1. Read `design/SPEC.md` completely. It's the source of truth. Every design decision in it has been agreed with the team: **don't reopen them**.
    - If the spec is unclear on a detail, choose the most sensible option that fits its principles (section 1.1), and record the choice in `design/DECISIONS.md` (one line each: what, why, section).
    - If something in the spec is contradictory or impossible (for example an API doesn't work the way it says), do the closest thing that keeps the intent, record it in `design/DECISIONS.md` marked **NEEDS REVIEW**, and mention it in your final report.
-2. Working directory: a clone of the repo. It contains only `design/`.
+2. Working directory: the clone of the repo you're started in. It contains only `design/`:
+   - `SPEC.md`: the source of truth.
+   - `KICKOFF.md`: this prompt.
 3. GitHub: the repo `https://github.com/demonsters/launchset` is private. `main` holds only the `design/` folder; issues #1 and #2 track postponed features. `gh` is logged in as `rene-demonsters`.
    - Create a branch `initial-build` from `main` and do all work there. Commit in small, logical steps with clear messages (no commit-message convention required). Push regularly.
    - At the end, open a **draft PR** from `initial-build` to `main`. Don't merge it.
@@ -49,7 +51,7 @@ Adjust the order if you find a better one, but keep the dependencies.
 | 1 | Core: config schema + loader, changeset parse/write, bump + next-free version, maintenance rules, preview and prerelease versions, build-number strategies, changelog rendering, Docker tag template rendering, plan/state logic incl. manual targets (`ship` mode) | 4, 5, 6.1 templates, 7.1–7.2, 8, 12, 9.3 logic, 9.6, 9.8 | opus |
 | 2 | Stampers: Android (gradle, kts, properties), iOS (pbxproj, plist, xcconfig), Expo, Capacitor aliases, json/yaml/regex, consistency check. Can be split into two parallel agents (Android + generic / iOS + Expo) | 6 | sonnet |
 | 3 | Git wrapper + GitHub integration: release PR, sticky comments, tags, releases, bot-PR detection, finalize, supersede, backport, manual-target Release updates, prerelease tag reservation | 9.1–9.6, 9.8, 9.9 | opus |
-| 4 | Store and registry verification clients | 7.3, 7.4 | opus |
+| 4 | Store, registry and npm verification clients | 7.3, 7.4, 7.5 | opus |
 | 5 | CLI commands incl. `hotfix` and `ship` | 11 | sonnet |
 | 5b | `init`: detection (incl. existing release machinery), canonical version, retiring conflicting workflows/scripts, `--detect --json` / `--decide` | 11.1 | opus |
 | 6 | GitHub Action (bundled single file) + workflow templates | 9.3, 9.7, 10 | sonnet |
@@ -64,9 +66,10 @@ Adjust the order if you find a better one, but keep the dependencies.
 Start this once the CLI, config and workflows are stable (after phases 5–7), with one dedicated docs subagent (`model: "sonnet"`, `effort: "high"`):
 - Create the Starlight site in `docs/` (use the official Starlight template, current version) with the pages from spec 16.1. Write for developers who've never seen launchset: concrete examples, copy-pasteable workflows, short sentences.
 - Write `skills/launchset/SKILL.md` per spec 16.2, and the matching `AGENTS.md` snippet that `init` installs. Make sure the npm package includes the skill file and `init` installs it.
+- Write `skills/launchset-adopt/SKILL.md` per spec 16.3 (for migrating an existing repo; installed at user level, not by `init`), and document how to install it.
 - The docs build must pass.
 
-Review it as Opus with one question above all: **is every command, flag, config key, default, output and file path in the docs real?** Check them against the code (grep, `--help` output, the zod schema). Also check the skill's description makes an agent actually load it in a launchset repo.
+Review it as Opus with one question above all: **is every command, flag, config key, default, output and file path in the docs real?** Check them against the code (grep, `--help` output, the zod schema). Also check the skills' descriptions make an agent actually load them: the usage skill in a launchset repo, the adoption skill when asked to set up launchset in a repo.
 
 ## 5. Final pass (phase 11, you, Opus high)
 
