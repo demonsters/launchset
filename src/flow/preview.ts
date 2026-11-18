@@ -528,20 +528,11 @@ export function findTargetJob(jobs: readonly Job[], target: string): Job | undef
   return jobs.filter((job) => pattern.test(job.name.trim())).at(-1);
 }
 
-/**
- * Mark the rows of targets without a build job as `unknown`. Core's result statuses have no
- * such value (those targets are passed as `pending`, which renders as "running"), so the
- * status cell of their table row is rewritten here.
- */
-export function markUnknown(markdown: string, targets: readonly string[]): string {
-  let out = markdown;
-  for (const name of targets) {
-    out = out.replace(`| ${code(name)} | running |`, `| ${code(name)} | unknown |`);
-  }
-  return out;
+function unknownResults(targets: readonly string[]): Record<string, TargetResult> {
+  return Object.fromEntries(targets.map((name) => [name, { status: "unknown" as const }]));
 }
 
-/** Per-target results of the run's jobs; targets without a job are `pending` and listed in `unmatched`. */
+/** Per-target results of the run's jobs; targets without a job are `unknown` and listed in `unmatched`. */
 export function targetResults(
   plan: Plan,
   jobs: readonly Job[],
@@ -552,7 +543,7 @@ export function targetResults(
     const job = findTargetJob(jobs, name);
     if (!job) {
       unmatched.push(name);
-      results[name] = { status: "pending" };
+      results[name] = { status: "unknown" };
       continue;
     }
     results[name] = { status: jobStatus(job), ...(job.url ? { jobUrl: job.url } : {}) };
@@ -644,6 +635,7 @@ export async function previewComment(
   if (runId === undefined) {
     notes.push("The workflow run id is unknown, so the per-target results can't be read.");
     unmatched = [...plan.matrix];
+    results = unknownResults(plan.matrix);
   } else {
     let jobs: Job[] | undefined;
     try {
@@ -655,6 +647,7 @@ export async function previewComment(
         `Couldn't read the job results of this run (${(error as Error).message}). The App needs the Actions: read permission.`,
       );
       unmatched = [...plan.matrix];
+      results = unknownResults(plan.matrix);
     }
     if (jobs) {
       ({ results, unmatched } = targetResults(plan, jobs));
@@ -672,7 +665,7 @@ export async function previewComment(
 
   if (plan.prNumber !== undefined) {
     data.kind = "pr";
-    const body = `${markUnknown(renderPreviewComment({ plan, results }), unmatched)}${noteBlock}`;
+    const body = `${renderPreviewComment({ plan, results })}${noteBlock}`;
     const posted = await github.upsertStickyComment(plan.prNumber, PREVIEW_COMMENT_ID, body);
     data.commentUrl = posted.url;
     outputs["comment-url"] = posted.url;
@@ -690,7 +683,7 @@ export async function previewComment(
       changesets: validChangesets(files),
       ...(compared.baseChangesetPaths ? { baseChangesetPaths: compared.baseChangesetPaths } : {}),
     });
-    const body = `${markUnknown(release.body, unmatched)}${compared.note ? `\n${compared.note}\n` : ""}`;
+    const body = `${release.body}${compared.note ? `\n${compared.note}\n` : ""}`;
     const existing = await github.getReleaseByTag(release.tag);
     const published = existing
       ? await github.updateRelease(existing.id, {
@@ -714,7 +707,7 @@ export async function previewComment(
     return { ok: true, outputs, summary: `${body}${noteBlock}`, lines, data };
   }
 
-  const body = `${markUnknown(renderPreviewComment({ plan, results }), unmatched)}${noteBlock}`;
+  const body = `${renderPreviewComment({ plan, results })}${noteBlock}`;
   lines.push(`Preview ${plan.version}: ${plan.matrix.length} target(s), no PR to comment on`);
   return { ok: true, outputs, summary: body, lines, data };
 }

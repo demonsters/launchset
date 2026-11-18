@@ -336,7 +336,14 @@ export function nextPrereleaseCandidate(input: PreviewInput, failed: Plan): Prev
 // ---------------------------------------------------------------------------
 // Results: the sticky comment (9.7) and the prerelease's GitHub pre-release (9.9)
 
-export type TargetResultStatus = "success" | "failure" | "cancelled" | "skipped" | "pending";
+/** `unknown`: no build job found for the target (or the job list couldn't be read). */
+export type TargetResultStatus =
+  | "success"
+  | "failure"
+  | "cancelled"
+  | "skipped"
+  | "pending"
+  | "unknown";
 
 export interface TargetResult {
   status: TargetResultStatus;
@@ -359,6 +366,7 @@ const STATUS_TEXT: Record<TargetResultStatus, string> = {
   cancelled: "cancelled",
   skipped: "skipped",
   pending: "running",
+  unknown: "unknown",
 };
 
 function resultsTable(input: PreviewResultsInput): string {
