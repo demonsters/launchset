@@ -267,6 +267,7 @@ For anything else (an npm package, a Helm chart, a version file a web app reads)
 - `{ path, kind: "yaml", key: "appVersion" }`: same for YAML (e.g. `Chart.yaml`). Text-preserving.
 - `{ path, kind: "regex", pattern: "...", replace: "...{version}..." }`: pattern must match exactly once, or error.
 - Placeholders in `replace`: `{version}`, `{major}`, `{minor}`, `{patch}`, `{buildNumber}` (CI only).
+- `{ path, kind: "image" }` (only in `docker` targets, opt-in): stamps image references in deploy manifests (k8s, Compose, Helm values). Every occurrence of `<image>:<tag>` for this target's `image` in the file gets the target's verify tag (6.1, 7.4), e.g. `image: ghcr.io/org/app:v1.5.0`. Text-preserving; error if the file has no reference to the image. `path` may be a glob (`deploy/k8s/*.yaml`); files in the glob without a reference are skipped, but the glob must match at least one reference. 6.7 checks that every reference equals the release tag. Stamped by the release PR like other files, so the committed manifests point at the release. Leave out manifests that hold per-environment deploy state (for example a production overlay that is promoted by hand). Kustomize `images[].newTag` (tag without the image name) isn't covered in v1.
 
 ### 6.7 Version consistency
 
@@ -561,7 +562,7 @@ The GitHub-facing commands work from the CLI too when given `GITHUB_TOKEN`/`--to
 2. **Canonical version**: show every version found, per file and per tag.
    - **Default to the highest** of: the root version, the `package.json` next to each Dockerfile target, native marketing versions, and the highest existing release-like tag. Explain the choice.
    - **Never lower** a version without explicit confirmation (`--decide version=<v>` or an interactive answer). Stores reject lower marketing versions, and image tags or runtime versions would go backwards.
-   - Then align the target files to the canonical version. Image-pin files (k8s/kustomize/Helm) are never aligned automatically; they are only offered as `files` entries.
+   - Then align the target files to the canonical version. Image-pin files (k8s/kustomize/Helm) are never aligned automatically; they are only offered as `kind: "image"` `files` entries (6.6), as a decision per file.
    - **Target kind**: for every detected platform, ask whether it is shipped by CI with every release (`auto`), shipped on demand (`manual`, 9.8), or not a target. Default: `auto` when an existing workflow already builds it, `manual` for native projects that no workflow builds.
 3. **Build numbers**: read the current highest `versionCode` / `CFBundleVersion` from the files (and, if credentials are present, from the stores). If any is higher than what the chosen strategy produces now, set `buildNumber.offset` so new numbers stay higher, and explain.
 4. **Write**: `launchset.config.ts`, `.launchset/README.md`, the three workflow files (with commented placeholders for the team's build steps, and example steps for docker/build-push-action and fastlane), `CHANGELOG.md` if missing.
@@ -692,6 +693,7 @@ For humans. Every command, flag, config option and output shown must match the c
 - Manual targets (shipping a store app on demand, `launchset ship`)
 - GitHub App setup (step by step, permissions, secrets, action access setting)
 - Workflow recipes (docker/build-push-action, fastlane for Play and TestFlight, Gradle, xcodebuild)
+- Setting up native store pipelines step by step: Apple certificates, provisioning profiles and the App Store Connect API key; the Play upload key and service account; which GitHub secrets to create and how to test them with a preview build. Written so a human can follow it with an agent guiding them (16.3)
 - Migrating from Changesets / moving an existing repo (`init`, `init --detect --json`, agent-assisted adoption with the adoption skill; retiring tag-triggered workflows and Changesets pipelines; Changesets pre mode → prerelease branches)
 - CLI reference
 - Troubleshooting / FAQ (e.g. "release PR has no CI runs" → App token missing)
@@ -725,6 +727,8 @@ For AI agents moving an **existing repo** onto launchset. Repos will be migrated
 - Find and explain the existing release machinery that will conflict: tag-triggered workflows, Changesets workflows and scripts, scripts that write version or build numbers, release instructions in `CLAUDE.md`/`AGENTS.md`/`README`. Propose removing or adapting each one, and do it only after the human agrees.
 - Keep existing conventions unless the human decides otherwise: the git tag format (`tags.release`) and Docker image tags (e.g. `v{version}`) that deploy tooling pulls.
 - Long-lived Changesets pre-mode branches (`.changeset/pre.json`): propose a prerelease branch entry (9.9) and run `init --convert-only` on that branch.
+- Deploy manifests that pin the image tag: ask per file whether launchset should stamp them (`kind: "image"`, 6.6) or whether they're deploy state that stays manual.
+- Native store pipelines (signing certificates, provisioning profiles, the Play upload key, App Store Connect API key, GitHub secrets) are set up by a human. Guide them step by step following the docs recipe (16.1), check each step (secret names present in the workflow, `verify` passing on a preview build), and never handle the secret values yourself.
 - Move the team's existing build and upload steps into the generated workflows (`docker/build-push-action` tags and file, signing, fastlane, deploy steps), keeping secrets and environments as they are.
 - Run `init --yes --decide …` with the answers, then open a single PR with everything. The PR body lists the decisions, what was removed or changed, and the manual steps that remain (GitHub App installation, secrets, store credentials).
 - Don't migrate repos that are out of scope (for example independently versioned npm packages, 1.2). Say why instead.
