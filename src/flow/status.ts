@@ -12,10 +12,10 @@ import { computeStatus, renderStatus, type StatusData } from "../core/status.ts"
 import { checkConsistency } from "../platforms/index.ts";
 import type { FlowContext, FlowResult } from "./context.ts";
 import {
+  baseBranchRef,
   botPrsSince,
   findReleaseCommitFor,
   gatherRepoState,
-  hasRemote,
   tryResolveBranch,
 } from "./gather.ts";
 
@@ -101,11 +101,7 @@ export async function status(
   let ok = true;
   const extra: string[] = [];
   if (options.requireChangeset) {
-    const since =
-      options.since ??
-      ((await hasRemote(context.git))
-        ? `${context.git.remote}/${config.baseBranch}`
-        : config.baseBranch);
+    const since = options.since ?? (await baseBranchRef(context));
     const changesets = await changesetsSince(context, since, data.pending, data.invalid);
     ok = changesets.length > 0;
     data.requireChangeset = { since, ok, changesets };

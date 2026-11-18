@@ -4,11 +4,10 @@
  * updating a PR by its head branch.
  */
 
-import { LaunchsetError } from "../core/errors.ts";
-import { type Git, type PushResult, TagExistsError } from "../git/index.ts";
+import { errorMessage, LaunchsetError } from "../core/errors.ts";
+import { type Git, type PushResult, TagCleanupError, TagExistsError } from "../git/index.ts";
 import type { GitHub, PullRequest } from "../github/index.ts";
 import type { FlowContext } from "./context.ts";
-import { hasRemote } from "./gather.ts";
 
 export type TagResult = "created" | "exists";
 
@@ -25,37 +24,36 @@ export async function ensureTag(
   const { git } = context;
   const existing = await git.tryRevParse(`refs/tags/${name}`);
   if (existing !== undefined && existing !== sha) throw tagConflict(name, existing, sha);
-  if (existing === undefined) await git.createTag(name, sha);
-  let pushed: PushResult | undefined;
-  if (await hasRemote(git)) {
-    try {
-      pushed = await git.pushTag(name);
-    } catch (error) {
-      // A tag that only exists locally must not linger: a later ship, mark or finalize would
-      // take it for shipped. Keep the push error; mention a failed cleanup.
-      if (existing === undefined) {
-        try {
-          await git.deleteLocalTag(name);
-        } catch (cleanup) {
-          throw new LaunchsetError(
-            "tag-push-failed",
-            `pushing tag ${name} failed, and removing the local tag failed too (run \`git tag -d ${name}\`): ${(cleanup as Error).message}\n${(error as Error).message}`,
-            { cause: error },
-          );
-        }
-      }
-      if (error instanceof TagExistsError) {
-        throw new LaunchsetError(
-          "tag-conflict",
-          `tag ${name} already exists on the remote at another commit (launchset wanted ${sha.slice(0, 7)})`,
-          {
-            hint: "Someone created it by hand or another run made it. Check which commit is right; delete the wrong tag only if you're sure.",
-            cause: error,
-          },
-        );
-      }
-      throw error;
+  if (!(await git.hasRemote())) {
+    if (existing !== undefined) return "exists";
+    await git.createTag(name, sha);
+    return "created";
+  }
+  let pushed: PushResult;
+  try {
+    // A tag that only exists locally must not linger: a later ship, mark or finalize would
+    // take it for shipped. createAndPushTag removes it again when the push fails.
+    pushed =
+      existing === undefined ? await git.createAndPushTag(name, sha) : await git.pushTag(name);
+  } catch (error) {
+    if (error instanceof TagCleanupError) {
+      throw new LaunchsetError(
+        "tag-push-failed",
+        `pushing tag ${name} failed, and removing the local tag failed too (run \`git tag -d ${name}\`): ${errorMessage(error.cleanupError)}\n${errorMessage(error.pushError)}`,
+        { cause: error.pushError },
+      );
     }
+    if (error instanceof TagExistsError) {
+      throw new LaunchsetError(
+        "tag-conflict",
+        `tag ${name} already exists on the remote at another commit (launchset wanted ${sha.slice(0, 7)})`,
+        {
+          hint: "Someone created it by hand or another run made it. Check which commit is right; delete the wrong tag only if you're sure.",
+          cause: error,
+        },
+      );
+    }
+    throw error;
   }
   return existing === undefined && pushed !== "up-to-date" ? "created" : "exists";
 }
@@ -84,8 +82,8 @@ export async function currentCheckout(git: Git): Promise<Checkout> {
 
 /** Check out `checkout` again (discarding launchset's own uncommitted edits). */
 export async function restoreCheckout(git: Git, checkout: Checkout): Promise<void> {
-  if (checkout.branch) await git.run(["checkout", "--quiet", "--force", checkout.branch]);
-  else await git.run(["checkout", "--quiet", "--force", "--detach", checkout.sha]);
+  if (checkout.branch) await git.checkout(checkout.branch, { force: true });
+  else await git.checkout(checkout.sha, { force: true, detach: true });
 }
 
 /** Throws `dirty-worktree` when the working tree has changes. */
@@ -104,14 +102,9 @@ export async function requireCleanWorktree(git: Git, what: string): Promise<void
  */
 export async function branchHead(context: FlowContext, branch: string): Promise<string> {
   const { git } = context;
-  if (await hasRemote(git)) {
+  if (await git.hasRemote()) {
     const tracking = `refs/remotes/${git.remote}/${branch}`;
-    await git.run(
-      ["fetch", "--quiet", "--no-tags", git.remote, `+refs/heads/${branch}:${tracking}`],
-      {
-        auth: true,
-      },
-    );
+    await git.fetchRef(`refs/heads/${branch}`, tracking, { required: true });
     return git.revParse(tracking);
   }
   return git.revParse(`refs/heads/${branch}`);
@@ -126,7 +119,7 @@ export async function remoteBranchHead(
   branch: string,
 ): Promise<string | undefined> {
   const { git } = context;
-  if (!(await hasRemote(git))) return undefined;
+  if (!(await git.hasRemote())) return undefined;
   if (!(await git.remoteBranchExists(branch))) return undefined;
   return branchHead(context, branch);
 }
@@ -156,9 +149,11 @@ export async function sameCommitContent(
   a: string,
   b: string,
 ): Promise<boolean> {
-  const show = (sha: string) => context.git.run(["show", "-s", "--format=%T %P", sha]);
-  const [left, right] = await Promise.all([show(a), show(b)]);
-  return left === right;
+  const [left, right] = await Promise.all([
+    context.git.treeAndParents(a),
+    context.git.treeAndParents(b),
+  ]);
+  return left.tree === right.tree && left.parents.join(" ") === right.parents.join(" ");
 }
 
 const CHECKOUT_HINT =

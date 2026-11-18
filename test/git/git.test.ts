@@ -83,6 +83,46 @@ describe("refs and history", () => {
     await expect(git.showFile("0".repeat(40), "pkg/package.json")).rejects.toBeInstanceOf(GitError);
   });
 
+  it("lists the files of a directory and reads their blobs in one batch", async () => {
+    const repo = initRepo();
+    const a = repo.commit("a", {
+      "pkg/.launchset/one.md": "---\nbump: patch\n---\n\nFix ünïcode ✓\n",
+      "pkg/.launchset/two.md": "",
+      "pkg/.launchset/nested/three.md": "x",
+    });
+    const git = new Git({ cwd: join(repo.dir, "pkg") });
+    const files = await git.listFiles(a, "pkg/.launchset");
+    expect(files.map((f) => f.path)).toEqual(["pkg/.launchset/one.md", "pkg/.launchset/two.md"]);
+    const blobs = await git.readBlobs([...files.map((f) => f.blob), "0".repeat(40)]);
+    expect(blobs.get(files[0]?.blob ?? "")).toBe("---\nbump: patch\n---\n\nFix ünïcode ✓\n");
+    expect(blobs.get(files[1]?.blob ?? "")).toBe("");
+    expect(blobs.has("0".repeat(40))).toBe(false);
+    // `<commit>:<path>` names work too; a tree isn't a blob.
+    const byPath = await git.readBlobs([
+      `${a}:pkg/.launchset/two.md`,
+      `${a}:pkg/.launchset/nested`,
+    ]);
+    expect([...byPath.keys()]).toEqual([`${a}:pkg/.launchset/two.md`]);
+    expect(await git.readBlobs([])).toEqual(new Map());
+    expect(await git.listFiles(a, "pkg/missing")).toEqual([]);
+  });
+
+  it("reads trees and parents, and merge bases", async () => {
+    const repo = initRepo();
+    const a = repo.commit("a");
+    const b = repo.commit("b");
+    repo.checkout("--orphan", "other");
+    const c = repo.commit("c");
+    const git = new Git({ cwd: repo.dir });
+    expect(await git.treeAndParents(b)).toEqual({
+      tree: repo.git("rev-parse", `${b}^{tree}`),
+      parents: [a],
+    });
+    expect((await git.treeAndParents(a)).parents).toEqual([]);
+    expect(await git.mergeBase(a, b)).toBe(a);
+    expect(await git.mergeBase(b, c)).toBeUndefined();
+  });
+
   it("lists changed files against the merge base, with statuses", async () => {
     const repo = initRepo();
     repo.commit("base", {
@@ -324,6 +364,21 @@ describe("tags", () => {
     expect(await git.pushTag("v3.1.0")).toBe("up-to-date");
   });
 
+  it("creates and pushes a tag, removing the local tag when the push fails", async () => {
+    const { remote, repo } = repoWithRemote();
+    const git = new Git({ cwd: repo.dir });
+    expect(await git.createAndPushTag("v1.0.0", repo.head())).toBe("created");
+    expect(sh(remote, "rev-parse", "refs/tags/v1.0.0")).toBe(repo.head());
+    const other = cloneRepo(remote);
+    const elsewhere = other.commit("elsewhere");
+    other.git("tag", "v1.1.0", elsewhere);
+    other.git("push", "--quiet", "origin", "refs/tags/v1.1.0");
+    await expect(git.createAndPushTag("v1.1.0", repo.head())).rejects.toBeInstanceOf(
+      TagExistsError,
+    );
+    expect(repo.git("tag", "--list", "v1.1.0")).toBe("");
+  });
+
   it("throws a plain GitError for other push failures", async () => {
     const { remote, repo } = repoWithRemote();
     const hook = join(remote, "hooks", "pre-receive");
@@ -336,6 +391,7 @@ describe("tags", () => {
     expect(error).not.toBeInstanceOf(TagExistsError);
     expect((error as GitError).message).toMatch(/git push --porcelain origin refs\/tags\/v1.0.0/);
     expect((error as GitError).hint).toMatch(/ruleset/);
+    expect((error as GitError).reason).toBe("protected");
   });
 });
 

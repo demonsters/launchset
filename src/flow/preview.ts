@@ -43,10 +43,11 @@ import {
 } from "../core/preview.ts";
 import { escapeRegExp } from "../core/regex.ts";
 import type { Plan } from "../core/types.ts";
-import { GitError, TagExistsError } from "../git/index.ts";
+import { GitError, type PushResult, TagCleanupError, TagExistsError } from "../git/index.ts";
 import { createGitHub, type GitHub, type Job } from "../github/index.ts";
 import { type FlowContext, type FlowResult, requireGitHub } from "./context.ts";
 import {
+  baseBranchRef,
   changesetDir,
   dispatchInputs,
   readChangesetFiles,
@@ -259,12 +260,9 @@ function skipResult(
 /** Outcome of one tag reservation attempt. */
 type Reservation = "reserved" | "taken";
 
-const AUTH_FAILURE = /\b403\b|denied|not allowed|authentication failed|could not read username/i;
-
 function reservationFailure(tag: string, error: unknown): LaunchsetError {
   const detail = errorMessage(error);
-  const stderr = error instanceof GitError ? error.stderr : detail;
-  if (AUTH_FAILURE.test(stderr) || AUTH_FAILURE.test(detail)) {
+  if (error instanceof GitError && (error.reason === "auth" || error.reason === "forbidden")) {
     return new LaunchsetError(
       "tag-push-denied",
       `Couldn't push the prerelease tag ${tag}: the token isn't allowed to push tags.\n${detail}`,
@@ -286,33 +284,28 @@ function reservationFailure(tag: string, error: unknown): LaunchsetError {
 
 /** Create the tag at `sha` and push it. `taken`: the tag exists on the remote (another run won). */
 async function tryReserve(context: FlowContext, tag: string, sha: string): Promise<Reservation> {
-  const { git } = context;
+  let pushed: PushResult;
   try {
-    await git.createTag(tag, sha);
+    // A failed push removes the local tag again: it must not linger and count as taken.
+    pushed = await context.git.createAndPushTag(tag, sha);
   } catch (error) {
-    throw new LaunchsetError(
-      "tag-create-failed",
-      `Couldn't create the local tag ${tag} at ${sha.slice(0, 7)}.\n${(error as Error).message}`,
-      { cause: error },
-    );
-  }
-  let pushed: Awaited<ReturnType<typeof git.pushTag>>;
-  try {
-    pushed = await git.pushTag(tag);
-  } catch (error) {
-    // The reservation failed: the local tag must not linger and count as taken. A failing
-    // cleanup must not hide the push error.
-    try {
-      await git.deleteLocalTag(tag);
-    } catch (cleanup) {
-      const failure = reservationFailure(tag, error);
+    if (error instanceof TagCleanupError) {
+      // A failing cleanup must not hide the push error.
+      const failure = reservationFailure(tag, error.pushError);
       throw new LaunchsetError(
         failure.code,
-        `${failure.message}\nRemoving the local tag failed too (run \`git tag -d ${tag}\`): ${(cleanup as Error).message}`,
-        { cause: error, ...(failure.hint ? { hint: failure.hint } : {}) },
+        `${failure.message}\nRemoving the local tag failed too (run \`git tag -d ${tag}\`): ${errorMessage(error.cleanupError)}`,
+        { cause: error.pushError, ...(failure.hint ? { hint: failure.hint } : {}) },
       );
     }
     if (error instanceof TagExistsError) return "taken";
+    if (!(error instanceof GitError && error.command.startsWith("git push"))) {
+      throw new LaunchsetError(
+        "tag-create-failed",
+        `Couldn't create the local tag ${tag} at ${sha.slice(0, 7)}.\n${errorMessage(error)}`,
+        { cause: error },
+      );
+    }
     throw reservationFailure(tag, error);
   }
   // `up-to-date`: the remote already had this tag at this very commit, so a concurrent run on
@@ -570,9 +563,9 @@ async function branchOnlyChangesets(
   sha: string,
   files: readonly ChangesetFile[],
 ): Promise<{ baseChangesetPaths?: string[]; note?: string }> {
-  const { git, config } = context;
+  const { git } = context;
   const dir = await changesetDir(context);
-  const baseRef = `${git.remote}/${config.baseBranch}`;
+  const baseRef = await baseBranchRef(context);
   if (!(await git.tryRevParse(baseRef))) {
     return {
       note: `_Couldn't compare with ${code(baseRef)} (not in this checkout), so every pending changeset is listed. Use \`fetch-depth: 0\` in actions/checkout._`,

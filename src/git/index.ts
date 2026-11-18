@@ -52,6 +52,8 @@ export interface RunOptions {
   env?: Record<string, string>;
   /** Keep stdout exactly as printed (default: trailing newlines trimmed). */
   raw?: boolean;
+  /** Text written to git's stdin. */
+  input?: string;
 }
 
 export interface RunResult {
@@ -87,6 +89,27 @@ export interface LogEntry {
 
 export type PushResult = "created" | "updated" | "up-to-date";
 
+/** A tree entry from {@link Git.listFiles}. */
+export interface TreeFile {
+  /** Repo-relative POSIX path. */
+  path: string;
+  /** Blob id, for {@link Git.readBlobs}. */
+  blob: string;
+}
+
+/**
+ * Why a git command failed, from its output: the token was rejected (`auth`) or lacks access
+ * (`forbidden`), a protection rule blocked a push (`protected`), the token may not change
+ * workflow files (`workflows`), a commit or ref isn't available (`missing-object`).
+ */
+export type GitFailureReason =
+  | "auth"
+  | "forbidden"
+  | "protected"
+  | "workflows"
+  | "missing-object"
+  | "other";
+
 /** A git command failed. The message has the command (no secrets), stderr and a hint. */
 export class GitError extends Error {
   override name = "GitError";
@@ -96,18 +119,22 @@ export class GitError extends Error {
   /** Exit code, or undefined when git couldn't be started. */
   readonly exitCode: number | undefined;
   readonly hint?: string;
+  /** What went wrong; classified from `stderr` when not given. */
+  readonly reason: GitFailureReason;
   constructor(
     message: string,
     command: string,
     stderr: string,
     exitCode: number | undefined,
     hint?: string,
+    reason?: GitFailureReason,
   ) {
     super(message);
     this.command = command;
     this.stderr = stderr;
     this.exitCode = exitCode;
     if (hint !== undefined) this.hint = hint;
+    this.reason = reason ?? classifyFailure([], stderr).reason;
   }
 }
 
@@ -124,6 +151,31 @@ export class TagExistsError extends GitError {
       "Another run probably pushed it first; pick the next free name and retry.",
     );
     this.tag = tag;
+  }
+}
+
+/**
+ * {@link Git.createAndPushTag}: the push failed, and removing the local tag again failed too.
+ * `pushError` is the push failure (possibly a {@link TagExistsError}).
+ */
+export class TagCleanupError extends GitError {
+  override name = "TagCleanupError";
+  readonly tag: string;
+  readonly pushError: unknown;
+  readonly cleanupError: unknown;
+  constructor(tag: string, pushError: unknown, cleanupError: unknown) {
+    const push = pushError instanceof GitError ? pushError : undefined;
+    super(
+      `Pushing tag ${tag} failed, and removing the local tag failed too (run \`git tag -d ${tag}\`).`,
+      push?.command ?? "",
+      push?.stderr ?? "",
+      push?.exitCode,
+      push?.hint,
+      push?.reason,
+    );
+    this.tag = tag;
+    this.pushError = pushError;
+    this.cleanupError = cleanupError;
   }
 }
 
@@ -212,24 +264,39 @@ function assertRefName(kind: string, name: string): void {
   }
 }
 
-/** Hints for common git failures in CI. */
-function hintFor(args: string[], stderr: string): string | undefined {
+/** The reason and a hint for common git failures in CI. */
+function classifyFailure(
+  args: string[],
+  stderr: string,
+): { reason: GitFailureReason; hint?: string } {
   const s = stderr.toLowerCase();
   if (s.includes("without `workflows` permission") || s.includes("without workflows permission")) {
-    return 'The GitHub App needs the "Workflows: write" repository permission to push commits that change .github/workflows (the release branch is rebuilt from the base branch).';
+    return {
+      reason: "workflows",
+      hint: 'The GitHub App needs the "Workflows: write" repository permission to push commits that change .github/workflows (the release branch is rebuilt from the base branch).',
+    };
   }
   if (s.includes("gh006") || s.includes("protected branch") || s.includes("gh013")) {
-    return "A branch protection rule or ruleset blocks this push. Allow the launchset GitHub App to bypass it, or exclude launchset/* branches and tags from the rule.";
+    return {
+      reason: "protected",
+      hint: "A branch protection rule or ruleset blocks this push. Allow the launchset GitHub App to bypass it, or exclude launchset/* branches and tags from the rule.",
+    };
   }
   if (
     s.includes("authentication failed") ||
     s.includes("could not read username") ||
     s.includes("returned error: 401")
   ) {
-    return "The token was rejected. Check that the GitHub App token is passed as `token` and hasn't expired (installation tokens last one hour).";
+    return {
+      reason: "auth",
+      hint: "The token was rejected. Check that the GitHub App token is passed as `token` and hasn't expired (installation tokens last one hour).",
+    };
   }
   if (s.includes("returned error: 403") || s.includes("permission to") || s.includes("denied")) {
-    return 'The token lacks access. The GitHub App needs "Contents: read & write" on this repository and must be installed on it.';
+    return {
+      reason: "forbidden",
+      hint: 'The token lacks access. The GitHub App needs "Contents: read & write" on this repository and must be installed on it.',
+    };
   }
   if (
     s.includes("shallow") ||
@@ -238,15 +305,21 @@ function hintFor(args: string[], stderr: string): string | undefined {
     s.includes("not a valid object name") ||
     s.includes("bad object")
   ) {
-    return "The commit or ref isn't available locally. In GitHub Actions, check out with `fetch-depth: 0` so the full history and tags are present.";
+    return {
+      reason: "missing-object",
+      hint: "The commit or ref isn't available locally. In GitHub Actions, check out with `fetch-depth: 0` so the full history and tags are present.",
+    };
   }
   if (s.includes("not a git repository")) {
-    return "Run launchset inside a git checkout (actions/checkout in CI).";
+    return {
+      reason: "other",
+      hint: "Run launchset inside a git checkout (actions/checkout in CI).",
+    };
   }
   if (args.includes("commit") && (s.includes("nothing to commit") || s.includes("nothing added"))) {
-    return "There were no changes to commit.";
+    return { reason: "other", hint: "There were no changes to commit." };
   }
-  return undefined;
+  return { reason: "other" };
 }
 
 export class Git {
@@ -257,6 +330,7 @@ export class Git {
   readonly #token: string | undefined;
   readonly #secrets: string[];
   #prefix: Promise<string> | undefined;
+  #remoteUrl: string | undefined;
 
   constructor(options: GitOptions) {
     this.cwd = options.cwd;
@@ -288,6 +362,15 @@ export class Git {
 
   /** Run git and return everything; throws only when git can't be started. */
   async exec(args: string[], options: RunOptions = {}): Promise<RunResult> {
+    const result = await this.#spawn(args, options);
+    return { ...result, stdout: result.stdout.toString("utf8") };
+  }
+
+  /** Run git; stdout as bytes. Throws only when git can't be started. */
+  #spawn(
+    args: string[],
+    options: RunOptions,
+  ): Promise<{ stdout: Buffer; stderr: string; code: number }> {
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       GIT_TERMINAL_PROMPT: "0",
@@ -300,11 +383,12 @@ export class Git {
       Object.assign(env, authConfigEnv(this.#token, this.serverUrl, env));
     const command = this.mask(`git ${args.join(" ")}`);
     return new Promise((resolve, reject) => {
-      execFile(
+      const child = execFile(
         "git",
         args,
-        { cwd: this.cwd, env, maxBuffer: MAX_BUFFER, encoding: "utf8" },
-        (error, stdout, stderr) => {
+        { cwd: this.cwd, env, maxBuffer: MAX_BUFFER, encoding: "buffer" },
+        (error, stdout, stderrBytes) => {
+          const stderr = stderrBytes?.toString("utf8") ?? "";
           if (error && typeof error.code !== "number") {
             const hint =
               error.code === "ENOENT"
@@ -315,7 +399,7 @@ export class Git {
               new GitError(
                 hint ? `${message}\nHint: ${hint}` : message,
                 command,
-                stderr ?? "",
+                stderr,
                 undefined,
                 hint,
               ),
@@ -323,9 +407,10 @@ export class Git {
             return;
           }
           const code = error ? (error.code as number) : 0;
-          resolve({ stdout: stdout ?? "", stderr: stderr ?? "", code });
+          resolve({ stdout: stdout ?? Buffer.alloc(0), stderr, code });
         },
       );
+      if (options.input !== undefined) child.stdin?.end(options.input);
     });
   }
 
@@ -342,13 +427,14 @@ export class Git {
   error(args: string[], result: RunResult, hint?: string): GitError {
     const command = this.mask(`git ${args.join(" ")}`);
     const stderr = this.mask(result.stderr.trim() || result.stdout.trim());
-    const finalHint = hint ?? hintFor(args, result.stderr || result.stdout);
+    const failure = classifyFailure(args, result.stderr || result.stdout);
+    const finalHint = hint ?? failure.hint;
     const message = [
       `\`${command}\` failed (exit code ${result.code}) in ${this.cwd}`,
       stderr ? `: ${stderr}` : ".",
       finalHint ? `\nHint: ${finalHint}` : "",
     ].join("");
-    return new GitError(message, command, stderr, result.code, finalHint);
+    return new GitError(message, command, stderr, result.code, finalHint, failure.reason);
   }
 
   // --- paths --------------------------------------------------------------------------
@@ -411,7 +497,8 @@ export class Git {
         `git rev-parse --verify ${ref}^{commit}`,
         "",
         1,
-        hintFor([], "unknown revision"),
+        classifyFailure([], "unknown revision").hint,
+        "missing-object",
       );
     }
     return sha;
@@ -439,6 +526,23 @@ export class Git {
   async parents(sha: string): Promise<string[]> {
     const out = await this.run(["rev-list", "--parents", "-n", "1", "--end-of-options", sha]);
     return out.split(" ").slice(1).filter(Boolean);
+  }
+
+  /** The tree and the parents (first parent first) of a commit. */
+  async treeAndParents(sha: string): Promise<{ tree: string; parents: string[] }> {
+    const out = await this.run(["show", "-s", "--format=%T %P", "--end-of-options", sha, "--"]);
+    const [tree = "", ...parents] = out.split(" ").filter(Boolean);
+    return { tree, parents };
+  }
+
+  /** The best common ancestor of two commits, or undefined when they have none. */
+  async mergeBase(a: string, b: string): Promise<string | undefined> {
+    const args = ["merge-base", "--end-of-options", a, b];
+    const result = await this.exec(args);
+    const sha = result.stdout.trim();
+    if (result.code === 0 && sha) return sha;
+    if (result.code === 1) return undefined;
+    throw this.error(args, result);
   }
 
   /** Commits on `ref`'s first-parent history, newest first. */
@@ -517,6 +621,50 @@ export class Git {
     const [, type, oid] = meta.split(" ");
     if (type !== "blob" || entryPath !== path || !oid) return undefined;
     return this.run(["cat-file", "blob", oid], { raw: true });
+  }
+
+  /** The files (blobs) directly in the repo-relative `dir` at `ref`, sorted by path. */
+  async listFiles(ref: string, dir: string): Promise<TreeFile[]> {
+    const listing = await this.run(
+      ["ls-tree", "-z", "--full-tree", "--end-of-options", ref, "--", `${dir.replace(/\/$/, "")}/`],
+      { raw: true },
+    );
+    const files: TreeFile[] = [];
+    for (const entry of listing.split(NUL)) {
+      if (!entry) continue;
+      const tab = entry.indexOf("\t");
+      const [, type, blob] = entry.slice(0, tab).split(" ");
+      if (type === "blob" && blob) files.push({ path: entry.slice(tab + 1), blob });
+    }
+    return files;
+  }
+
+  /**
+   * Contents of objects (blob ids, or `<commit>:<path>`), read with one `git cat-file --batch`.
+   * Objects that don't exist (or aren't blobs) are missing from the map.
+   */
+  async readBlobs(ids: Iterable<string>): Promise<Map<string, string>> {
+    const wanted = [...new Set(ids)];
+    const contents = new Map<string, string>();
+    if (wanted.length === 0) return contents;
+    const args = ["cat-file", "--batch"];
+    const result = await this.#spawn(args, { input: `${wanted.join("\n")}\n` });
+    if (result.code !== 0) throw this.error(args, { ...result, stdout: "" });
+    const out = result.stdout;
+    let pos = 0;
+    for (const id of wanted) {
+      const end = out.indexOf(10, pos);
+      if (end === -1) throw new Error(`internal: truncated git cat-file output at ${id}`);
+      const header = out.toString("utf8", pos, end);
+      pos = end + 1;
+      if (header.endsWith(" missing") || header.endsWith(" ambiguous")) continue;
+      const [, type = "", size = ""] = header.split(" ");
+      const length = Number(size);
+      if (!Number.isInteger(length)) throw new Error(`internal: bad git cat-file header ${header}`);
+      if (type === "blob") contents.set(id, out.toString("utf8", pos, pos + length));
+      pos += length + 1;
+    }
+    return contents;
   }
 
   /**
@@ -607,6 +755,24 @@ export class Git {
     await this.run(["fetch", "--tags", "--force", "--quiet", this.remote], { auth: true });
   }
 
+  /**
+   * Fetch `source` from the remote into the local ref `tracking` (forced, no tags). Returns
+   * false when the fetch fails; with `required`, throws the {@link GitError} instead.
+   */
+  async fetchRef(
+    source: string,
+    tracking: string,
+    options: { required?: boolean } = {},
+  ): Promise<boolean> {
+    assertRefName("ref", source);
+    assertRefName("ref", tracking);
+    const args = ["fetch", "--quiet", "--no-tags", this.remote, `+${source}:${tracking}`];
+    const result = await this.exec(args, { auth: true });
+    if (result.code === 0) return true;
+    if (options.required) throw this.error(args, result);
+    return false;
+  }
+
   /** Create a lightweight local tag. */
   async createTag(name: string, sha: string): Promise<void> {
     assertRefName("tag", name);
@@ -658,6 +824,26 @@ export class Git {
     throw new TagExistsError(name, pushError.command, output, result.code);
   }
 
+  /**
+   * Create the local tag `name` at `sha` and push it ({@link pushTag}: `created`, or
+   * `up-to-date` when the remote already has it at this commit; {@link TagExistsError} when it
+   * has it elsewhere). A failed push removes the local tag again, so it never lingers; when
+   * that fails too, a {@link TagCleanupError} carries both errors.
+   */
+  async createAndPushTag(name: string, sha: string): Promise<PushResult> {
+    await this.createTag(name, sha);
+    try {
+      return await this.pushTag(name);
+    } catch (error) {
+      try {
+        await this.deleteLocalTag(name);
+      } catch (cleanup) {
+        throw new TagCleanupError(name, error, cleanup);
+      }
+      throw error;
+    }
+  }
+
   /** Parse `git push --porcelain` output for one ref. */
   #pushStatus(stdout: string, ref: string): PushResult | undefined {
     for (const line of stdout.split("\n")) {
@@ -671,6 +857,22 @@ export class Git {
   }
 
   // --- branches and commits -----------------------------------------------------------
+
+  /** Check out `ref`: a branch, or (with `detach`) a commit. `force` discards local changes. */
+  async checkout(ref: string, options: { detach?: boolean; force?: boolean } = {}): Promise<void> {
+    assertRefName("ref", ref);
+    const args = ["checkout", "--quiet"];
+    if (options.force) args.push("--force");
+    if (options.detach) args.push("--detach");
+    await this.run([...args, ref]);
+  }
+
+  /** Create branch `name` at `sha` without checking it out (no upstream). */
+  async createBranch(name: string, sha: string): Promise<void> {
+    assertRefName("branch", name);
+    assertRefName("commit", sha);
+    await this.run(["branch", "--no-track", name, sha]);
+  }
 
   /** Create (or reset) branch `name` at `startPoint` and check it out. */
   async checkoutNewBranch(name: string, startPoint: string): Promise<void> {
@@ -732,6 +934,18 @@ export class Git {
     return this.#pushStatus(result.stdout, ref) ?? "updated";
   }
 
+  /** Push commit `sha` to the remote ref `ref` (e.g. `refs/heads/release/1.4.x`). */
+  async pushRef(sha: string, ref: string, options: { force?: boolean } = {}): Promise<PushResult> {
+    assertRefName("commit", sha);
+    assertRefName("ref", ref);
+    const args = ["push", "--porcelain"];
+    if (options.force) args.push("--force");
+    args.push(this.remote, `${sha}:${ref}`);
+    const result = await this.exec(args, { auth: true });
+    if (result.code !== 0) throw this.error(args, result);
+    return this.#pushStatus(result.stdout, ref) ?? "updated";
+  }
+
   /** True when the remote has branch `name`. */
   async remoteBranchExists(name: string): Promise<boolean> {
     const args = ["ls-remote", "--exit-code", "--heads", this.remote, `refs/heads/${name}`];
@@ -749,14 +963,34 @@ export class Git {
 
   // --- remote -------------------------------------------------------------------------
 
+  /** The remote's URL. Throws when there is no such remote. Cached once found. */
   async remoteUrl(): Promise<string> {
-    return this.run(["remote", "get-url", this.remote]);
+    if (this.#remoteUrl !== undefined) return this.#remoteUrl;
+    const args = ["remote", "get-url", this.remote];
+    const result = await this.exec(args);
+    if (result.code !== 0) throw this.error(args, result);
+    this.#remoteUrl = result.stdout.trim();
+    return this.#remoteUrl;
+  }
+
+  /** True when the repo has the remote launchset pushes to (`origin`). */
+  async hasRemote(): Promise<boolean> {
+    return (await this.#tryRemoteUrl()) !== undefined;
   }
 
   /** `owner/repo` of the remote when it's a GitHub URL, else undefined. */
   async repoFromRemote(): Promise<string | undefined> {
-    const result = await this.exec(["remote", "get-url", this.remote]);
-    if (result.code !== 0) return undefined;
-    return parseGitHubRepo(result.stdout.trim(), this.serverUrl);
+    const url = await this.#tryRemoteUrl();
+    return url === undefined ? undefined : parseGitHubRepo(url, this.serverUrl);
+  }
+
+  /** The remote URL, or undefined without the remote (not cached then: one may be added). */
+  async #tryRemoteUrl(): Promise<string | undefined> {
+    try {
+      return await this.remoteUrl();
+    } catch (error) {
+      if (error instanceof GitError && error.exitCode !== undefined) return undefined;
+      throw error;
+    }
   }
 }

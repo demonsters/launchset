@@ -16,10 +16,10 @@ import { GitHubError } from "../github/index.ts";
 import { checkConsistency, readRootVersion } from "../platforms/index.ts";
 import type { FlowContext, FlowResult } from "./context.ts";
 import {
+  baseBranchRef,
   changedFilesBetween,
   changesetDir,
   commitsSince,
-  hasRemote,
   lastReleaseTagOf,
   reachableReleaseVersions,
   readChangesetFiles,
@@ -114,13 +114,9 @@ async function resolveHead(context: FlowContext, ref: string, prNumber: number):
   const { git } = context;
   const local = await tryCommit(context, ref);
   if (local) return local;
-  if (prNumber > 0 && (await hasRemote(git))) {
+  if (prNumber > 0 && (await git.hasRemote())) {
     const tracking = `refs/remotes/${git.remote}/pr/${prNumber}`;
-    const fetched = await git.exec(
-      ["fetch", "--quiet", "--no-tags", git.remote, `+refs/pull/${prNumber}/head:${tracking}`],
-      { auth: true },
-    );
-    if (fetched.code === 0) {
+    if (await git.fetchRef(`refs/pull/${prNumber}/head`, tracking)) {
       const sha = (await tryCommit(context, ref)) ?? (await tryCommit(context, tracking));
       if (sha) return sha;
     }
@@ -141,18 +137,15 @@ async function baseTip(
   payloadSha: string | undefined,
 ): Promise<string> {
   const { git } = context;
-  if (await hasRemote(git)) {
+  if (await git.hasRemote()) {
     const tracking = `refs/remotes/${git.remote}/${baseBranch}`;
-    const fetched = await git.exec(
-      ["fetch", "--quiet", "--no-tags", git.remote, `+refs/heads/${baseBranch}:${tracking}`],
-      { auth: true },
-    );
-    if (fetched.code === 0) return git.revParse(tracking);
+    if (await git.fetchRef(`refs/heads/${baseBranch}`, tracking)) return git.revParse(tracking);
   }
-  const found =
-    (payloadSha ? await tryCommit(context, payloadSha) : undefined) ??
-    (await tryCommit(context, `refs/remotes/${git.remote}/${baseBranch}`)) ??
-    (await tryCommit(context, `refs/heads/${baseBranch}`));
+  if (payloadSha) {
+    const payload = await tryCommit(context, payloadSha);
+    if (payload) return payload;
+  }
+  const found = await tryCommit(context, await baseBranchRef(context, baseBranch));
   if (found) return found;
   throw new LaunchsetError("unknown-base", `the base branch ${baseBranch} isn't available`, {
     hint: "Check out with fetch-depth: 0 so the base branch is present, or pass --base <ref>.",
@@ -161,9 +154,8 @@ async function baseTip(
 
 /** The merge base of `base` and `head`: the PR's changes are `mergeBase..head`. */
 async function mergeBase(context: FlowContext, base: string, head: string): Promise<string> {
-  const result = await context.git.exec(["merge-base", base, head]);
-  const sha = result.stdout.trim();
-  if (result.code === 0 && sha) return sha;
+  const sha = await context.git.mergeBase(base, head);
+  if (sha) return sha;
   throw new LaunchsetError(
     "no-merge-base",
     `the PR head ${head.slice(0, 7)} and the base ${base.slice(0, 7)} have no common commit in this checkout`,

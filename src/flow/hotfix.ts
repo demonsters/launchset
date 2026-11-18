@@ -8,7 +8,7 @@ import { renderSummary } from "../core/plan-common.ts";
 import { latestReleaseInLine, releaseTag } from "../core/tags.ts";
 import { maintenanceBranchName, type VersionLine } from "../core/versions.ts";
 import type { FlowContext, FlowResult } from "./context.ts";
-import { hasRemote, readTagSnapshot, syncTags } from "./gather.ts";
+import { readTagSnapshot, syncTags } from "./gather.ts";
 
 export interface HotfixOptions {
   /** `1.4` (a leading `v` is fine). */
@@ -65,7 +65,7 @@ export async function hotfix(
       hint: `Use it: git checkout ${branch}.`,
     });
   }
-  const remote = await hasRemote(git);
+  const remote = await git.hasRemote();
   if (remote && (await git.remoteBranchExists(branch))) {
     throw new LaunchsetError("branch-exists", `the branch ${branch} already exists on the remote`, {
       hint: `Use it: git fetch ${git.remote} ${branch} && git checkout ${branch}.`,
@@ -74,11 +74,9 @@ export async function hotfix(
   // Push first, then create the local branch: a failed push leaves nothing behind, so a re-run
   // works.
   if (remote) {
-    await git.run(["push", "--porcelain", git.remote, `${sha}:refs/heads/${branch}`], {
-      auth: true,
-    });
+    await git.pushRef(sha, `refs/heads/${branch}`);
   }
-  await git.run(["branch", "--no-track", branch, sha]);
+  await git.createBranch(branch, sha);
   return {
     ok: true,
     outputs: {},

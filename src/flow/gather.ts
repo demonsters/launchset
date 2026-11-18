@@ -27,7 +27,7 @@ import type { ReleaseEvent, ReleaseInput } from "../core/release.ts";
 import type { ChangesetOrigin } from "../core/release-pr.ts";
 import { lastReleaseTag, versionTagShas } from "../core/tags.ts";
 import type { Changeset } from "../core/types.ts";
-import type { ChangedFile, Git, TagRef } from "../git/index.ts";
+import type { ChangedFile, TagRef } from "../git/index.ts";
 import {
   findReleaseCommit,
   headIsReleaseCommit,
@@ -42,20 +42,26 @@ import type { FlowContext } from "./context.ts";
 // ---------------------------------------------------------------------------
 // Remote and tags
 
-/** True when the repo has the remote launchset pushes to (`origin`). */
-export async function hasRemote(git: Git): Promise<boolean> {
-  const result = await git.exec(["remote", "get-url", git.remote]);
-  return result.code === 0;
-}
-
 /**
  * Fetch every tag from the remote (`git fetch --tags`) when a remote exists and `fetch` isn't
  * false. Returns true when it fetched.
  */
 export async function syncTags(context: FlowContext, fetch = true): Promise<boolean> {
-  if (!fetch || !(await hasRemote(context.git))) return false;
+  if (!fetch || !(await context.git.hasRemote())) return false;
   await context.git.fetchTags();
   return true;
+}
+
+/**
+ * The ref the base branch (default: the configured one) is compared with: the remote-tracking
+ * `<remote>/<branch>` when the repo has a remote, else the local `<branch>`.
+ */
+export async function baseBranchRef(
+  context: FlowContext,
+  branch = context.config.baseBranch,
+): Promise<string> {
+  const { git } = context;
+  return (await git.hasRemote()) ? `${git.remote}/${branch}` : branch;
 }
 
 /** The repo's local tags, classified with the configured templates. */
@@ -119,13 +125,12 @@ export async function readChangesetFiles(
   const dir = await changesetDir(context);
   const files: ChangesetFile[] = [];
   if (options.ref !== undefined) {
-    const out = await context.git.run(
-      ["ls-tree", "-z", "--name-only", "--full-tree", options.ref, "--", `${dir}/`],
-      { raw: true },
+    const listed = (await context.git.listFiles(options.ref, dir)).filter((f) =>
+      isChangesetPath(f.path, dir),
     );
-    for (const path of out.split("\0").filter(Boolean)) {
-      if (!isChangesetPath(path, dir)) continue;
-      const text = await context.git.showFile(options.ref, path);
+    const texts = await context.git.readBlobs(listed.map((f) => f.blob));
+    for (const { path, blob } of listed) {
+      const text = texts.get(blob);
       if (text !== undefined) files.push(readChangesetFile(text, path));
     }
   } else {

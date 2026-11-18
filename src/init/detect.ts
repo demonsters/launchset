@@ -559,7 +559,7 @@ export async function detect(root: string, options: { now?: Date } = {}): Promis
     const github = await git.repoFromRemote();
     if (github) gitInfo.github = github;
     tagNames = (await git.tags()).map((t) => t.name);
-    const top = (await git.run(["rev-parse", "--show-toplevel"])).trim();
+    const top = await git.topLevel();
     if (absolute(top, ".") !== absolute(root, ".") && (await statOrNull(top))) {
       notes.push({
         level: "warning",
