@@ -11,6 +11,8 @@
  * reason; never guess.
  */
 
+import { EXPECTED_ERROR } from "../core/errors.ts";
+
 /** Which version value a field holds. */
 export type VersionField = "marketing" | "build";
 
@@ -53,8 +55,6 @@ export class StampError extends Error {
     this.reason = reason;
   }
 }
-
-import { EXPECTED_ERROR } from "../core/errors.ts";
 
 export { detectEol, lineOf } from "../core/text.ts";
 

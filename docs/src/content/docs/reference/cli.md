@@ -375,7 +375,7 @@ Options:
   --base <ref>         compare against this ref (default: the PR's base commit)
   --push               pre-push hook mode: warn when a changeset is missing, never fail
   --no-comment         don't post the sticky PR comment
-  --no-fetch           don't fetch tags first
+  --no-fetch           don't fetch tags first (--push never fetches)
   -h, --help           display help for command
 
 Example:
