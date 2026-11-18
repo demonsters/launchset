@@ -1,6 +1,6 @@
-# Kickoff: build shiplog
+# Kickoff: build launchset
 
-You are the lead engineer for **shiplog**, a Changesets-style release tool for lock-step monorepos (Docker, Android, iOS and web from one version). You run as **Opus at high effort**. Your job is to deliver a complete, tested v1 by planning the work, delegating parts to subagents, reviewing everything that comes back, and doing a final review and refactor pass yourself.
+You are the lead engineer for **launchset**, a Changesets-style release tool for lock-step monorepos (Docker, Android, iOS and web from one version). You run as **Opus at high effort**. Your job is to deliver a complete, tested v1 by planning the work, delegating parts to subagents, reviewing everything that comes back, and doing a final review and refactor pass yourself.
 
 ## 1. Before you start
 
@@ -8,7 +8,7 @@ You are the lead engineer for **shiplog**, a Changesets-style release tool for l
    - If the spec is unclear on a detail, choose the most sensible option that fits its principles (section 1.1), and record the choice in `design/DECISIONS.md` (one line each: what, why, section).
    - If something in the spec is contradictory or impossible (for example an API doesn't work the way it says), do the closest thing that keeps the intent, record it in `design/DECISIONS.md` marked **NEEDS REVIEW**, and mention it in your final report.
 2. Working directory: a clone of the repo. It contains only `design/`.
-3. GitHub: the repo `https://github.com/demonsters/shiplog` is private. `main` holds only the `design/` folder; issues #1 and #2 track postponed features. `gh` is logged in as `rene-demonsters`.
+3. GitHub: the repo `https://github.com/demonsters/launchset` is private. `main` holds only the `design/` folder; issues #1 and #2 track postponed features. `gh` is logged in as `rene-demonsters`.
    - Create a branch `initial-build` from `main` and do all work there. Commit in small, logical steps with clear messages (no commit-message convention required). Push regularly.
    - At the end, open a **draft PR** from `initial-build` to `main`. Don't merge it.
 4. Don't create other repos, GitHub Apps, secrets, npm publishes, tags on the real repo, or deploy anything. Where the spec needs things only the team can set up (section 17), use mocks and placeholders and list them in your final report.
@@ -45,7 +45,7 @@ Adjust the order if you find a better one, but keep the dependencies.
 
 | # | Phase | Spec | Model |
 |---|---|---|---|
-| 0 | Repo setup: pnpm, TS strict, Biome, vitest, bundler, CI workflow for shiplog itself, folder layout | 13, 14 | you or sonnet |
+| 0 | Repo setup: pnpm, TS strict, Biome, vitest, bundler, CI workflow for launchset itself, folder layout | 13, 14 | you or sonnet |
 | 1 | Core: config schema + loader, changeset parse/write, bump + next-free version, maintenance rules, preview versions, build-number strategies, changelog rendering, plan/state logic | 4, 5, 7.1–7.2, 8, 12, 9.3 logic, 9.6 | opus |
 | 2 | Stampers: Android (gradle, kts, properties), iOS (pbxproj, plist, xcconfig), Expo, Capacitor aliases, json/yaml/regex, consistency check. Can be split into two parallel agents (Android + generic / iOS + Expo) | 6 | sonnet |
 | 3 | Git wrapper + GitHub integration: release PR, sticky comments, tags, releases, bot-PR detection, finalize, supersede, backport | 9.1–9.6 | opus |
@@ -54,18 +54,18 @@ Adjust the order if you find a better one, but keep the dependencies.
 | 6 | GitHub Action (bundled single file) + workflow templates | 9.3, 9.7, 10 | sonnet |
 | 7 | Previews end to end (preview-plan, docker preview tags, preview comment) | 9.7 | sonnet |
 | 8 | End-to-end lifecycle tests with temporary git repos | 14 | sonnet |
-| 9 | Dogfooding: shiplog's own shiplog config and release workflows | 15 | sonnet |
+| 9 | Dogfooding: launchset's own launchset config and release workflows | 15 | sonnet |
 | 10 | Docs site (Astro Starlight) and agent skill | 16 | sonnet, reviewed by opus |
 | 11 | Final full-codebase review and refactor | all | you (opus) |
 
 ### Phase 10: docs and skill
 
 Start this once the CLI, config and workflows are stable (after phases 5–7), with one dedicated docs subagent (`model: "sonnet"`, `effort: "high"`):
-- Create the Starlight site in `docs/` (use the official Starlight template, current version) with the pages from spec 16.1. Write for developers who've never seen shiplog: concrete examples, copy-pasteable workflows, short sentences.
-- Write `skills/shiplog/SKILL.md` per spec 16.2, and the matching `AGENTS.md` snippet that `init` installs. Make sure the npm package includes the skill file and `init` installs it.
+- Create the Starlight site in `docs/` (use the official Starlight template, current version) with the pages from spec 16.1. Write for developers who've never seen launchset: concrete examples, copy-pasteable workflows, short sentences.
+- Write `skills/launchset/SKILL.md` per spec 16.2, and the matching `AGENTS.md` snippet that `init` installs. Make sure the npm package includes the skill file and `init` installs it.
 - The docs build must pass.
 
-Review it as Opus with one question above all: **is every command, flag, config key, default, output and file path in the docs real?** Check them against the code (grep, `--help` output, the zod schema). Also check the skill's description makes an agent actually load it in a shiplog repo.
+Review it as Opus with one question above all: **is every command, flag, config key, default, output and file path in the docs real?** Check them against the code (grep, `--help` output, the zod schema). Also check the skill's description makes an agent actually load it in a launchset repo.
 
 ## 5. Final pass (phase 11, you, Opus high)
 

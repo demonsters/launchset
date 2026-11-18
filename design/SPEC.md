@@ -1,19 +1,19 @@
-# shiplog: specification (v1)
+# launchset: specification (v1)
 
 Status: agreed design, ready to build. Last updated 2026-11-18.
 
-Package: `@demonsters/shiplog` (private npm package, demonsters org).
-Repo: https://github.com/demonsters/shiplog (private). The CLI, the GitHub Action, the docs site and the agent skill all live in this one repo.
+Package: `@demonsters/launchset` (private npm package, demonsters org).
+Repo: https://github.com/demonsters/launchset (private). The CLI, the GitHub Action, the docs site and the agent skill all live in this one repo.
 
 ---
 
-## 1. What shiplog is
+## 1. What launchset is
 
-shiplog is a Changesets-style release tool for repos where **one version** drives **many build targets**: Docker images, Android, iOS and web apps, all built from the same repo and released together.
+launchset is a Changesets-style release tool for repos where **one version** drives **many build targets**: Docker images, Android, iOS and web apps, all built from the same repo and released together.
 
-Developers describe each change in a small changeset file in their PR. Commit messages don't matter. shiplog collects the changesets into a release PR. Merging that PR is the release: shiplog then tells CI which targets to build, what version and build number to use, and records which targets have shipped.
+Developers describe each change in a small changeset file in their PR. Commit messages don't matter. launchset collects the changesets into a release PR. Merging that PR is the release: launchset then tells CI which targets to build, what version and build number to use, and records which targets have shipped.
 
-**shiplog does not build anything.** It decides *what* to release, writes version numbers into files, and records results. The team's own workflow steps (docker build/push, Gradle, fastlane, Xcode, etc.) do the building and uploading.
+**launchset does not build anything.** It decides *what* to release, writes version numbers into files, and records results. The team's own workflow steps (docker build/push, Gradle, fastlane, Xcode, etc.) do the building and uploading.
 
 ### 1.1 Principles
 
@@ -29,8 +29,8 @@ Developers describe each change in a small changeset file in their PR. Commit me
 
 - Per-package npm publishing in workspaces (that's what Changesets does).
 - CI systems other than GitHub Actions.
-- Expo OTA updates / `runtimeVersion` handling: issue [#1](https://github.com/demonsters/shiplog/issues/1).
-- Store-ready release notes per platform: issue [#2](https://github.com/demonsters/shiplog/issues/2). Unknown changeset frontmatter keys must be kept (not rejected) so #2 can add a field later.
+- Expo OTA updates / `runtimeVersion` handling: issue [#1](https://github.com/demonsters/launchset/issues/1).
+- Store-ready release notes per platform: issue [#2](https://github.com/demonsters/launchset/issues/2). Unknown changeset frontmatter keys must be kept (not rejected) so #2 can add a field later.
 - Running the actual builds or store uploads.
 
 ---
@@ -39,12 +39,12 @@ Developers describe each change in a small changeset file in their PR. Commit me
 
 | Term | Meaning |
 |---|---|
-| **Changeset** | A markdown file in `.shiplog/` with a bump type and a summary. |
+| **Changeset** | A markdown file in `.launchset/` with a bump type and a summary. |
 | **Target** | One thing that gets built and shipped per release, e.g. `docker-api`, `android`, `ios`, `web`. Each target becomes one job in the GitHub Actions matrix. |
 | **Release** | Building and shipping every target for one version, from the release commit. |
 | **Release commit** | The commit where the root `package.json` version first became the version being released (normally the merge of the release PR). All release builds check out this exact commit. |
-| **Release PR** | The PR shiplog opens and keeps updated, titled `Release vX.Y.Z`, that applies pending changesets. |
-| **Marker tag** | A git tag recording that one target shipped for one version: `shiplog/<target>@<version>`. |
+| **Release PR** | The PR launchset opens and keeps updated, titled `Release vX.Y.Z`, that applies pending changesets. |
+| **Marker tag** | A git tag recording that one target shipped for one version: `launchset/<target>@<version>`. |
 | **Release tag** | `v<version>`, created only when **every** target has a marker. Means "this version is fully released". |
 | **Maintenance branch** | `release/<major>.<minor>.x`, used for hotfixes on an older version line. |
 | **Preview** | A test build from a PR or branch (TestFlight, Play internal track, preview Docker tags). Has no side effects. |
@@ -54,19 +54,19 @@ Developers describe each change in a small changeset file in their PR. Commit me
 
 ---
 
-## 3. Files in a repo that uses shiplog
+## 3. Files in a repo that uses launchset
 
 ```
-shiplog.config.ts          # configuration (also .mjs, .js, .json)
-.shiplog/
+launchset.config.ts          # configuration (also .mjs, .js, .json)
+.launchset/
   README.md                # short explanation + link to docs (written by init)
   brave-lions-sing.md      # a changeset
 CHANGELOG.md
 .github/workflows/
-  shiplog-check.yml
-  shiplog-release.yml
-  shiplog-preview.yml
-.claude/skills/shiplog/SKILL.md   # optional, installed by init
+  launchset-check.yml
+  launchset-release.yml
+  launchset-preview.yml
+.claude/skills/launchset/SKILL.md   # optional, installed by init
 ```
 
 ---
@@ -88,12 +88,12 @@ Add offline mode to the mobile app.
 - The body (after the frontmatter) is the changelog entry, in markdown. It can be several lines. It must not be empty unless `bump: none`.
 - **Unknown frontmatter keys** produce a warning and are kept. Don't reject them (see issue #2).
 - Generated changesets (for bot PRs, section 9.4) add `source: bot` and `pr: <number>`.
-- Filename: three random lowercase words joined by dashes plus `.md`, like Changesets does (`brave-lions-sing.md`). Any `.md` file in `.shiplog/` other than `README.md` is a changeset.
+- Filename: three random lowercase words joined by dashes plus `.md`, like Changesets does (`brave-lions-sing.md`). Any `.md` file in `.launchset/` other than `README.md` is a changeset.
 - Parse errors (missing or invalid frontmatter, invalid bump) are hard errors with file name and line.
 
 ### 4.2 Migration from Changesets
 
-`shiplog init` can convert existing `.changeset/*.md` files: their frontmatter (`"pkg-name": minor` lines) becomes one `bump` with the highest bump found. Summaries are kept. `.changeset/config.json` and `README.md` are left alone; init tells the user they can delete the folder.
+`launchset init` can convert existing `.changeset/*.md` files: their frontmatter (`"pkg-name": minor` lines) becomes one `bump` with the highest bump found. Summaries are kept. `.changeset/config.json` and `README.md` are left alone; init tells the user they can delete the folder.
 
 ### 4.3 Computing the bump
 
@@ -103,10 +103,10 @@ The release bump is the highest bump among all pending changesets (`major` > `mi
 
 ## 5. Configuration
 
-`shiplog.config.ts` (or `.mjs`, `.js`, `.json`). The TypeScript config is loaded with `jiti` (bundled), so it works on any supported Node version. The package exports `defineConfig` for types. The config is validated with `zod`; errors name the exact field and say what is expected.
+`launchset.config.ts` (or `.mjs`, `.js`, `.json`). The TypeScript config is loaded with `jiti` (bundled), so it works on any supported Node version. The package exports `defineConfig` for types. The config is validated with `zod`; errors name the exact field and say what is expected.
 
 ```ts
-import { defineConfig } from "@demonsters/shiplog";
+import { defineConfig } from "@demonsters/launchset";
 
 export default defineConfig({
   version: { file: "package.json" },          // default
@@ -116,7 +116,7 @@ export default defineConfig({
 
   tags: {
     release: "v{version}",                     // default
-    marker: "shiplog/{target}@{version}",      // default
+    marker: "launchset/{target}@{version}",      // default
   },
 
   buildNumber: {
@@ -130,7 +130,7 @@ export default defineConfig({
   },
 
   preview: {
-    label: "shiplog:preview",                  // default
+    label: "launchset:preview",                  // default
     rebuildOnPush: true,                       // default
     branches: [],                              // e.g. ["develop"]: auto-preview on push
     targets: "all",                            // or ["android", "ios"]
@@ -179,7 +179,7 @@ All file edits are **text-preserving**: only the version values change. Never re
 
 Two kinds of stamping:
 - **Marketing version**: written by the release PR (committed) and by previews in CI (not committed).
-- **Build number**: written only in CI, by `shiplog stamp` (never committed). The build-number values in the repo are placeholders; shiplog doesn't care what they are, except `init` reading them for an offset (section 11).
+- **Build number**: written only in CI, by `launchset stamp` (never committed). The build-number values in the repo are placeholders; launchset doesn't care what they are, except `init` reading them for an offset (section 11).
 
 ### 6.1 `docker`
 
@@ -222,7 +222,7 @@ Build number: positive integer, written as a string where the format wants a str
 
 ### 6.5 Expo `app.config.js` / `app.config.ts`
 
-These are code and can't be safely rewritten. shiplog doesn't edit them. `init` and the docs tell users to read version and build numbers from `package.json` / environment variables in their config instead. shiplog sets `SHIPLOG_VERSION`, `SHIPLOG_BUILD_NUMBER` and `SHIPLOG_CHANNEL` as job outputs for that purpose.
+These are code and can't be safely rewritten. launchset doesn't edit them. `init` and the docs tell users to read version and build numbers from `package.json` / environment variables in their config instead. launchset sets `LAUNCHSET_VERSION`, `LAUNCHSET_BUILD_NUMBER` and `LAUNCHSET_CHANNEL` as job outputs for that purpose.
 
 ### 6.6 `custom` and extra `files`
 
@@ -234,7 +234,7 @@ For anything else (an npm package, a Helm chart, a version file a web app reads)
 
 ### 6.7 Version consistency
 
-`shiplog status` and the PR check verify that every target's committed marketing version equals the root version. A mismatch (someone edited a version file by hand) fails the PR check with a list of files and values.
+`launchset status` and the PR check verify that every target's committed marketing version equals the root version. A mismatch (someone edited a version file by hand) fails the PR check with a list of files and values.
 
 ---
 
@@ -243,7 +243,7 @@ For anything else (an npm package, a Helm chart, a version file a web app reads)
 ### 7.1 When and how
 
 - A build number is computed **once per workflow run**, in the `plan` step, and shared by all targets in that run. Re-running failed jobs reuses the plan output, so a re-run uses the same number.
-- `shiplog stamp --target <name>` writes the version and build number into that target's files in the CI checkout.
+- `launchset stamp --target <name>` writes the version and build number into that target's files in the CI checkout.
 
 ### 7.2 Strategies
 
@@ -252,23 +252,23 @@ For anything else (an npm package, a Helm chart, a version file a web app reads)
 | `timestamp` (default) | `floor((now - epoch) / 1s) + offset` | Epoch default `2020-01-01T00:00:00Z`. About 217 million in November 2026; stays under the Android limit until about 2086. Always increases, across all branches, without credentials. |
 | `run-number` | `github.run_number + offset` | Simple; resets if the workflow file is renamed. Documented as such. |
 | `semver` | `major*10^7 + minor*10^5 + patch*10^2 + attempt` | `attempt` is the run attempt (max 99). **Not allowed when previews are enabled**: previews of `1.5.0` and the real `1.5.0` would compete for the same numbers. Config validation rejects the combination. |
-| `eas` | none | For Expo projects building on EAS with `appVersionSource: "remote"` and `autoIncrement`. shiplog outputs no build number and doesn't stamp one. |
+| `eas` | none | For Expo projects building on EAS with `appVersionSource: "remote"` and `autoIncrement`. launchset outputs no build number and doesn't stamp one. |
 
 `offset` exists for migrating apps whose existing build numbers are higher than what the strategy would produce.
 
 ### 7.3 Verification against stores (`verify: ["store"]`)
 
-The store is not a source of numbers, only a safety check. `shiplog verify --target <name>` (run in the build job, before uploading):
+The store is not a source of numbers, only a safety check. `launchset verify --target <name>` (run in the build job, before uploading):
 1. Fetch the highest build number already in the store.
-   - **Google Play** (Android Publisher API v3): open an edit, list bundles and APKs, take the max `versionCode`, then delete the edit. Auth: service account JSON in `SHIPLOG_PLAY_SERVICE_ACCOUNT_JSON`.
-   - **App Store Connect API**: list builds for `appId`, take the max build `version`. Auth: JWT (ES256) from `SHIPLOG_ASC_KEY_ID`, `SHIPLOG_ASC_ISSUER_ID`, `SHIPLOG_ASC_PRIVATE_KEY`.
+   - **Google Play** (Android Publisher API v3): open an edit, list bundles and APKs, take the max `versionCode`, then delete the edit. Auth: service account JSON in `LAUNCHSET_PLAY_SERVICE_ACCOUNT_JSON`.
+   - **App Store Connect API**: list builds for `appId`, take the max build `version`. Auth: JWT (ES256) from `LAUNCHSET_ASC_KEY_ID`, `LAUNCHSET_ASC_ISSUER_ID`, `LAUNCHSET_ASC_PRIVATE_KEY`.
 2. If this exact build number already exists for this version: output `already-published=true`. The workflow skips the upload and goes straight to `mark`. (Covers "upload succeeded but the job failed before marking".)
 3. If the store's highest number is **greater than or equal to** ours: fail, saying which number the store has and suggesting a `buildNumber.offset`.
 4. Otherwise output `already-published=false`.
 
 ### 7.4 Registry verification (`verify: ["registry"]`)
 
-For `docker` targets: check if `image:{version}` already exists via the registry HTTP API (OCI distribution spec, `HEAD /v2/<name>/manifests/<tag>` with token auth). Support at least ghcr.io and Docker Hub; generic registries with basic auth. Credentials from env (`SHIPLOG_REGISTRY_USERNAME` / `SHIPLOG_REGISTRY_PASSWORD`) or the standard Docker config file. If it exists: `already-published=true`. This replaces the team's old "ask the Docker API whether the image exists" workflow, but only as a safety net: the source of truth is the marker tags.
+For `docker` targets: check if `image:{version}` already exists via the registry HTTP API (OCI distribution spec, `HEAD /v2/<name>/manifests/<tag>` with token auth). Support at least ghcr.io and Docker Hub; generic registries with basic auth. Credentials from env (`LAUNCHSET_REGISTRY_USERNAME` / `LAUNCHSET_REGISTRY_PASSWORD`) or the standard Docker config file. If it exists: `already-published=true`. This replaces the team's old "ask the Docker API whether the image exists" workflow, but only as a safety net: the source of truth is the marker tags.
 
 ---
 
@@ -300,38 +300,38 @@ For `docker` targets: check if `image:{version}` already exists via the registry
 
 Events caused by the default `GITHUB_TOKEN` don't trigger other workflows. A release PR opened with it would never run CI (so required checks block merging) and tags pushed with it wouldn't trigger tag workflows. So:
 
-- The demonsters org has a **GitHub App** ("shiplog"), created by an org owner in the browser. The agent building shiplog can't create it; the docs must explain how, step by step.
+- The demonsters org has a **GitHub App** ("launchset"), created by an org owner in the browser. The agent building launchset can't create it; the docs must explain how, step by step.
 - Repository permissions: **Contents: read & write**, **Pull requests: read & write**, Metadata: read (automatic). Verify during implementation whether anything else is needed (for example Issues: write for labels or comments, Checks: read) and document the final list.
-- Org secrets: `SHIPLOG_APP_ID`, `SHIPLOG_APP_PRIVATE_KEY`.
-- Workflows mint a token with `actions/create-github-app-token` and pass it to the shiplog action as `token`.
+- Org secrets: `LAUNCHSET_APP_ID`, `LAUNCHSET_APP_PRIVATE_KEY`.
+- Workflows mint a token with `actions/create-github-app-token` and pass it to the launchset action as `token`.
 - The PR check may use the default `GITHUB_TOKEN` (it only reads and comments).
 
-### 9.2 PR check (`shiplog-check.yml`)
+### 9.2 PR check (`launchset-check.yml`)
 
 Trigger: `pull_request` (opened, synchronize, reopened, edited, labeled, unlabeled) targeting the base branch or a maintenance branch.
 
 The check passes when:
 - the PR adds or changes at least one valid changeset, **or**
 - the PR author is in `check.bots`, **or**
-- the PR is a shiplog release PR (head branch `shiplog/release/*`).
+- the PR is a launchset release PR (head branch `launchset/release/*`).
 
-It also fails on: invalid changesets anywhere in `.shiplog/`, `minor`/`major` changesets on a maintenance branch, and version mismatches (section 6.7).
+It also fails on: invalid changesets anywhere in `.launchset/`, `minor`/`major` changesets on a maintenance branch, and version mismatches (section 6.7).
 
 It maintains **one sticky comment** per PR (found by a hidden HTML marker, updated in place), like changeset-bot:
 - With changesets: the bump and the version this would produce, and the list of changeset summaries.
-- Without: how to add one (`npx @demonsters/shiplog add`, or write the file by hand with an example), and a link to the docs.
+- Without: how to add one (`npx @demonsters/launchset add`, or write the file by hand with an example), and a link to the docs.
 
-### 9.3 Release workflow (`shiplog-release.yml`)
+### 9.3 Release workflow (`launchset-release.yml`)
 
-Trigger: `push` to the base branch and maintenance branches, plus `workflow_dispatch` (for retrying a publish). Concurrency: `group: shiplog-release-${{ github.ref }}`, `cancel-in-progress: false`.
+Trigger: `push` to the base branch and maintenance branches, plus `workflow_dispatch` (for retrying a publish). Concurrency: `group: launchset-release-${{ github.ref }}`, `cancel-in-progress: false`.
 
-**Job `shiplog`** runs the action with `command: release`, which decides the mode:
+**Job `launchset`** runs the action with `command: release`, which decides the mode:
 
 1. **`publish`**: HEAD is the release commit for the current version (the version changed in this push), and `v{version}` doesn't exist yet. Also when started by `workflow_dispatch` with an unfinished release of the current version.
    - Output: `matrix` (JSON list of targets that have **no marker** yet), `version`, `build-number`, `channel=release`, `release-sha`.
    - Build jobs check out `release-sha`, never a later commit.
 2. **`release-pr`**: pending changesets exist (including generated bot changesets, 9.4), and it's not a publish. Create or update the release PR:
-   - Branch `shiplog/release/<base-branch>`, **rebuilt from the base branch on every run and force-pushed**, so it never has conflicts.
+   - Branch `launchset/release/<base-branch>`, **rebuilt from the base branch on every run and force-pushed**, so it never has conflicts.
    - The commit: deletes consumed changesets, bumps the root version, stamps every target's marketing version, prepends the changelog section.
    - Title `Release v1.5.0`; body is the changelog section that will be added, plus a short "merging this releases all targets" note.
    - If the release PR is open and nothing is pending anymore, close it.
@@ -345,47 +345,47 @@ Pushes after the release commit **do not** auto-retry an unfinished release. If 
 
 ```yaml
 build:
-  needs: shiplog
-  if: needs.shiplog.outputs.mode == 'publish'
+  needs: launchset
+  if: needs.launchset.outputs.mode == 'publish'
   strategy:
     fail-fast: false
     matrix:
-      target: ${{ fromJSON(needs.shiplog.outputs.matrix) }}
+      target: ${{ fromJSON(needs.launchset.outputs.matrix) }}
   steps:
     - uses: actions/checkout@v4
-      with: { ref: "${{ needs.shiplog.outputs.release-sha }}" }
+      with: { ref: "${{ needs.launchset.outputs.release-sha }}" }
     - id: stamp
-      uses: demonsters/shiplog/action@v1
-      with: { command: stamp, target: "${{ matrix.target }}", plan: "${{ needs.shiplog.outputs.plan }}" }
+      uses: demonsters/launchset/action@v1
+      with: { command: stamp, target: "${{ matrix.target }}", plan: "${{ needs.launchset.outputs.plan }}" }
     - id: verify
-      uses: demonsters/shiplog/action@v1
-      with: { command: verify, target: "${{ matrix.target }}", plan: "${{ needs.shiplog.outputs.plan }}" }
+      uses: demonsters/launchset/action@v1
+      with: { command: verify, target: "${{ matrix.target }}", plan: "${{ needs.launchset.outputs.plan }}" }
     # --- your build + upload steps, e.g. per target with if: matrix.target == 'android' ---
-    - uses: demonsters/shiplog/action@v1
+    - uses: demonsters/launchset/action@v1
       with: { command: mark, target: "${{ matrix.target }}", plan: "...", token: "${{ steps.app-token.outputs.token }}" }
 ```
 
 (Exact shape is up to the implementation. `plan` is a JSON output carrying version, build number, channel, release sha and per-target data, so later steps don't recompute anything.)
 
-**Job `finalize`** (`needs: build`, `if: always() && needs.shiplog.outputs.mode == 'publish'`): runs `command: finalize`:
+**Job `finalize`** (`needs: build`, `if: always() && needs.launchset.outputs.mode == 'publish'`): runs `command: finalize`:
 - If every target has a marker: create `v{version}` at `release-sha` and a GitHub Release with that version's changelog section. If this is the base branch, mark it "latest"; maintenance releases are not marked latest.
 - Otherwise: fail with a summary of which targets are missing (job summary + log).
 - Also handles superseding (9.6) and the changelog backport (9.5).
 
 ### 9.4 Bot PRs
 
-- The PR check passes for authors in `check.bots`. **shiplog never pushes to bot branches**: Dependabot and Renovate stop rebasing PRs that others have pushed to.
-- When building the release PR, shiplog lists PRs merged into the branch since the last release tag (commits between `v{last}` and HEAD → associated PRs via the GitHub API), and for each one authored by a bot that **didn't** add a changeset, it writes a generated changeset: `bump: patch`, `source: bot`, `pr: <n>`, body = the PR title (e.g. "Bump react-native from 0.76.1 to 0.76.3"). These are generated fresh on every release-PR run (the branch is rebuilt), so they're never duplicated.
+- The PR check passes for authors in `check.bots`. **launchset never pushes to bot branches**: Dependabot and Renovate stop rebasing PRs that others have pushed to.
+- When building the release PR, launchset lists PRs merged into the branch since the last release tag (commits between `v{last}` and HEAD → associated PRs via the GitHub API), and for each one authored by a bot that **didn't** add a changeset, it writes a generated changeset: `bump: patch`, `source: bot`, `pr: <n>`, body = the PR title (e.g. "Bump react-native from 0.76.1 to 0.76.3"). These are generated fresh on every release-PR run (the branch is rebuilt), so they're never duplicated.
 - Merged bot PRs alone are enough to open a release PR.
 - In the changelog, bot entries go under a **Dependencies** heading.
 
 ### 9.5 Hotfixes / maintenance branches
 
-- `shiplog hotfix <major.minor>` (CLI, run locally): creates `release/<major>.<minor>.x` from the latest `v<major>.<minor>.*` release tag and pushes it. Errors if the branch already exists or no such tag exists.
-- On that branch the whole flow is identical: PRs target it, the check runs, a release PR `shiplog/release/release/1.4.x` is opened (branch naming must handle slashes), merging it publishes.
+- `launchset hotfix <major.minor>` (CLI, run locally): creates `release/<major>.<minor>.x` from the latest `v<major>.<minor>.*` release tag and pushes it. Errors if the branch already exists or no such tag exists.
+- On that branch the whole flow is identical: PRs target it, the check runs, a release PR `launchset/release/release/1.4.x` is opened (branch naming must handle slashes), merging it publishes.
 - Build numbers: `timestamp` keeps working because it increases over time regardless of branch. Hotfix Android builds always get a higher `versionCode` than earlier uploads.
 - Docker tags on maintenance releases: see 6.1 (never `latest`).
-- **Changelog backport**: after `finalize` creates a maintenance release tag, shiplog opens a PR to the base branch titled `Changelog: v1.4.1` that only inserts the `1.4.1` section into the base branch's `CHANGELOG.md` at the right place (sorted by version). It doesn't touch version files or changesets.
+- **Changelog backport**: after `finalize` creates a maintenance release tag, launchset opens a PR to the base branch titled `Changelog: v1.4.1` that only inserts the `1.4.1` section into the base branch's `CHANGELOG.md` at the right place (sorted by version). It doesn't touch version files or changesets.
 - The fix itself still has to land on main through a normal PR with its own changeset. The docs explain this. Version calculation on main skips taken versions (8.1).
 
 ### 9.6 Partial (unfinished) releases
@@ -395,7 +395,7 @@ build:
   - It never gets a `v{old}` tag.
 - `plan` only ever considers the current version.
 
-### 9.7 Previews (`shiplog-preview.yml`)
+### 9.7 Previews (`launchset-preview.yml`)
 
 Triggers:
 - `pull_request` (labeled, synchronize, reopened): only when the PR has `preview.label`. With `rebuildOnPush: false`, only on the `labeled` event.
@@ -413,48 +413,48 @@ Behavior:
 
 ## 10. The GitHub Action
 
-- Lives at `action/` in the shiplog repo: `action/action.yml`, `runs.using: node24`, `main: dist/index.js`.
-- `dist/index.js` is a **single bundled file** that includes the CLI core and all dependencies, and is committed. CI in the shiplog repo fails if `dist` is out of date. Consumer repos never install anything from npm.
-- Used as `demonsters/shiplog/action@v1`.
+- Lives at `action/` in the launchset repo: `action/action.yml`, `runs.using: node24`, `main: dist/index.js`.
+- `dist/index.js` is a **single bundled file** that includes the CLI core and all dependencies, and is committed. CI in the launchset repo fails if `dist` is out of date. Consumer repos never install anything from npm.
+- Used as `demonsters/launchset/action@v1`.
 - Inputs: `command` (`check` | `release` | `stamp` | `verify` | `mark` | `finalize` | `preview-plan` | `preview-comment`), `token`, `target`, `plan`, `working-directory`.
 - Outputs (depending on command): `mode`, `matrix`, `plan`, `version`, `build-number`, `channel`, `release-sha`, `already-published`, `docker-tags`, `docker-labels`, `pr-number`.
 - Writes a readable job summary (`$GITHUB_STEP_SUMMARY`) for every command.
-- Versioning of shiplog itself: tags `v1.2.3` plus a moving major tag `v1`.
+- Versioning of launchset itself: tags `v1.2.3` plus a moving major tag `v1`.
 - Because the repo is private, other demonsters repos can only use the action after an org owner enables **Settings → Actions → General → Access → "Accessible from repositories in the 'demonsters' organization"**. Document this.
 
 ---
 
 ## 11. CLI
 
-Binary: `shiplog`. Package `@demonsters/shiplog` (private on npm). Node ≥ 20.
+Binary: `launchset`. Package `@demonsters/launchset` (private on npm). Node ≥ 20.
 
 Rules for every command: no interactive prompt when stdin isn't a TTY or `--yes`/flags are given; `--json` where output is data; non-zero exit on failure; no color when not a TTY or `NO_COLOR` is set; `--cwd <dir>`.
 
 | Command | What it does |
 |---|---|
-| `shiplog init` | Set up a repo (11.1). |
-| `shiplog add` | Create a changeset. Interactive (bump + summary), or `--bump <type> --message <text>`. `--empty` = `bump: none`. Prints the created path. |
-| `shiplog status` | Pending changesets, bump, next version, consistency check, last release, unfinished releases. `--json`. Exit code 1 with `--require-changeset` if none pending vs a base ref (`--since <ref>`). |
-| `shiplog version` | Apply pending changesets locally (what the release PR commit does). For debugging and manual use. `--dry-run` prints the diff. |
-| `shiplog plan` | Print the release plan (mode, matrix, version, build number) as JSON. `--preview` for preview mode. |
-| `shiplog stamp --target <name>` | Write version + build number into the target's files. Accepts `--plan <json>` or `--version`/`--build-number`/`--channel`. |
-| `shiplog verify --target <name>` | Store/registry verification (7.3, 7.4). |
-| `shiplog mark --target <name>` | Create and push the marker tag. |
-| `shiplog finalize` | Create the release tag + GitHub Release when complete; handle supersede and backport. |
-| `shiplog hotfix <major.minor>` | Create a maintenance branch (9.5). |
-| `shiplog check` | Run the PR check logic (used by the action; also usable locally against a base ref). |
+| `launchset init` | Set up a repo (11.1). |
+| `launchset add` | Create a changeset. Interactive (bump + summary), or `--bump <type> --message <text>`. `--empty` = `bump: none`. Prints the created path. |
+| `launchset status` | Pending changesets, bump, next version, consistency check, last release, unfinished releases. `--json`. Exit code 1 with `--require-changeset` if none pending vs a base ref (`--since <ref>`). |
+| `launchset version` | Apply pending changesets locally (what the release PR commit does). For debugging and manual use. `--dry-run` prints the diff. |
+| `launchset plan` | Print the release plan (mode, matrix, version, build number) as JSON. `--preview` for preview mode. |
+| `launchset stamp --target <name>` | Write version + build number into the target's files. Accepts `--plan <json>` or `--version`/`--build-number`/`--channel`. |
+| `launchset verify --target <name>` | Store/registry verification (7.3, 7.4). |
+| `launchset mark --target <name>` | Create and push the marker tag. |
+| `launchset finalize` | Create the release tag + GitHub Release when complete; handle supersede and backport. |
+| `launchset hotfix <major.minor>` | Create a maintenance branch (9.5). |
+| `launchset check` | Run the PR check logic (used by the action; also usable locally against a base ref). |
 
 The GitHub-facing commands work from the CLI too when given `GITHUB_TOKEN`/`--token` and repo info, but they're mainly called by the action.
 
-### 11.1 `shiplog init`
+### 11.1 `launchset init`
 
 1. **Detect**: root `package.json`; Android (`android/app/build.gradle(.kts)`, `gradle.properties` version keys); iOS (`*.xcodeproj`, `Info.plist`, `.xcconfig`; choose `xcodeproj` when plists use `$(MARKETING_VERSION)`); Capacitor (`capacitor.config.*`); Expo (`app.json` with an `expo` key; for `app.config.*` print the advice from 6.5); Dockerfiles (suggest docker targets, ask for the image name).
 2. **Show versions** found per file. If they don't match, pick the canonical version (default: root `package.json`) and align the files.
 3. **Build numbers**: read the current highest `versionCode` / `CFBundleVersion` from the files (and, if credentials are present, from the stores). If any is higher than what the chosen strategy produces now, set `buildNumber.offset` so new numbers stay higher, and explain.
-4. **Write**: `shiplog.config.ts`, `.shiplog/README.md`, the three workflow files (with commented placeholders for the team's build steps, and example steps for docker/build-push-action and fastlane), `CHANGELOG.md` if missing.
+4. **Write**: `launchset.config.ts`, `.launchset/README.md`, the three workflow files (with commented placeholders for the team's build steps, and example steps for docker/build-push-action and fastlane), `CHANGELOG.md` if missing.
 5. **Baseline**: offer to create the `v{version}` tag on HEAD so the current version counts as released (skip if it exists).
 6. **Convert** existing `.changeset/*.md` (4.2).
-7. **Agent skill**: offer to install `.claude/skills/shiplog/SKILL.md` and add a short shiplog section to `AGENTS.md` (create it if missing) for non-Claude agents.
+7. **Agent skill**: offer to install `.claude/skills/launchset/SKILL.md` and add a short launchset section to `AGENTS.md` (create it if missing) for non-Claude agents.
 8. Print the manual steps that remain: GitHub App + secrets, store credential secrets, action access setting.
 
 `--yes` accepts all defaults; every question has a flag.
@@ -489,7 +489,7 @@ Format, newest first, with a title line kept at the top:
 
 ---
 
-## 13. Tech stack and repo layout (shiplog repo)
+## 13. Tech stack and repo layout (launchset repo)
 
 - TypeScript (strict), ESM, Node ≥ 20 for the CLI; the action runs on `node24`.
 - Package manager: pnpm. Tests: vitest. Lint/format: Biome.
@@ -513,7 +513,7 @@ action/
 templates/
   workflows/     # used by init
 skills/
-  shiplog/SKILL.md
+  launchset/SKILL.md
 docs/            # Astro Starlight site (own package.json)
 test/
   fixtures/      # real-world sample files per platform
@@ -533,13 +533,13 @@ Keep `core/` free of I/O so it can be tested with plain inputs.
 - **GitHub**: mocked HTTP (msw): release PR create/update/close, sticky comments, tags, releases, bot-PR detection, changelog backport PR.
 - **Verify**: mocked Play, App Store Connect and registry responses incl. "already published" and "store is ahead".
 - **End to end**: real temporary git repos with a local bare remote, running the CLI through a full lifecycle: init → add → version → plan → stamp → mark → finalize; a hotfix line; a superseded partial release; a preview.
-- **shiplog's own CI**: lint, typecheck, tests, `action/dist` up to date, docs build.
+- **launchset's own CI**: lint, typecheck, tests, `action/dist` up to date, docs build.
 
 ---
 
-## 15. shiplog releases itself
+## 15. launchset releases itself
 
-shiplog uses shiplog (dogfooding):
+launchset uses launchset (dogfooding):
 - Targets: `npm` (custom, root `package.json`; the workflow runs `npm publish` to the private `@demonsters` scope) and `action` (custom; the workflow moves the `v1` major tag to the release commit).
 - npm auth for publishing: prefer npm trusted publishing (OIDC from GitHub Actions) if it works for a private package from a private repo; otherwise an `NPM_TOKEN` secret. Document which one was chosen.
 
@@ -569,28 +569,28 @@ For humans. Every command, flag, config option and output shown must match the c
 
 Hosting isn't decided yet: the site must build (`pnpm --filter docs build`), but don't deploy it.
 
-### 16.2 Agent skill (`skills/shiplog/SKILL.md`)
+### 16.2 Agent skill (`skills/launchset/SKILL.md`)
 
-For AI agents working **in repos that use shiplog** (not in the shiplog repo itself). Claude Code skill format: frontmatter with `name: shiplog` and a `description` that makes agents load it whenever they change code in a repo containing `shiplog.config.*` or `.shiplog/`, or when they're about to open a PR there. Content:
+For AI agents working **in repos that use launchset** (not in the launchset repo itself). Claude Code skill format: frontmatter with `name: launchset` and a `description` that makes agents load it whenever they change code in a repo containing `launchset.config.*` or `.launchset/`, or when they're about to open a PR there. Content:
 
-- Every PR needs a changeset. Create it with `npx @demonsters/shiplog add --bump <type> --message "<summary>"`, or write the file by hand (show the exact format) if the CLI isn't available (the package is private, so npm auth may be missing).
+- Every PR needs a changeset. Create it with `npx @demonsters/launchset add --bump <type> --message "<summary>"`, or write the file by hand (show the exact format) if the CLI isn't available (the package is private, so npm auth may be missing).
 - How to pick the bump: major (breaking for users or API clients), minor (new features), patch (fixes), none (no release needed: docs, CI, tests only).
-- How to write a good summary: user-facing, one line, past or present tense consistently, no PR number (shiplog adds it).
-- Never edit version numbers, build numbers or `CHANGELOG.md` by hand; never create `v*` or `shiplog/*` tags; never edit the release PR.
+- How to write a good summary: user-facing, one line, past or present tense consistently, no PR number (launchset adds it).
+- Never edit version numbers, build numbers or `CHANGELOG.md` by hand; never create `v*` or `launchset/*` tags; never edit the release PR.
 - On a `release/X.Y.x` branch only patch or none.
-- Preview builds: add the `shiplog:preview` label.
-- `npx @demonsters/shiplog status` to check pending changes and the next version.
+- Preview builds: add the `launchset:preview` label.
+- `npx @demonsters/launchset status` to check pending changes and the next version.
 
-The skill ships inside the npm package and is installed into consumer repos by `shiplog init` (11.1 step 7), together with an equivalent short section for `AGENTS.md`.
+The skill ships inside the npm package and is installed into consumer repos by `launchset init` (11.1 step 7), together with an equivalent short section for `AGENTS.md`.
 
 ---
 
 ## 17. Manual steps for the demonsters team (not for the building agent)
 
-1. Create the GitHub App, install it on the repos using shiplog, add `SHIPLOG_APP_ID` and `SHIPLOG_APP_PRIVATE_KEY` as org secrets.
-2. Enable action access for org repos in `demonsters/shiplog` settings (section 10).
+1. Create the GitHub App, install it on the repos using launchset, add `LAUNCHSET_APP_ID` and `LAUNCHSET_APP_PRIVATE_KEY` as org secrets.
+2. Enable action access for org repos in `demonsters/launchset` settings (section 10).
 3. Add store credentials as secrets where `verify: ["store"]` is used.
-4. Set up npm publishing auth for `@demonsters/shiplog` (section 15).
+4. Set up npm publishing auth for `@demonsters/launchset` (section 15).
 5. Decide where the docs site is hosted.
 
 ---
@@ -599,13 +599,13 @@ The skill ships inside the npm package and is installed into consumer repos by `
 
 These weren't discussed explicitly; they follow from the agreed design. Change them here if they're wrong.
 
-- Changeset folder `.shiplog/`, config file `shiplog.config.ts`, frontmatter key `bump`.
-- Marker tags are namespaced `shiplog/<target>@<version>` to avoid clashing with other tools.
+- Changeset folder `.launchset/`, config file `launchset.config.ts`, frontmatter key `bump`.
+- Marker tags are namespaced `launchset/<target>@<version>` to avoid clashing with other tools.
 - Partial releases get a `v{old}-partial` tag, because a GitHub Release needs a tag.
 - Release builds always check out the release commit (`release-sha`); later pushes don't auto-retry an unfinished release.
 - "Next free version" on main skips versions already taken by hotfixes.
 - Maintenance releases never move Docker `latest`/`{major}` tags and aren't marked "latest" on GitHub.
-- After a maintenance release, shiplog opens a changelog-only backport PR to main.
+- After a maintenance release, launchset opens a changelog-only backport PR to main.
 - Store verification also detects "this build is already uploaded" so a re-run skips the upload instead of failing.
-- A `custom` target type covers npm packages, Helm charts etc., and lets shiplog release itself.
+- A `custom` target type covers npm packages, Helm charts etc., and lets launchset release itself.
 - The PR check also fails when version files don't match the root version.
