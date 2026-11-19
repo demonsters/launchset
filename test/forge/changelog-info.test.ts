@@ -1,9 +1,9 @@
 import { join } from "node:path";
 import { HttpResponse, http } from "msw";
 import { describe, expect, it } from "vitest";
+import { changelogInfoFor } from "../../src/forge/changelog-info.ts";
+import { createGitHub } from "../../src/forge/github/index.ts";
 import { Git } from "../../src/git/index.ts";
-import { changelogInfoFor } from "../../src/github/changelog-info.ts";
-import { createGitHub } from "../../src/github/index.ts";
 import { initRepo } from "../git/helpers.ts";
 import { REPO, rawPr, server, TOKEN } from "./helpers.ts";
 
@@ -67,7 +67,7 @@ describe("changelogInfoFor", () => {
       ],
       {
         git: new Git({ cwd: repo.dir }),
-        github: createGitHub({ token: TOKEN, repository: "acme/app" }),
+        forge: createGitHub({ token: TOKEN, repository: "acme/app" }),
         branch: "main",
         log: { debug: (m) => logs.push(`debug: ${m}`), warn: (m) => logs.push(`warn: ${m}`) },
       },
@@ -135,7 +135,7 @@ describe("changelogInfoFor", () => {
     );
     const info = await changelogInfoFor(paths, {
       git,
-      github: createGitHub({ token: TOKEN, repository: "acme/app" }),
+      forge: createGitHub({ token: TOKEN, repository: "acme/app" }),
       branch: "release/1.4.x",
     });
     expect(Object.fromEntries(info)).toEqual({
@@ -168,7 +168,7 @@ describe("changelogInfoFor", () => {
     );
     const info = await changelogInfoFor([".launchset/d.md"], {
       git: new Git({ cwd: repo.dir }),
-      github: createGitHub({ token: TOKEN, repository: "acme/app" }),
+      forge: createGitHub({ token: TOKEN, repository: "acme/app" }),
     });
     expect(info.get(".launchset/d.md")?.pr).toBe(30);
   });
@@ -178,7 +178,7 @@ describe("changelogInfoFor", () => {
     const logs: string[] = [];
     const info = await changelogInfoFor([".launchset/a.md"], {
       git: new Git({ cwd: repo.dir }),
-      github: undefined,
+      forge: undefined,
       log: { debug: (m) => logs.push(m) },
     });
     expect(info.size).toBe(0);

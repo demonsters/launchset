@@ -77,7 +77,7 @@ export async function status(
     branch,
     ...(options.fetch !== undefined ? { fetch: options.fetch } : {}),
   });
-  const wantBots = options.botPrs ?? context.github !== undefined;
+  const wantBots = options.botPrs ?? context.forge !== undefined;
   let botPrs: StatusData["botPrs"] = [];
   if (wantBots) {
     const releaseCommit = await findReleaseCommitFor(context, repo.tags, repo.version);

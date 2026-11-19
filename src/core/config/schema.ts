@@ -349,15 +349,35 @@ const placeholderTemplate = (required: string[]) =>
     })
     .superRefine(knownPlaceholders(required));
 
+/**
+ * `changelog`. `links` (PR / MR links and authors, spec 12) was called `github`; the old name
+ * is still accepted and mapped onto `links`. Giving both with different values is an error.
+ */
+const changelogSchema = z
+  .strictObject({
+    file: nonEmpty.default("CHANGELOG.md"),
+    /** Add PR links and authors (spec 12); default true. */
+    links: z.boolean().optional().meta({ default: true }),
+    /** Deprecated alias of `links`. */
+    github: z
+      .boolean()
+      .optional()
+      .meta({ deprecated: true, description: 'Deprecated: the old name of "links".' }),
+  })
+  .superRefine((value, ctx) => {
+    if (value.links !== undefined && value.github !== undefined && value.links !== value.github) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["github"],
+        message: `"github" is the old name of "links", which is set to ${value.links}: keep only "links"`,
+      });
+    }
+  })
+  .transform(({ file, links, github }) => ({ file, links: links ?? github ?? true }));
+
 export const configSchema = z.strictObject({
   version: z.strictObject({ file: nonEmpty.default("package.json") }).prefault({}),
-  changelog: z
-    .strictObject({
-      file: nonEmpty.default("CHANGELOG.md"),
-      /** Add PR links and authors (spec 12). */
-      github: z.boolean().default(true),
-    })
-    .prefault({}),
+  changelog: changelogSchema.prefault({}),
   baseBranch: nonEmpty.default("main"),
   /** Branch pattern; its single `*` stands for `<major>.<minor>` (spec 8.2). */
   maintenanceBranches: nonEmpty

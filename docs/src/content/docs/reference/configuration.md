@@ -14,7 +14,7 @@ import { defineConfig } from "@demonsters/launchset";
 
 export default defineConfig({
   version: { file: "package.json" },
-  changelog: { file: "CHANGELOG.md", github: true },
+  changelog: { file: "CHANGELOG.md", links: true },
   baseBranch: "main",
   maintenanceBranches: "release/*.x",
 
@@ -122,7 +122,8 @@ Everything is optional except `targets`. `$schema` is only for editors: point it
 | `version.file` | `string` | `"package.json"` | A JSON file with a top-level `"version"`. The release PR bumps it, and a `package-lock.json` or `npm-shrinkwrap.json` next to it gets its root version updated too. |
 | `changelog` | `object` |  | The changelog file. |
 | `changelog.file` | `string` | `"CHANGELOG.md"` | The changelog, relative to the repo root. New sections are inserted before the first version heading. |
-| `changelog.github` | `boolean` | `true` | Add PR links and authors to changelog lines. Needs a token; without one, or when no PR is found, the links are left out. |
+| `changelog.links` | `boolean` | `true` | Add PR links and authors to changelog lines. Needs a token; without one, or when no PR is found, the links are left out. |
+| `changelog.github` | `boolean` |  | Deprecated: the old name of `changelog.links`, still accepted. Giving both with different values is an error. |
 | `baseBranch` | `string` | `"main"` | The branch releases are made from. |
 | `maintenanceBranches` | `string` | `"release/*.x"` | Pattern of the maintenance branches used for hotfixes. The single `*` stands for `<major>.<minor>`. It must not match `baseBranch`. |
 | `tags` | `object` |  | Names of the git tags launchset creates. |

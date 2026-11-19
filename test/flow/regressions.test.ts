@@ -200,7 +200,7 @@ describe("failures and re-runs", () => {
     const github = new FakeGitHub(project.remote);
     const context = await contextFor(project.repo);
     await expect(
-      context.github?.createPr({ head: "nope", base: "main", title: "x", body: "" }),
+      context.forge?.createPr({ head: "nope", base: "main", title: "x", body: "" }),
     ).rejects.toMatchObject({ status: 422 });
     expect(github.prs).toEqual([]);
   });

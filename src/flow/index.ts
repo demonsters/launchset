@@ -14,6 +14,7 @@ export {
   check,
   type PushCheckData,
 } from "./check.ts";
+export * from "./ci/index.ts";
 export * from "./context.ts";
 export {
   type ExecutedAction,

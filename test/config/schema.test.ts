@@ -26,7 +26,7 @@ describe("resolveConfig: defaults and normalization", () => {
     const config = resolveConfig({ targets: { web } });
     expect(config).toMatchObject({
       version: { file: "package.json" },
-      changelog: { file: "CHANGELOG.md", github: true },
+      changelog: { file: "CHANGELOG.md", links: true },
       baseBranch: "main",
       maintenanceBranches: "release/*.x",
       tags: {
@@ -630,6 +630,39 @@ describe("review regressions", () => {
     expect(() =>
       resolveConfig(docker(["v{version}", "sha-{shortSha}", "{major}_{minor}", "latest"])),
     ).not.toThrow();
+  });
+});
+
+describe("changelog.github (deprecated alias of changelog.links)", () => {
+  const changelog = (input: Record<string, unknown>) =>
+    resolveConfig({ changelog: input, targets: { web } }).changelog;
+
+  it("maps github onto links", () => {
+    expect(changelog({ github: false })).toEqual({ file: "CHANGELOG.md", links: false });
+    expect(changelog({ github: true })).toEqual({ file: "CHANGELOG.md", links: true });
+    expect(changelog({ links: false })).toEqual({ file: "CHANGELOG.md", links: false });
+    expect(changelog({ links: false, github: false })).toEqual({
+      file: "CHANGELOG.md",
+      links: false,
+    });
+  });
+
+  it("rejects both with different values", () => {
+    expect(issues({ changelog: { links: true, github: false }, targets: { web } })).toEqual([
+      {
+        path: "changelog.github",
+        message: '"github" is the old name of "links", which is set to true: keep only "links"',
+      },
+    ]);
+  });
+
+  it("stays valid in the JSON Schema, marked deprecated", () => {
+    const schema = configJsonSchema() as {
+      properties: { changelog: { properties: Record<string, Record<string, unknown>> } };
+    };
+    const props = schema.properties.changelog.properties;
+    expect(props.links).toMatchObject({ type: "boolean", default: true });
+    expect(props.github).toMatchObject({ type: "boolean", deprecated: true });
   });
 });
 

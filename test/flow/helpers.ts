@@ -5,9 +5,10 @@
 
 import { execFileSync } from "node:child_process";
 import { HttpResponse, http } from "msw";
+import { parseEvent } from "../../src/flow/ci/github.ts";
 import { createContext, type FlowContext } from "../../src/flow/context.ts";
+import { REPO, server, TOKEN } from "../forge/helpers.ts";
 import { cloneRepo, repoWithRemote, sh, type TestRepo } from "../git/helpers.ts";
-import { REPO, server, TOKEN } from "../github/helpers.ts";
 
 export { server, TOKEN };
 
@@ -158,7 +159,7 @@ export async function contextFor(
     },
     now: NOW,
   });
-  if (overrides.event) context.event = overrides.event;
+  if (overrides.event) context.ci.event = parseEvent(overrides.event);
   return context;
 }
 

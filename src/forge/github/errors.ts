@@ -1,29 +1,11 @@
 /** Wrapping Octokit errors into {@link GitHubError}s with a hint (spec 9.1). */
 
-import { EXPECTED_ERROR } from "../core/errors.ts";
+import { ForgeError } from "../errors.ts";
 import { permissionLabel } from "./permissions.ts";
 
 /** A GitHub API call failed. The message says which call and why; `hint` what to do. */
-export class GitHubError extends Error {
+export class GitHubError extends ForgeError {
   override name = "GitHubError";
-  readonly [EXPECTED_ERROR] = true;
-  /** HTTP status, or undefined when no response arrived. */
-  readonly status: number | undefined;
-  /** Method and path, e.g. `POST /repos/acme/app/pulls`. */
-  readonly endpoint: string;
-  readonly hint: string | undefined;
-  constructor(
-    message: string,
-    status: number | undefined,
-    endpoint: string,
-    hint: string | undefined,
-    options?: { cause?: unknown },
-  ) {
-    super(message, options);
-    this.status = status;
-    this.endpoint = endpoint;
-    this.hint = hint;
-  }
 }
 
 /** What a call needs, for hints. */

@@ -17,6 +17,7 @@
 
 import { isChangesetPath } from "../core/changesets.ts";
 import { errorMessage, LaunchsetError } from "../core/errors.ts";
+import { forgeWords } from "../core/forge-links.ts";
 import { actionOutputs, parsePlan } from "../core/outputs.ts";
 import {
   alert,
@@ -43,15 +44,9 @@ import {
 } from "../core/preview.ts";
 import { escapeRegExp } from "../core/regex.ts";
 import type { Plan } from "../core/types.ts";
+import type { Forge, Job } from "../forge/types.ts";
 import { GitError, type PushResult, TagCleanupError, TagExistsError } from "../git/index.ts";
-import type { GitHub, Job } from "../github/index.ts";
-import {
-  branchFromRef,
-  eventInfo,
-  type FlowContext,
-  type FlowResult,
-  requireGitHub,
-} from "./context.ts";
+import { branchFromRef, type FlowContext, type FlowResult, requireForge } from "./context.ts";
 import {
   baseBranchRef,
   changesetDir,
@@ -99,9 +94,9 @@ interface Source {
 }
 
 async function currentBranch(context: FlowContext): Promise<string> {
-  const ref = eventInfo(context)?.ref ?? (context.env.GITHUB_REF || undefined);
+  const ref = context.ci.event?.ref ?? context.ci.ref;
   if (ref?.startsWith("refs/")) return branchOfRef(ref);
-  const name = context.env.GITHUB_REF_NAME || undefined;
+  const name = context.ci.refName;
   if (name) return name;
   const branch = await context.git.currentBranch();
   if (branch) return branch;
@@ -114,9 +109,9 @@ async function deriveSource(
   context: FlowContext,
   targets: readonly string[] | undefined,
 ): Promise<Source> {
-  const event = eventInfo(context);
+  const event = context.ci.event;
 
-  if (event?.name === "pull_request") {
+  if (event?.kind === "pr") {
     const { pr } = event;
     const number = pr?.number;
     const branch = pr?.headRef;
@@ -132,13 +127,12 @@ async function deriveSource(
     return { trigger, branch, headSha };
   }
 
-  if (event && event.name !== "push" && event.name !== "workflow_dispatch") {
+  if (event && event.kind !== "push" && event.kind !== "dispatch") {
     throw invalidEvent(`can't build a preview for the ${event.name} event`);
   }
   const branch = await currentBranch(context);
-  const headSha =
-    context.env.GITHUB_SHA || eventInfo(context)?.sha || (await context.git.headSha());
-  if (event?.name === "push") {
+  const headSha = context.ci.sha || event?.sha || (await context.git.headSha());
+  if (event?.kind === "push") {
     return { trigger: { kind: "push" }, branch, headSha };
   }
   // workflow_dispatch, or no event at all (the CLI): any branch, the targets input.
@@ -355,6 +349,7 @@ export async function previewPlan(
     tags: snapshotTags([], config),
     now: context.now,
     ...(context.run ? { run: context.run } : {}),
+    host: context.host,
   });
   if (early.kind === "skip") {
     return skipResult({ code: early.code, reason: early.reason }, early.summary);
@@ -374,6 +369,7 @@ export async function previewPlan(
     changesets: validChangesets(files),
     tags,
     now: context.now,
+    host: context.host,
   };
   if (context.run) input.run = context.run;
   if (context.repository) input.repository = context.repository;
@@ -497,15 +493,15 @@ export function targetResults(plan: Plan, jobs: readonly Job[]): Record<string, 
 }
 
 /** The jobs of the current run. The App token first, then the workflow's own `GITHUB_TOKEN`. */
-async function listRunJobs(context: FlowContext, github: GitHub, runId: number): Promise<Job[]> {
+async function listRunJobs(context: FlowContext, forge: Forge, runId: number): Promise<Job[]> {
   try {
-    return await github.listJobs(runId);
+    return await forge.listJobs(runId);
   } catch (error) {
-    if (!context.workflowGitHub) throw error;
+    if (!context.fallbackForge) throw error;
     context.log.warn(
       `Couldn't list the jobs with the App token (${errorMessage(error)}); trying GITHUB_TOKEN`,
     );
-    return context.workflowGitHub.listJobs(runId);
+    return context.fallbackForge.listJobs(runId);
   }
 }
 
@@ -564,7 +560,8 @@ export async function previewComment(
       { hint: "Pass the output of `preview-plan` as `plan` in the preview comment job." },
     );
   }
-  const github = requireGitHub(context, "The preview comment");
+  const forge = requireForge(context, "The preview comment");
+  const words = forgeWords(context.host);
 
   // Per-target job results.
   const notes: string[] = [];
@@ -575,7 +572,7 @@ export async function previewComment(
     notes.push("The workflow run id is unknown, so the per-target results can't be read.");
   } else {
     try {
-      results = targetResults(plan, await listRunJobs(context, github, runId));
+      results = targetResults(plan, await listRunJobs(context, forge, runId));
       listed = true;
     } catch (error) {
       // The comment is still worth posting; the failure is reported in it and in the summary.
@@ -600,10 +597,12 @@ export async function previewComment(
   if (plan.prNumber !== undefined) {
     data.kind = "pr";
     const body = comment();
-    const posted = await github.upsertStickyComment(plan.prNumber, PREVIEW_COMMENT_ID, body);
+    const posted = await forge.upsertStickyComment(plan.prNumber, PREVIEW_COMMENT_ID, body);
     data.commentUrl = posted.url;
     outputs["comment-url"] = posted.url;
-    lines.push(`Preview comment ${posted.action} on PR #${plan.prNumber}: ${posted.url}`);
+    lines.push(
+      `Preview comment ${posted.action} on ${words.prName} ${words.prText(plan.prNumber)}: ${posted.url}`,
+    );
     return { ok: true, outputs, summary: body, lines, data };
   }
 
@@ -619,10 +618,10 @@ export async function previewComment(
     });
     const body = `${release.body}${compared.note ? `\n${compared.note}\n` : ""}`;
     const fields = { name: release.name, body, prerelease: true, makeLatest: false };
-    const existing = await github.getReleaseByTag(release.tag);
+    const existing = await forge.getReleaseByTag(release.tag);
     const published = existing
-      ? await github.updateRelease(existing.id, fields)
-      : await github.createRelease({ tag: release.tag, ...fields });
+      ? await forge.updateRelease(existing, fields)
+      : await forge.createRelease({ tag: release.tag, ...fields });
     data.releaseUrl = published.url;
     outputs["release-url"] = published.url;
     lines.push(

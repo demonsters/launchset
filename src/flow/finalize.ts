@@ -17,9 +17,9 @@ import {
 } from "../core/finalize.ts";
 import { partialTag, releaseTag } from "../core/tags.ts";
 import type { Plan } from "../core/types.ts";
-import { mapLimit } from "../github/concurrency.ts";
-import type { GitHub } from "../github/index.ts";
-import { type FlowContext, type FlowResult, requireGitHub } from "./context.ts";
+import { mapLimit } from "../forge/concurrency.ts";
+import type { Forge } from "../forge/types.ts";
+import { type FlowContext, type FlowResult, requireForge } from "./context.ts";
 import {
   changelogFilePath,
   readTagSnapshot,
@@ -49,13 +49,13 @@ export interface FinalizeData {
   backportPr?: { number: number; url: string; action: "created" | "updated" | "unchanged" };
 }
 
-/** Existing GitHub Releases for `tags` (missing ones left out). */
+/** Existing releases for `tags` (missing ones left out). */
 export async function existingReleases(
-  github: GitHub,
+  forge: Forge,
   tags: Iterable<string>,
 ): Promise<Map<string, ExistingRelease>> {
   const unique = [...new Set(tags)];
-  const found = await mapLimit(unique, 4, (tag) => github.getReleaseByTag(tag));
+  const found = await mapLimit(unique, 4, (tag) => forge.getReleaseByTag(tag));
   const releases = new Map<string, ExistingRelease>();
   unique.forEach((tag, index) => {
     const release = found[index];
@@ -74,7 +74,7 @@ export async function existingReleases(
 /** Run finalize actions in order (tags, releases, backport). */
 export async function executeFinalizeActions(
   context: FlowContext,
-  github: GitHub,
+  forge: Forge,
   actions: readonly FinalizeAction[],
 ): Promise<{ executed: ExecutedAction[]; backportPr?: FinalizeData["backportPr"] }> {
   const executed: ExecutedAction[] = [];
@@ -85,7 +85,7 @@ export async function executeFinalizeActions(
         executed.push({ action, result: await ensureTag(context, action.tag, action.sha) });
         break;
       case "create-release": {
-        const created = await github.createRelease({
+        const created = await forge.createRelease({
           tag: action.tag,
           name: action.name,
           body: action.body,
@@ -96,17 +96,20 @@ export async function executeFinalizeActions(
         break;
       }
       case "update-release": {
-        const updated = await github.updateRelease(action.id, {
-          name: action.name,
-          body: action.body,
-          prerelease: action.prerelease,
-          ...(action.makeLatest !== undefined ? { makeLatest: action.makeLatest } : {}),
-        });
+        const updated = await forge.updateRelease(
+          { id: action.id, tag: action.tag },
+          {
+            name: action.name,
+            body: action.body,
+            prerelease: action.prerelease,
+            ...(action.makeLatest !== undefined ? { makeLatest: action.makeLatest } : {}),
+          },
+        );
         executed.push({ action, result: updated.url });
         break;
       }
       case "backport-changelog": {
-        const pr = await backport(context, github, action);
+        const pr = await backport(context, forge, action);
         if (pr) {
           backportPr = { number: pr.pr.number, url: pr.pr.url, action: pr.action };
           executed.push({ action, result: pr.pr.url });
@@ -128,7 +131,7 @@ export async function executeFinalizeActions(
  */
 async function backport(
   context: FlowContext,
-  github: GitHub,
+  forge: Forge,
   action: Extract<FinalizeAction, { kind: "backport-changelog" }>,
 ): Promise<UpsertPrResult | null> {
   const { git } = context;
@@ -149,7 +152,7 @@ async function backport(
   });
   // Another finalize run pushed the backport branch meanwhile: its PR update wins.
   if (rebuilt.superseded) return null;
-  return upsertPr(github, {
+  return upsertPr(forge, {
     head: action.branch,
     base: action.base,
     title: action.title,
@@ -163,7 +166,7 @@ export async function finalize(
   options: FinalizeOptions,
 ): Promise<FlowResult<FinalizeData>> {
   const plan = requireReleasePlan(resolvePlan(options.plan), "finalize");
-  const github = requireGitHub(context, "finalize");
+  const forge = requireForge(context, "finalize");
   const { git, config } = context;
   await syncTags(context, options.fetch ?? true);
   const tags = await readTagSnapshot(context);
@@ -177,7 +180,7 @@ export async function finalize(
     const partials = finalizeCandidates(config, tags, plan.version).flatMap((c) =>
       tags.index.partials.has(c.version) ? [partialTag(config.tags, c.version)] : [],
     );
-    const partialReleases = await existingReleases(github, partials);
+    const partialReleases = await existingReleases(forge, partials);
     for (const tag of partials) known.set(tag, partialReleases.get(tag));
     const withRelease = new Set(partialReleases.keys());
     unfinished = await unfinishedVersionsBefore(
@@ -200,7 +203,7 @@ export async function finalize(
     lookup.push(partialTag(config.tags, u.version), releaseTag(config.tags, u.version));
   }
   const fetched = await existingReleases(
-    github,
+    forge,
     lookup.filter((tag) => !known.has(tag)),
   );
   const releases = new Map<string, ExistingRelease>();
@@ -218,8 +221,9 @@ export async function finalize(
     ...(baseChangelog !== undefined ? { baseChangelog } : {}),
     releases,
     now: context.now,
+    host: context.host,
   });
-  const { executed, backportPr } = await executeFinalizeActions(context, github, result.actions);
+  const { executed, backportPr } = await executeFinalizeActions(context, forge, result.actions);
 
   const outputs: Record<string, string> = {
     version: plan.version,

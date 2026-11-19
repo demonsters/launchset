@@ -5,7 +5,7 @@
  *   cli-commands      the CLI reference (the real `--help` output of every command)
  *   action-inputs     the action's inputs   (action/action.yml)
  *   action-outputs    the action's outputs  (action/action.yml)
- *   app-permissions   the GitHub App permissions (src/github/permissions.ts)
+ *   app-permissions   the GitHub App permissions (src/forge/github/permissions.ts)
  *
  * A page marks a block like this and the script rewrites what is between the markers:
  *
@@ -25,7 +25,7 @@ import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
 import { runCli } from "../../src/cli/program.ts";
 import { configJsonSchema } from "../../src/core/config/json-schema.ts";
-import { REQUIRED_APP_PERMISSIONS } from "../../src/github/permissions.ts";
+import { REQUIRED_APP_PERMISSIONS } from "../../src/forge/github/permissions.ts";
 import { CLI_INTROS, COMMON_FLAGS_NOTE } from "./cli-intros.ts";
 import { CONFIG_DESCRIPTIONS } from "./descriptions.ts";
 

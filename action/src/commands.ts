@@ -7,7 +7,6 @@ import { LaunchsetError } from "../../src/core/errors.ts";
 import {
   add,
   check,
-  eventInfo,
   type FlowContext,
   type FlowResult,
   finalize,
@@ -112,7 +111,7 @@ export async function dispatch(
 
 /** The pull request number of the event, when it is a `pull_request` run. */
 function eventPrNumber(context: FlowContext): string {
-  const number = eventInfo(context)?.pr?.number;
+  const number = context.ci.event?.pr?.number;
   return number === undefined ? "" : String(number);
 }
 

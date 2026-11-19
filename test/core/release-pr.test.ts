@@ -100,8 +100,8 @@ describe("buildReleasePr (9.3, 9.4, 9.8, 12)", () => {
     expect(content.autoTargets).toEqual(["docker-api", "web", "android"]);
   });
 
-  it("leaves out links with changelog.github: false", () => {
-    const noGithub = makeConfig({ changelog: { github: false } });
+  it("leaves out links with changelog.links: false", () => {
+    const noGithub = makeConfig({ changelog: { links: false } });
     const result = buildReleasePr({
       config: noGithub,
       plan: plan({ config: noGithub, changesets: pending, botPrs }),

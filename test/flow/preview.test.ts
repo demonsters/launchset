@@ -5,6 +5,7 @@ import { LaunchsetError } from "../../src/core/errors.ts";
 import { snapshotTags, validChangesets } from "../../src/core/plan-common.ts";
 import { planRelease } from "../../src/core/release.ts";
 import type { Plan } from "../../src/core/types.ts";
+import { type ActionsEvent, githubEnvironment } from "../../src/flow/ci/github.ts";
 import { type FlowContext, silentLogger } from "../../src/flow/context.ts";
 import { readChangesetFiles } from "../../src/flow/gather.ts";
 import {
@@ -14,10 +15,11 @@ import {
   previewComment,
   previewPlan,
 } from "../../src/flow/preview.ts";
+import { createGitHub } from "../../src/forge/github/index.ts";
+import type { Job } from "../../src/forge/types.ts";
 import { Git, GitError } from "../../src/git/index.ts";
-import { createGitHub, type Job } from "../../src/github/index.ts";
+import { API, REPO, server, TOKEN } from "../forge/helpers.ts";
 import { cloneRepo, repoWithRemote, type TestRepo } from "../git/helpers.ts";
-import { API, REPO, server, TOKEN } from "../github/helpers.ts";
 
 const NOW = new Date("2026-11-18T12:00:00Z");
 const RUN = {
@@ -69,7 +71,7 @@ function context(
   repo: TestRepo,
   options: {
     cfg?: typeof config;
-    event?: FlowContext["event"];
+    event?: ActionsEvent;
     env?: Record<string, string>;
     github?: boolean;
   } = {},
@@ -84,14 +86,15 @@ function context(
     repository: "acme/app",
     serverUrl: "https://github.com",
     env: options.env ?? {},
+    host: "github",
+    ci: githubEnvironment(options.env ?? {}, options.event),
     run: RUN,
     now: NOW,
     log: silentLogger,
   };
   if (options.github !== false) {
-    ctx.github = createGitHub({ token: TOKEN, repository: "acme/app", apiUrl: API });
+    ctx.forge = createGitHub({ token: TOKEN, repository: "acme/app", apiUrl: API });
   }
-  if (options.event) ctx.event = options.event;
   return ctx;
 }
 
@@ -105,7 +108,7 @@ function prEvent(
     headRepo?: string | null;
     label?: string;
   } = {},
-): FlowContext["event"] {
+): ActionsEvent {
   const labels = over.labels ?? ["launchset:preview"];
   const headRepo = over.headRepo === undefined ? "acme/app" : over.headRepo;
   return {
@@ -129,15 +132,12 @@ function prEvent(
   };
 }
 
-const pushEvent = (branch: string): FlowContext["event"] => ({
+const pushEvent = (branch: string): ActionsEvent => ({
   name: "push",
   payload: { ref: `refs/heads/${branch}` },
 });
 
-const dispatchEvent = (
-  branch: string,
-  inputs: Record<string, string> = {},
-): FlowContext["event"] => ({
+const dispatchEvent = (branch: string, inputs: Record<string, string> = {}): ActionsEvent => ({
   name: "workflow_dispatch",
   payload: { ref: `refs/heads/${branch}`, inputs },
 });

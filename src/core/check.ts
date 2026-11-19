@@ -35,7 +35,7 @@ import {
 /** Docs page linked from the sticky comment when a PR has no changeset. */
 export const DEFAULT_DOCS_URL = docsPage("changesets");
 
-/** Sticky comment id (`<!-- launchset:check -->`, see `github.upsertStickyComment`). */
+/** Sticky comment id (`<!-- launchset:check -->`, see `Forge.upsertStickyComment`). */
 export const CHECK_COMMENT_ID = "check";
 
 export interface ChangedFileInput {

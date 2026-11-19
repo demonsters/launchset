@@ -1,8 +1,8 @@
 import { HttpResponse, http } from "msw";
 import { describe, expect, it } from "vitest";
+import { findBotPrsWithoutChangeset } from "../../src/forge/bot-prs.ts";
+import { createGitHub } from "../../src/forge/github/index.ts";
 import { Git } from "../../src/git/index.ts";
-import { findBotPrsWithoutChangeset } from "../../src/github/bot-prs.ts";
-import { createGitHub } from "../../src/github/index.ts";
 import { initRepo } from "../git/helpers.ts";
 import { linkHeader, REPO, rawPr, server, TOKEN } from "./helpers.ts";
 
@@ -147,7 +147,7 @@ describe("findBotPrsWithoutChangeset", () => {
     server.use(...handlers(s, log));
     const options = {
       git: new Git({ cwd: repo.dir }),
-      github: createGitHub({ token: TOKEN, repository: "acme/app" }),
+      forge: createGitHub({ token: TOKEN, repository: "acme/app" }),
       head: "HEAD",
       branch: "main",
       bots: ["dependabot[bot]", "renovate[bot]"],
@@ -182,7 +182,7 @@ describe("findBotPrsWithoutChangeset", () => {
     server.use(...handlers(s, log));
     const base = {
       git: new Git({ cwd: repo.dir }),
-      github: createGitHub({ token: TOKEN, repository: "acme/app" }),
+      forge: createGitHub({ token: TOKEN, repository: "acme/app" }),
       since: undefined,
       bots: ["dependabot[bot]"],
       isChangesetPath,
@@ -206,8 +206,8 @@ describe("findBotPrsWithoutChangeset", () => {
   it("returns nothing without bots or commits, and fails loudly on API errors", async () => {
     const { repo, s } = fixture();
     const git = new Git({ cwd: repo.dir });
-    const github = createGitHub({ token: TOKEN, repository: "acme/app" });
-    const base = { git, github, since: "v1.0.0", head: "HEAD", branch: "main", isChangesetPath };
+    const forge = createGitHub({ token: TOKEN, repository: "acme/app" });
+    const base = { git, forge, since: "v1.0.0", head: "HEAD", branch: "main", isChangesetPath };
     expect(await findBotPrsWithoutChangeset({ ...base, bots: [] })).toEqual([]);
     expect(
       await findBotPrsWithoutChangeset({ ...base, since: "HEAD", bots: ["dependabot[bot]"] }),

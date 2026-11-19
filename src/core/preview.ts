@@ -8,6 +8,7 @@
 import { findPreviewBranch, isMaintenanceBranch, matchBranch } from "./branches.ts";
 import type { ResolvedConfig } from "./config/schema.ts";
 import { LaunchsetError } from "./errors.ts";
+import { type ForgeHost, forgeWords } from "./forge-links.ts";
 import {
   buildTargetPlans,
   code,
@@ -73,6 +74,8 @@ export interface PreviewInput {
   repository?: string;
   /** Prerelease only: use at least this `n` (retry after a reservation conflict). */
   minPrereleaseNumber?: number;
+  /** Code host, for how PRs are written in messages (`PR #12`); default `github`. */
+  host?: ForgeHost;
 }
 
 export type PreviewKind = "pr" | "branch" | "prerelease";
@@ -129,18 +132,20 @@ export function planPreview(input: PreviewInput): PreviewDecision {
   let targets: "all" | readonly string[] = config.preview.targets;
   let preid: string | undefined;
   const maintenance = isMaintenanceBranch(config, input.branch);
+  const words = forgeWords(input.host);
+  const prLabel = (n: number) => `${words.prName} ${words.prText(n)}`;
 
   if (trigger.kind === "pr") {
     if (trigger.fork) {
       return skip(
         "fork",
-        `PR #${trigger.number} comes from a fork: secrets aren't available there, so no preview is built.`,
+        `${prLabel(trigger.number)} comes from a fork: secrets aren't available there, so no preview is built.`,
       );
     }
     if (!trigger.labels.includes(config.preview.label)) {
       return skip(
         "no-label",
-        `PR #${trigger.number} doesn't have the ${code(config.preview.label)} label: add it to build a preview.`,
+        `${prLabel(trigger.number)} doesn't have the ${code(config.preview.label)} label: add it to build a preview.`,
       );
     }
     if (
@@ -150,7 +155,7 @@ export function planPreview(input: PreviewInput): PreviewDecision {
     ) {
       return skip(
         "other-label",
-        `The ${code(trigger.label)} label was added to PR #${trigger.number}; only adding ${code(config.preview.label)} builds a preview.`,
+        `The ${code(trigger.label)} label was added to ${prLabel(trigger.number)}; only adding ${code(config.preview.label)} builds a preview.`,
       );
     }
     if (
@@ -160,7 +165,7 @@ export function planPreview(input: PreviewInput): PreviewDecision {
     ) {
       return skip(
         "not-labeled-event",
-        `preview.rebuildOnPush is false: previews of PR #${trigger.number} are built only when the label is added.`,
+        `preview.rebuildOnPush is false: previews of ${prLabel(trigger.number)} are built only when the label is added.`,
       );
     }
     kind = "pr";
@@ -291,8 +296,8 @@ export function planPreview(input: PreviewInput): PreviewDecision {
     notices.push(`${input.branch} is a maintenance branch: this preview was started by hand.`);
   }
   const what =
-    kind === "pr"
-      ? `PR #${prNumber}`
+    kind === "pr" && prNumber !== undefined
+      ? prLabel(prNumber)
       : kind === "prerelease"
         ? `prerelease of ${code(input.branch)}`
         : code(input.branch);

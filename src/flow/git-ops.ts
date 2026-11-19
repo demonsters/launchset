@@ -5,6 +5,7 @@
  */
 
 import { errorMessage, LaunchsetError } from "../core/errors.ts";
+import type { Forge, PullRequest } from "../forge/types.ts";
 import {
   type Git,
   LeaseError,
@@ -12,7 +13,6 @@ import {
   TagCleanupError,
   TagExistsError,
 } from "../git/index.ts";
-import type { GitHub, PullRequest } from "../github/index.ts";
 import type { FlowContext } from "./context.ts";
 
 export type TagResult = "created" | "exists";
@@ -196,15 +196,15 @@ export interface UpsertPrResult {
 
 /** Create the PR for `head`, or update the open one (title and body). */
 export async function upsertPr(
-  github: GitHub,
+  forge: Forge,
   input: { head: string; base: string; title: string; body: string },
 ): Promise<UpsertPrResult> {
-  const existing = await github.findOpenPrByHead(input.head);
-  if (!existing) return { pr: await github.createPr(input), action: "created" };
+  const existing = await forge.findOpenPrByHead(input.head);
+  if (!existing) return { pr: await forge.createPr(input), action: "created" };
   if (existing.title === input.title && existing.body === input.body) {
     return { pr: existing, action: "unchanged" };
   }
-  const pr = await github.updatePr(existing.number, { title: input.title, body: input.body });
+  const pr = await forge.updatePr(existing.number, { title: input.title, body: input.body });
   return { pr, action: "updated" };
 }
 
@@ -225,9 +225,9 @@ const CHECKOUT_HINT =
   // biome-ignore lint/suspicious/noTemplateCurlyInString: a GitHub Actions expression, not a JS template.
   "Check out the plan's commit in this job: actions/checkout with ref: ${{ needs.launchset.outputs.release-sha }} (and fetch-depth: 0).";
 
-/** True when running in GitHub Actions. */
+/** True when running in CI (GitHub Actions). */
 export function inActions(context: FlowContext): boolean {
-  return context.env.GITHUB_ACTIONS === "true";
+  return context.ci.inCi;
 }
 
 /**

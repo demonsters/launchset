@@ -15,8 +15,10 @@ export const CONFIG_DESCRIPTIONS: Record<string, string> = {
   changelog: "The changelog file.",
   "changelog.file":
     "The changelog, relative to the repo root. New sections are inserted before the first version heading.",
-  "changelog.github":
+  "changelog.links":
     "Add PR links and authors to changelog lines. Needs a token; without one, or when no PR is found, the links are left out.",
+  "changelog.github":
+    "Deprecated: the old name of `changelog.links`, still accepted. Giving both with different values is an error.",
   baseBranch: "The branch releases are made from.",
   maintenanceBranches:
     "Pattern of the maintenance branches used for hotfixes. The single `*` stands for `<major>.<minor>`. It must not match `baseBranch`.",

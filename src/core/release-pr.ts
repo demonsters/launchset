@@ -9,6 +9,7 @@ import { type ChangelogEntry, renderSection } from "./changelog.ts";
 import { CHANGESET_DIR } from "./changesets.ts";
 import type { ResolvedConfig } from "./config/schema.ts";
 import { LaunchsetError } from "./errors.ts";
+import { type ForgeHost, forgeWords } from "./forge-links.ts";
 import {
   type BotPrInfo,
   code,
@@ -43,7 +44,7 @@ export function releasePrTitle(tags: TagTemplates, version: string): string {
   return `Release ${releaseTag(tags, version)}`;
 }
 
-/** Where a changeset came from, for its changelog line (`changelog.github`, spec 12). */
+/** Where a changeset came from, for its changelog line (`changelog.links`, spec 12). */
 export interface ChangesetOrigin {
   pr: number;
   /** PR author login. */
@@ -55,13 +56,13 @@ export interface ChangesetOrigin {
  * `pr: <n>`, the PR title as summary. Never written as a file: the release commit would
  * consume it right away.
  */
-export function botChangeset(pr: BotPrInfo): Changeset {
+export function botChangeset(pr: BotPrInfo, host?: ForgeHost): Changeset {
   const name = `bot-pr-${pr.number}.md`;
   return {
     name,
     path: `${CHANGESET_DIR}/${name}`,
     bump: "patch",
-    summary: pr.title.trim() || `Dependency update (#${pr.number})`,
+    summary: pr.title.trim() || `Dependency update (${forgeWords(host).prText(pr.number)})`,
     source: "bot",
     pr: pr.number,
     extra: {},
@@ -76,13 +77,15 @@ export interface ReleasePrInput {
   changesets: readonly Changeset[];
   /** Bot PRs without a changeset (the plan's `releasePr.botPrs`). */
   botPrs: readonly BotPrInfo[];
-  /** PR and author per changeset path (`github/changelog-info`); used with `changelog.github`. */
+  /** PR and author per changeset path (`forge/changelog-info`); used with `changelog.links`. */
   origins?: ReadonlyMap<string, ChangesetOrigin>;
   tags: TagSnapshot;
   /** Release date for the changelog heading. */
   now: Date | number;
-  /** Default `https://github.com`. */
+  /** Default the host's public server (`https://github.com`). */
   serverUrl?: string;
+  /** Code host for PR links and their text; default `github`. */
+  host?: ForgeHost;
 }
 
 export interface ReleasePrContent {
@@ -116,20 +119,20 @@ export function buildReleasePr(input: ReleasePrInput): ReleasePrContent {
     );
   }
   const version = plan.releasePr.version;
-  const useGithub = config.changelog.github;
+  const useLinks = config.changelog.links;
 
   const seenPrs = new Set(input.changesets.flatMap((c) => (c.pr !== undefined ? [c.pr] : [])));
   const generated: Changeset[] = [];
   for (const pr of input.botPrs) {
     if (seenPrs.has(pr.number)) continue;
     seenPrs.add(pr.number);
-    generated.push(botChangeset(pr));
+    generated.push(botChangeset(pr, input.host));
   }
 
   const entries: ChangelogEntry[] = [];
   for (const changeset of input.changesets) {
     const entry: ChangelogEntry = { changeset };
-    const origin = useGithub ? input.origins?.get(changeset.path) : undefined;
+    const origin = useLinks ? input.origins?.get(changeset.path) : undefined;
     if (origin) {
       entry.pr = origin.pr;
       if (origin.author) entry.author = origin.author;
@@ -142,8 +145,9 @@ export function buildReleasePr(input: ReleasePrInput): ReleasePrContent {
     version,
     date: isoDay(input.now),
     entries,
-    ...(useGithub && plan.repository ? { repository: plan.repository } : {}),
+    ...(useLinks && plan.repository ? { repository: plan.repository } : {}),
     ...(input.serverUrl ? { serverUrl: input.serverUrl } : {}),
+    ...(input.host ? { host: input.host } : {}),
   });
 
   const auto = autoTargets(config);

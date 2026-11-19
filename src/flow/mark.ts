@@ -6,12 +6,13 @@
 
 import { LaunchsetError } from "../core/errors.ts";
 import { planFinalize } from "../core/finalize.ts";
+import { forgeWords } from "../core/forge-links.ts";
 import { planTarget } from "../core/outputs.ts";
 import { normalizeVersionInput, renderSummary, unknownTarget } from "../core/plan-common.ts";
 import { buildShipPlan } from "../core/release.ts";
 import { isReleased, markerTag, releaseTag } from "../core/tags.ts";
 import type { Plan } from "../core/types.ts";
-import { type FlowContext, type FlowResult, requireGitHub } from "./context.ts";
+import { type FlowContext, type FlowResult, requireForge } from "./context.ts";
 import { type ExecutedAction, executeFinalizeActions, existingReleases } from "./finalize.ts";
 import { changelogFilePath, readTagSnapshot, syncTags, tryResolveBranch } from "./gather.ts";
 import { checkHeadAtPlan, ensureTag, type TagResult } from "./git-ops.ts";
@@ -102,7 +103,8 @@ export async function mark(
   const releaseUpdates: ExecutedAction[] = [];
   let releaseNote = "";
   if (byHand && target.release === "manual") {
-    const github = requireGitHub(context, "Updating the GitHub Release of a hand-shipped target");
+    const { releaseName } = forgeWords(context.host);
+    const forge = requireForge(context, `Updating the ${releaseName} of a hand-shipped target`);
     const tags = await readTagSnapshot(context);
     const tag = releaseTag(config.tags, version);
     // The plan `ship` would have made, with the build number that shipped.
@@ -125,15 +127,16 @@ export async function mark(
       plan,
       tags,
       changelog: (await context.git.showFile(sha, changelogPath)) ?? null,
-      releases: await existingReleases(github, [tag]),
+      releases: await existingReleases(forge, [tag]),
       now: context.now,
+      host: context.host,
     });
-    const { executed } = await executeFinalizeActions(context, github, finalized.actions);
+    const { executed } = await executeFinalizeActions(context, forge, finalized.actions);
     releaseUpdates.push(...executed);
     releaseNote =
       executed.length > 0
-        ? `Updated the ${tag} GitHub Release: ${target.name} is listed as shipped.`
-        : `The ${tag} GitHub Release already lists ${target.name} as shipped.`;
+        ? `Updated the ${tag} ${releaseName}: ${target.name} is listed as shipped.`
+        : `The ${tag} ${releaseName} already lists ${target.name} as shipped.`;
   }
 
   const verb = result === "created" ? "created" : "already exists";

@@ -3,7 +3,7 @@
  * deliberately, and update every user.
  *
  * Everything in `src/core` is pure (no I/O). I/O lives in `src/config`, `src/platforms`,
- * `src/git`, `src/github`, `src/verify` and `src/flow`.
+ * `src/git`, `src/forge`, `src/verify` and `src/flow`.
  */
 
 import type { ResolvedTarget, TargetType } from "./config/schema.ts";

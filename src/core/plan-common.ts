@@ -50,7 +50,7 @@ export interface CommitInfo {
   subject: string;
 }
 
-/** A merged bot PR without a changeset (spec 9.4), like `github/bot-prs.BotPr`. */
+/** A merged bot PR without a changeset (spec 9.4), like `forge/bot-prs.BotPr`. */
 export interface BotPrInfo {
   number: number;
   title: string;

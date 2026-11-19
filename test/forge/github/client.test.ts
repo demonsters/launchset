@@ -4,9 +4,9 @@ import {
   createGitHub,
   GitHubError,
   REQUIRED_APP_PERMISSIONS,
-  stickyMarker,
-} from "../../src/github/index.ts";
-import { linkHeader, REPO, rawPr, server, TOKEN } from "./helpers.ts";
+} from "../../../src/forge/github/index.ts";
+import { stickyMarker } from "../../../src/forge/types.ts";
+import { linkHeader, REPO, rawPr, server, TOKEN } from "../helpers.ts";
 
 const gh = () => createGitHub({ token: TOKEN, repository: "acme/app" });
 
@@ -339,8 +339,11 @@ describe("releases", () => {
         return HttpResponse.json(rawRelease(11, "v1.4.0", { prerelease: true }));
       }),
     );
-    await gh().updateRelease(11, { body: "new notes" });
-    await gh().updateRelease(11, { name: "v1.4.0 (partial)", prerelease: true, makeLatest: false });
+    await gh().updateRelease({ id: 11, tag: "v1.4.0" }, { body: "new notes" });
+    await gh().updateRelease(
+      { id: 11, tag: "v1.4.0" },
+      { name: "v1.4.0 (partial)", prerelease: true, makeLatest: false },
+    );
     expect(bodies).toEqual([
       { body: "new notes" },
       { name: "v1.4.0 (partial)", prerelease: true, make_latest: "false" },
@@ -557,7 +560,7 @@ describe("errors", () => {
       );
     expect((await err(client.getPr(1))).hint).toMatch(/invalid or expired/);
     expect((await err(client.getPr(2))).hint).toMatch(/rate limit/);
-    const notFound = await err(client.updateRelease(3, { body: "x" }));
+    const notFound = await err(client.updateRelease({ id: 3, tag: "v1.0.0" }, { body: "x" }));
     expect(notFound.hint).toMatch(/"Contents: read & write"/);
     const invalid = await err(client.createPr({ head: "x", base: "main", title: "t", body: "b" }));
     expect(invalid.status).toBe(422);

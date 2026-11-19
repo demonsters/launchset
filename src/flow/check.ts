@@ -11,10 +11,11 @@ import {
   type PushCheckResult,
 } from "../core/check.ts";
 import { LaunchsetError } from "../core/errors.ts";
+import { forgeWords } from "../core/forge-links.ts";
 import { renderSummary } from "../core/plan-common.ts";
-import { GitHubError } from "../github/index.ts";
+import { ForgeError } from "../forge/errors.ts";
 import { checkConsistency, readRootVersion } from "../platforms/index.ts";
-import { branchFromRef, eventInfo, type FlowContext, type FlowResult } from "./context.ts";
+import { branchFromRef, type FlowContext, type FlowResult } from "./context.ts";
 import {
   allInOrder,
   baseBranchRef,
@@ -84,7 +85,7 @@ async function tryCommit(context: FlowContext, ref: string): Promise<string | un
 /**
  * The PR's head commit (`pull_request.head.sha`): `actions/checkout` checks out the merge
  * commit, whose second parent it is, so it's there with `fetch-depth: 0`. Otherwise it is
- * fetched from `refs/pull/<n>/head`.
+ * fetched from the host's PR head ref (`refs/pull/<n>/head`).
  */
 async function resolveHead(context: FlowContext, ref: string, prNumber: number): Promise<string> {
   const { git } = context;
@@ -92,7 +93,7 @@ async function resolveHead(context: FlowContext, ref: string, prNumber: number):
   if (local) return local;
   if (prNumber > 0 && (await git.hasRemote())) {
     const tracking = `refs/remotes/${git.remote}/pr/${prNumber}`;
-    if (await git.fetchRef(`refs/pull/${prNumber}/head`, tracking)) {
+    if (await git.fetchRef(forgeWords(context.host).prRef(prNumber), tracking)) {
       const sha = (await tryCommit(context, ref)) ?? (await tryCommit(context, tracking));
       if (sha) return sha;
     }
@@ -155,7 +156,7 @@ export async function check(
   if (options.push) return pushCheck(context, options);
   const { config } = context;
   await syncTags(context, options.fetch ?? true);
-  const payload = eventInfo(context)?.pr;
+  const payload = context.ci.event?.pr;
   const baseBranch =
     options.pr?.baseBranch ??
     payload?.baseRef ??
@@ -221,21 +222,22 @@ export async function check(
 
   const data: CheckData = { result };
   let summary = result.summary;
-  if ((options.comment ?? true) && context.github && pr.number > 0) {
+  if ((options.comment ?? true) && context.forge && pr.number > 0) {
+    const words = forgeWords(context.host);
     try {
-      data.comment = await context.github.upsertStickyComment(
+      data.comment = await context.forge.upsertStickyComment(
         pr.number,
         CHECK_COMMENT_ID,
         result.comment,
       );
     } catch (error) {
-      if (error instanceof GitHubError && error.status === 403 && pr.fork) {
-        data.commentWarning = `Couldn't post the check comment on #${pr.number}: the token is read-only here (PRs from forks get a read-only GITHUB_TOKEN). The check result above still counts.`;
+      if (error instanceof ForgeError && error.status === 403 && pr.fork) {
+        data.commentWarning = `Couldn't post the check comment on ${words.prText(pr.number)}: the token is read-only here (PRs from forks get a read-only GITHUB_TOKEN). The check result above still counts.`;
         summary = appendAlerts(summary, "WARNING", [data.commentWarning]);
-      } else if (error instanceof GitHubError && error.status === 403) {
+      } else if (error instanceof ForgeError && error.status === 403) {
         throw new LaunchsetError(
           "comment-forbidden",
-          `the token may not comment on PR #${pr.number}: ${error.message.split("\n")[0]}`,
+          `the token may not comment on ${words.prName} ${words.prText(pr.number)}: ${error.message.split("\n")[0]}`,
           {
             hint: "Give the check workflow `permissions: pull-requests: write` (with GITHUB_TOKEN), or use the GitHub App token.",
             cause: error,

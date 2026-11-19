@@ -1,6 +1,6 @@
 # GitLab support: plan
 
-Status: proposal, not started. Last updated 2026-11-19.
+Status: in progress (phase 1 done). Last updated 2026-11-19.
 
 launchset runs on GitHub only today. This plan covers what it takes to also run on GitLab
 (gitlab.com and self-managed), in an order that keeps the GitHub path safe at every step.
