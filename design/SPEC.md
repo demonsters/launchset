@@ -28,7 +28,7 @@ Developers describe each change in a small changeset file in their PR. Commit me
 
 ### 1.2 Out of scope for v1
 
-- Per-package npm publishing in workspaces (that's what Changesets does).
+- Per-package npm publishing in workspaces (that's what Changesets does). launchset can run next to Changesets in one repo: launchset releases the one version and its targets, Changesets versions and publishes the independently versioned npm packages. Each package is released by one tool. The docs describe the setup ("Alongside Changesets").
 - CI systems other than GitHub Actions.
 - Expo OTA updates / `runtimeVersion` handling: issue [#1](https://github.com/demonsters/launchset/issues/1).
 - Store-ready release notes per platform: issue [#2](https://github.com/demonsters/launchset/issues/2). Unknown changeset frontmatter keys must be kept (not rejected) so #2 can add a field later.
@@ -743,6 +743,7 @@ For AI agents working **in repos that use launchset** (not in the launchset repo
 - Preview builds: add the `launchset:preview` label.
 - `npx @demonsters/launchset status` to check pending changes and the next version.
 - Manual targets (9.8): never ship one unasked. When `status` shows one is behind, mention it to the human, and point to the `workflow_dispatch` ship run or `launchset ship`.
+- Repos that also use Changesets (1.2): a PR that changes an npm package needs a `.changeset/` file and a `.launchset/` changeset; the launchset bump is about the targets (`none` when no target uses the package). Never edit or merge the `Version Packages` PR unasked.
 
 The skill ships inside the npm package and is installed into consumer repos by `launchset init` (11.1 step 7), together with an equivalent short section for `AGENTS.md`.
 
@@ -762,7 +763,8 @@ For AI agents moving an **existing repo** onto launchset. Repos will be migrated
 - Native store pipelines (signing certificates, provisioning profiles, the Play upload key, App Store Connect API key, GitHub secrets) are set up by a human. Guide them step by step following the docs recipe (16.1), check each step (secret names present in the workflow, `verify` passing on a preview build), and never handle the secret values yourself.
 - Move the team's existing build and upload steps into the generated workflows (`docker/build-push-action` tags and file, signing, fastlane, deploy steps), keeping secrets and environments as they are.
 - Run `init --yes --decide …` with the answers, then open a single PR with everything. The PR body lists the decisions, what was removed or changed, and the manual steps that remain (GitHub App installation, secrets, store credentials).
-- Don't migrate repos that are out of scope (for example independently versioned npm packages, 1.2). Say why instead.
+- Repos that have a shared version **and** independently versioned npm packages get the hybrid setup (1.2): launchset for the shared version, Changesets kept for the packages, after the human confirms.
+- Don't migrate repos that are out of scope (for example only independently versioned npm packages, 1.2). Say why instead.
 
 ---
 

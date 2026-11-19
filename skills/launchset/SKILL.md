@@ -68,6 +68,17 @@ The summary becomes the changelog entry.
 
 Write one changeset per change, not per commit. If your work extends something that already has a pending changeset in `.launchset/`, edit that file instead of adding another. Look in `.launchset/` before you add.
 
+## Repos that also use Changesets
+
+If the repo also has a `.changeset/` folder, its npm packages that have their own versions are released with Changesets, and everything else with launchset. A PR that changes such a package needs **both**:
+
+- a `.changeset/` file that names the package and its bump (`npx changeset add`, or the repo's script for it), and
+- the `.launchset/` changeset, as always.
+
+The launchset bump is about the launchset targets, not the package. If a target uses the package (for example the app uses it from the workspace), the next release ships the change: pick the bump it means for that target's users, usually `patch`. If no target uses the package, use `bump: none`.
+
+Never edit, push to or merge the Changesets release PR (`Version Packages`, branch `changeset-release/*`) unless the human asked you to. Merging it publishes the npm packages.
+
 ## Pushing straight to the base branch
 
 If the workflow here is to push to the base branch without a PR, make sure a changeset covers your work **before** you push. There is no PR check to remind you. `npx @demonsters/launchset status` shows what is pending, and a warning when commits exist that no changeset covers. If the repo has a pre-push hook, `launchset check --push` prints the same warning and never blocks.

@@ -23,7 +23,7 @@ The docs are at **https://demonsters.github.io/launchset/** (start with [Getting
 - Getting started, concepts, writing changesets
 - Targets: Docker, web, Android, iOS, React Native, Capacitor, Expo, custom
 - Release flow, build numbers, previews and prerelease branches, hotfixes, manual targets
-- GitHub App setup, store pipelines, workflow recipes, migrating an existing repo
+- GitHub App setup, store pipelines, workflow recipes, migrating an existing repo, running alongside Changesets
 - Reference: configuration, CLI, the GitHub Action, troubleshooting
 
 The design is in [`design/SPEC.md`](design/SPEC.md) and [`design/DECISIONS.md`](design/DECISIONS.md).

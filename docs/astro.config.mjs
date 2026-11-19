@@ -53,7 +53,10 @@ export default defineConfig({
       ],
       sidebar: [
         { label: "Start here", items: ["getting-started", "concepts", "changesets"] },
-        { label: "Set up", items: ["github-app", "guides/migrating"] },
+        {
+          label: "Set up",
+          items: ["github-app", "guides/migrating", "guides/with-changesets"],
+        },
         {
           label: "Targets",
           items: [

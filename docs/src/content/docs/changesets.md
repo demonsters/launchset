@@ -109,3 +109,7 @@ The check keeps one comment on each PR and updates it in place. With a changeset
 ## Migrating from Changesets
 
 `launchset init` converts existing `.changeset/*.md` files: the highest bump found in the frontmatter becomes the `bump`, and summaries are kept. See [Migrating](/guides/migrating/).
+
+## Repos that also use Changesets
+
+Some repos keep Changesets for npm packages that have their own versions. There, a PR that changes such a package needs a `.changeset/` file for the package **and** a `.launchset/` changeset. The launchset bump says what the change means for the launchset targets: `none` when no target uses the package. See [Alongside Changesets](/guides/with-changesets/).
