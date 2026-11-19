@@ -271,14 +271,18 @@ export class FakeGitHub {
     mergeSha: string;
     base?: string;
   }): void {
+    // The real clock, not NOW: the test repos commit with the real clock, and bot-PR detection
+    // only lists PRs updated after the last release commit (minus a day). A fixed date fell out
+    // of that window once the real date was more than a day past it.
+    const merged = new Date().toISOString();
     this.prs.push({
       number: input.number,
       title: input.title,
       body: "",
       state: "closed",
-      merged_at: NOW.toISOString(),
+      merged_at: merged,
       merge_commit_sha: input.mergeSha,
-      updated_at: NOW.toISOString(),
+      updated_at: merged,
       user: { login: input.login, type: input.login.endsWith("[bot]") ? "Bot" : "User" },
       head: { ref: `branch-${input.number}`, sha: input.mergeSha },
       base: { ref: input.base ?? "main" },
