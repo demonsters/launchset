@@ -140,6 +140,81 @@ launchset edits literal `versionCode` and `versionName` in `defaultConfig`. Dyna
 
 The next version is the current version plus the highest bump, then the next free patch if that version is already taken. A released hotfix, or markers from a partly shipped version, take a version. The job summary notes: "`1.4.1` is already taken ... so the release PR uses `1.4.2`".
 
+## GitLab
+
+Errors on GitLab print `error:` and a `hint:` too. These are the ones you are most likely to hit. For the setup, see [launchset on GitLab](/gitlab/getting-started/) and [Token and permissions](/gitlab/token/).
+
+### `needs a GitLab token ... and the project`
+
+No `LAUNCHSET_TOKEN` is available to the job (or `--token` locally). Add the CI/CD variable. A protected variable is only passed to pipelines of protected branches and tags: the check in an MR pipeline then fails with this error. Mark the variable **not Protected**. Fork MR pipelines get no project variables at all.
+
+### GitLab API 401
+
+The token is invalid, expired or revoked. `LAUNCHSET_TOKEN` must be a valid project or group access token with the `api` scope. If the message says `CI_JOB_TOKEN was rejected`, there is no `LAUNCHSET_TOKEN` and the job token ended with its job.
+
+### GitLab API 403
+
+The token needs the `api` scope and at least the Developer role (Maintainer to push to protected branches and tags). Check the scopes and the bot's role under Settings → Members. If the message says `CI_JOB_TOKEN can't do this`, the job fell back to the job token, which can only read merge requests and notes. Set `LAUNCHSET_TOKEN`.
+
+### The check or a preview can't post its note (job token)
+
+`CI_JOB_TOKEN` can't post merge request notes, create MRs or list pipeline jobs. Same cause and fix as the 403 above: set `LAUNCHSET_TOKEN`, not Protected, so MR pipelines get it.
+
+### GitLab API 404
+
+`Not found. Check that group/project exists and that the token has access to it`. GitLab answers 404 when a token can't see a resource. Check that the token belongs to this project (or a group that contains it) and hasn't been moved. A group token needs its bot as a member of the project.
+
+### A push is rejected: protected branch or tag
+
+`A protected branch or tag blocks this push.` launchset pushes `launchset/release/<branch>` and its tags (marker, release, partial and prerelease tags). Give the token the Maintainer role, or add its bot user (or Maintainers) to **Allowed to push and merge** for the protected branch and **Allowed to create** for the protected tag (Settings → Repository). Don't protect `launchset/release/*` against force pushes.
+
+### A push is rejected: push rule or hook
+
+`A GitLab push rule or server hook declined this push.` Read the remote's message above it. launchset commits as the token's user: allow that user's email and name in the push rules (Settings → Repository → Push rules).
+
+### The release MR gets no pipeline
+
+The release branch was pushed with the job token, or `LAUNCHSET_TOKEN` is missing: pushes made with `CI_JOB_TOKEN` never start pipelines. The hint reads `No token was given, so git used the runner's CI_JOB_TOKEN`. Set `LAUNCHSET_TOKEN`. Close the old release MR and run **Run pipeline** on the base branch without variables.
+
+### `Clone the full history (set GIT_DEPTH: "0" on the job)`
+
+The job has a shallow clone, so the MR head, the base branch or the tags are missing. The generated jobs set `GIT_DEPTH: "0"`. If you override it in your own `variables:` or in the project's CI/CD settings (Git shallow clone), or set `GIT_STRATEGY: none`, set it back for the launchset jobs.
+
+### `.launchset-<target>` is missing from the targets file
+
+`launchset release` (or `preview-plan`) fails before it writes the child pipeline: `.gitlab/launchset-targets.yml` has no `.launchset-<target>` job with a `script` (or `extends`) for a target it has to build. Add the job (`init` writes one per target), and keep the name exact, with the leading dot. A job that may come from the file's own `include:` is only a warning. The file must be at the repository root, at that path.
+
+### The child pipeline is empty or invalid
+
+- **`launchset-nothing-to-build`** is the only job: that is the correct result when there is nothing to build (the run only updated the release MR, `none` mode, a skipped preview). The job prints why.
+- **The trigger job fails** with a pipeline configuration error: open `launchset-child.yml` in the plan job's log (a collapsed "Child pipeline" section) or its artifact. A typical cause is a `.launchset-<target>` job with `rules`, `when`, `needs` or `stage`: remove them. A child whose jobs are all ruled out fails to start. Reproduce it with `launchset plan --gitlab -`.
+- A target job fails right away with `No build steps for <target> yet`: the guard line in `.gitlab/launchset-targets.yml` is still there. Add the steps and delete it.
+
+### A build job didn't stop at `mark`, or `mark` didn't run
+
+Check your steps in `.launchset-<target>`: one command per line (no `a && b`), and no `exit`. GitLab ignores a failure on the left of `&&` under `set -e`, and an `exit` skips `mark`.
+
+### Pipeline variables are blocked
+
+Run pipeline rejects `LAUNCHSET_TARGET`, `LAUNCHSET_PREVIEW` and the others, or they have no effect: **Minimum role to use pipeline variables** (Settings → CI/CD → Variables) is above your role. New projects on GitLab.com default to `no_one_allowed`. Change it to Developer or Maintainer, or run without variables (that only retries an unfinished release).
+
+### A newer push cancelled the release pipeline
+
+GitLab's default auto-cancel can cancel a pipeline whose release job hasn't started yet. Add `workflow: auto_cancel: on_new_commit: interruptible` to `.gitlab-ci.yml` (`init` writes it for a new file, and prints it as a manual step for an existing one). Recover the release with Run pipeline on the base branch without variables.
+
+### Two pipelines for every push
+
+Your `.gitlab-ci.yml` has no `workflow: rules`. Add the rules `init` printed: MR pipelines for branches with an open MR, branch pipelines otherwise.
+
+### No preview for my MR
+
+- The MR has the label, but nothing runs: GitLab starts no pipeline when a label is added. Push a commit or start a new pipeline. Without the label, play the manual job `launchset-preview-plan`.
+- **Fork MRs** never get a preview.
+- With `preview.rebuildOnPush: false` every MR has only the manual job.
+- `preview: false` switches previews off.
+
+See [Previews on GitLab](/gitlab/previews/).
+
 ## Frequently asked questions
 
 **Does launchset build my app?** No. It plans, stamps, checks and records. Your steps build and upload.
@@ -152,7 +227,7 @@ The next version is the current version plus the highest bump, then the next fre
 
 **Can I edit the release PR?** Don't. The branch is rebuilt and force-pushed on every run. Change the changesets on the base branch instead.
 
-**Can I use another CI system?** No. GitHub Actions only.
+**Can I use another CI system?** GitHub Actions and GitLab CI. See [launchset on GitLab](/gitlab/getting-started/).
 
 **Commit messages? Conventional commits?** They don't matter. Release intent lives in changesets only.
 

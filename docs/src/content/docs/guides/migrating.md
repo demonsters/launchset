@@ -62,6 +62,7 @@ Every question `init` asks is a **decision** with a stable id. Answer it with `-
 | `docker.<name>.verify` | `yes`, `no`. | `yes`: `verify: ["registry"]`, so a re-run skips an image whose release tag is already pushed. | The registry has no HTTP API launchset can reach from CI. |
 | `machinery.<path>#<n>` | `remove`, `disable`, `keep`. | `disable` (`keep` when no minimal edit exists). | Always, when the default is `keep`. Otherwise show the list. |
 | `image.<path>` | `stamp`, `leave`. | `leave`. | Always. A deploy manifest that pins the image may be deploy state. |
+| `host` | `github`, `gitlab`. | The host of the `origin` remote, else the CI files found. Only listed when something points at GitLab. | When the repo is on GitLab and detection guessed wrong: `--decide host=gitlab`. See [launchset on GitLab](/gitlab/getting-started/). |
 | `file.<path>` | `keep`, `overwrite`. | `keep`. One decision per file that init would write but that already exists: `.launchset/README.md` and the `launchset-*.yml` workflows. | Rarely. `keep` leaves an edited file alone. `overwrite` replaces it with the newly generated one. |
 | `baseline` | `yes`, `no`. | `yes` only when an existing tag in another format already marks the version as released. | Always, when the answer matters. See [baseline](#baseline-tag). |
 | `offset` | An integer `>= 0`. | Enough to stay above the highest build number found. | When it is above 0. |

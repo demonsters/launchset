@@ -7,7 +7,7 @@ description: Use when asked to set up launchset in a repo, move a repo to launch
 
 launchset releases repos where **one version** drives **many targets** (Docker images, Android, iOS and web apps) from one repo. Developers add a small changeset file to each PR. launchset collects them into a release PR. Merging it releases every target. launchset builds nothing: the team's own workflow steps do.
 
-You are moving an **existing** repo onto it. The CLI does the detecting and the writing. Your job is to ask the human the right questions, deal with what conflicts, move the team's build steps, and deliver one reviewable PR.
+You are moving an **existing** repo onto it. This works on GitHub and on GitLab (GitLab.com or self-managed 18.2+); the steps below name both where they differ. The CLI does the detecting and the writing. Your job is to ask the human the right questions, deal with what conflicts, move the team's build steps, and deliver one reviewable PR.
 
 Use `npx @demonsters/launchset` (Node 26 or newer; the package is private, so npm needs access to the `@demonsters` scope. If `npx` fails with 401 or 404, tell the human and stop).
 
@@ -58,6 +58,7 @@ The decision ids and values:
 
 | Id | Values | Meaning |
 | --- | --- | --- |
+| `host` | `github`, `gitlab` | The code host. Only listed when something points at GitLab (a GitLab remote, `.gitlab-ci.yml`). Check it: it decides which CI files init writes. |
 | `version` | plain `X.Y.Z` | The version the repo is on. |
 | `tags.release` | template with `{version}` | The release tag format. Keep the existing one, for example `{version}` without a `v`. |
 | `target.<name>` | `auto`, `manual`, `none` | How a detected platform is released. |
@@ -81,6 +82,7 @@ launchset pushes its tags and creates GitHub Releases with a GitHub App token, w
 - **Other release tools** (semantic-release, release-it, standard-version, release-please) and steps that create tags or GitHub Releases (`git tag`, `gh release create`): launchset's finalize creates `v<version>`.
 - **Scripts that write version or build numbers** (`MARKETING_VERSION`, `CURRENT_PROJECT_VERSION`, `versionCode`, `versionName`, fastlane version actions): they would overwrite the numbers stamped in CI.
 - **Docker pushes of `latest` on branch pushes**: launchset moves `latest` only when a release ships.
+- **On GitLab:** the same kinds of machinery in `.gitlab-ci.yml` and the local files it includes: jobs that run on tags (`$CI_COMMIT_TAG`), `glab release create`, the `release:` keyword, `npm publish`, Docker pushes of `latest` from branch pushes. Remote, project and template includes aren't scanned: read them yourself.
 - **Release instructions** in `CLAUDE.md`, `AGENTS.md` and the README (`npm version`, `git tag`, `changeset`): they describe the old process.
 
 For each, propose `disable` (remove only the conflicting trigger or step, never the file), `remove` (delete the file or script) or `keep`, and why. Do it only after the human agrees. Where `disable` isn't offered, no minimal edit exists: the choice is `keep` or `remove`.
@@ -104,6 +106,8 @@ Never ask for, read or store a key, password, certificate, token or service acco
 
 The **GitHub App** (secrets `LAUNCHSET_APP_ID` and `LAUNCHSET_APP_PRIVATE_KEY`) is also created by a human, an org owner. Point to the docs page "GitHub App setup". Permissions: Contents (read & write), Pull requests (read & write), Workflows (read & write), Actions (read), Metadata (read).
 
+**On GitLab** a human creates a project or group access token (role Maintainer, scopes `api` and `write_repository`) and stores it as the masked, **not Protected** CI/CD variable `LAUNCHSET_TOKEN`, plus `NPM_TOKEN` (masked) for the private package. Point to the docs page "Token and permissions" (GitLab). You check variable names (`glab variable list` or the Settings page), never values. Protected branches and tags must let the token's bot push; "Minimum role to use pipeline variables" must allow manual runs.
+
 ## Step 5: Run init with the answers
 
 ```sh
@@ -118,7 +122,7 @@ npx @demonsters/launchset init --yes \
 - Quote values that have spaces or braces. An invalid value fails before anything is written (`expected one of ...`). An unknown id lists the valid ones.
 - `--baseline`, `--skill` and `--hook` (and the `--no-` forms) are shortcuts for the three yes/no decisions.
 
-Then look at the result: `git status`, `git diff`. Init writes (files that already exist are kept unless `file.<path>=overwrite`) `launchset.config.ts`, `.launchset/README.md`, `.github/workflows/launchset-check.yml`, `launchset-release.yml` and `launchset-preview.yml`, `CHANGELOG.md` (only if missing), converted changesets (`.changeset/*.md` to `.launchset/`, the folder is left in place), and the agent skill and `AGENTS.md` section.
+Then look at the result: `git status`, `git diff`. Init writes (files that already exist are kept unless `file.<path>=overwrite`) `launchset.config.ts`, `.launchset/README.md`, `.github/workflows/launchset-check.yml`, `launchset-release.yml` and `launchset-preview.yml` (on GitLab instead `.gitlab/launchset.yml`, `.gitlab/launchset-targets.yml` and a `.gitlab-ci.yml`, or only an `include:` added to yours; init doesn't edit your `workflow:` and prints the recommended `workflow: rules` as a manual step), `CHANGELOG.md` (only if missing), converted changesets (`.changeset/*.md` to `.launchset/`, the folder is left in place), and the agent skill and `AGENTS.md` section.
 
 Run `npx @demonsters/launchset status`, `version --dry-run` and `plan` to see that the config loads and the files are consistent.
 
@@ -131,7 +135,9 @@ The generated workflows have commented examples where the team's build steps go.
 - Deploys, npm publishing and other steps.
 - Give every step `if: matrix.target == '<name>' && steps.verify.outputs.already-published != 'true'` in the release workflow.
 
-**The "Build steps missing" guard.** For Android, iOS, web and custom targets without npm publishing, the generated workflows contain a step named `Build steps missing (<target>)` that always fails (`exit 1`), so `mark` never records a target that nothing builds. When the team's real build and upload steps for a target are in, **remove that target's guard step**, in both `launchset-release.yml` and `launchset-preview.yml`. Removing a guard without adding steps lets the release complete without building the target: check that every `auto` target has working steps before the PR is merged. Docker targets and npm custom targets have no guard.
+**On GitLab** the build steps go in `.gitlab/launchset-targets.yml`, in the hidden job `.launchset-<target>` of each target (init adds comments naming the old jobs that built each Docker image). Rules for those jobs: no `rules`, `when`, `needs` or `stage`; the image needs Node 24+, npm and git; one command per line (never `a && b`); no early `exit` (it would skip `mark`). `LAUNCHSET_VERSION`, `LAUNCHSET_BUILD_NUMBER`, `LAUNCHSET_CHANNEL`, `LAUNCHSET_DOCKER_TAGS` and `LAUNCHSET_DOCKER_LABELS` are set. There is no `if: matrix.target` guard to write: each target has its own job. Secrets are CI/CD variables.
+
+**The "Build steps missing" guard.** For Android, iOS, web and custom targets without npm publishing, the generated workflows contain a step named `Build steps missing (<target>)` that always fails (`exit 1`), so `mark` never records a target that nothing builds. When the team's real build and upload steps for a target are in, **remove that target's guard step**, in both `launchset-release.yml` and `launchset-preview.yml` (on GitLab: the `echo "No build steps for <target> yet..."; exit 1` line in `.launchset-<target>`). Removing a guard without adding steps lets the release complete without building the target: check that every `auto` target has working steps before the PR is merged. Docker targets and npm custom targets have no guard.
 
 ## Step 7: Open one PR
 
@@ -140,7 +146,7 @@ Everything goes in **one PR**. Its description lists:
 - The decisions and what was chosen (and why, for the ones the human decided).
 - What was removed or disabled, with `path:line`.
 - Changes to versions (files that moved to the canonical version) and any lowered version.
-- The remaining manual steps: create the GitHub App and install it on the repo, add `LAUNCHSET_APP_ID` and `LAUNCHSET_APP_PRIVATE_KEY`, store credentials (`LAUNCHSET_PLAY_SERVICE_ACCOUNT_JSON`, `LAUNCHSET_ASC_KEY_ID`, `LAUNCHSET_ASC_ISSUER_ID`, `LAUNCHSET_ASC_PRIVATE_KEY`, keystore and signing secrets), and mark the **Changeset check** job as required once it runs.
+- The remaining manual steps: create the GitHub App and install it on the repo, add `LAUNCHSET_APP_ID` and `LAUNCHSET_APP_PRIVATE_KEY` (on GitLab: `LAUNCHSET_TOKEN` and `NPM_TOKEN`, protected branches and tags, pipeline variables, `workflow: rules` if init printed them), store credentials (`LAUNCHSET_PLAY_SERVICE_ACCOUNT_JSON`, `LAUNCHSET_ASC_KEY_ID`, `LAUNCHSET_ASC_ISSUER_ID`, `LAUNCHSET_ASC_PRIVATE_KEY`, keystore and signing secrets), and mark the **Changeset check** job as required once it runs (on GitLab: require the MR pipeline to succeed).
 - That the PR itself needs a changeset: add one (`npx @demonsters/launchset add --bump patch --message "Set up releases with launchset"`, or `--empty`).
 
 Don't merge it. Merging may start a release if the PR changed the root version of a version without a release tag.
@@ -161,7 +167,7 @@ Tell the human what this means and ask them to confirm. Then:
 ## Out of scope: say why, don't migrate
 
 - **Only independently versioned packages** (per-package npm releases in a workspace, like Changesets does), with nothing that shares one version: launchset has one version per repo. A repo with an app as well gets the hybrid setup above.
-- **Build services outside GitHub Actions** (Xcode Cloud, Codemagic) and other CI systems: v1 is GitHub Actions only. Expo EAS is supported with `buildNumber: { strategy: "eas" }`.
+- **Build services outside GitHub Actions** (Xcode Cloud, Codemagic) and CI systems other than GitHub Actions and GitLab CI. Expo EAS is supported with `buildNumber: { strategy: "eas" }`.
 - Repos with no shared version for their parts.
 
 If the repo is out of scope, tell the human which of these applies and stop.

@@ -39,6 +39,8 @@ Shipping a manual target always ships an **already released** version, one that 
 2. Enter `target` (for example `ios`) and optionally `version`. Without `version` it is the latest release on the branch you started from.
 3. The run is in mode `ship`. It checks out the commit of `v<version>`, computes a fresh build number and runs the normal `build` job: stamp, verify, your steps and `mark`. `finalize` then only updates the "Manual targets" list in the GitHub Release. It never creates tags.
 
+On GitLab: open **Build → Pipelines → Run pipeline** on the base (or a maintenance) branch and set the variable `LAUNCHSET_TARGET` (for example `ios`). Optionally set `LAUNCHSET_RELEASE_VERSION`, and `LAUNCHSET_FORCE=true` to ship a version lower than the target's highest marker. It runs the same child pipeline. Pipeline variables must be allowed: see [Token and permissions](/gitlab/token/#pipeline-variables-for-manual-runs).
+
 ### By hand
 
 For example an Xcode archive on a Mac:

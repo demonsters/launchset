@@ -5,6 +5,10 @@ description: Install launchset in a repo, make your first change and cut your fi
 
 This page takes you from an empty setup to your first release. It takes about half an hour, most of it spent on the GitHub App.
 
+:::note
+On GitLab? See [launchset on GitLab](/gitlab/getting-started/). The release flow is the same; the CI files, the token and where your build steps go differ.
+:::
+
 ## Before you start
 
 You need:

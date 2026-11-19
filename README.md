@@ -16,6 +16,8 @@ npx @demonsters/launchset status   # pending changes and the next version
 
 The package is `@demonsters/launchset` (private on npm). The GitHub Action is published to the public repo `demonsters/launchset-action`, so any org can use it with its own GitHub App.
 
+launchset also runs on GitLab (GitLab.com and self-managed, 18.2 or newer): CI jobs run the CLI and a generated child pipeline builds your targets. See [launchset on GitLab](https://demonsters.github.io/launchset/gitlab/getting-started/).
+
 ## Documentation
 
 The docs are at **https://demonsters.github.io/launchset/** (start with [Getting started](https://demonsters.github.io/launchset/getting-started/)). Their source is in [`docs/`](docs/) (Astro Starlight); `pnpm --filter docs dev` runs them locally. They are published to GitHub Pages by `.github/workflows/docs.yml` on every push to `main`.
@@ -23,7 +25,7 @@ The docs are at **https://demonsters.github.io/launchset/** (start with [Getting
 - Getting started, concepts, writing changesets
 - Targets: Docker, web, Android, iOS, React Native, Capacitor, Expo, custom
 - Release flow, build numbers, previews and prerelease branches, hotfixes, manual targets
-- GitHub App setup, store pipelines, workflow recipes, migrating an existing repo, running alongside Changesets
+- GitHub App setup, GitLab setup (token, previews, reference), store pipelines, workflow recipes, migrating an existing repo, running alongside Changesets
 - Reference: configuration, CLI, the GitHub Action, troubleshooting
 
 The design is in [`design/SPEC.md`](design/SPEC.md) and [`design/DECISIONS.md`](design/DECISIONS.md).

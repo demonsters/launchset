@@ -9,6 +9,8 @@ This repo is released with launchset. One version drives every target (Docker im
 
 Commit messages don't matter. Release intent lives in changeset files only.
 
+On GitLab the same applies with "MR" for "PR": the release MR is `Release vX.Y.Z` on the branch `launchset/release/<branch>`. See [On GitLab](#on-gitlab).
+
 ## Every PR needs a changeset
 
 Before you open a PR, make sure it adds one. Create it with:
@@ -98,7 +100,7 @@ On a `release/X.Y.x` branch (a hotfix line; the pattern is `maintenanceBranches`
 
 ## Previews
 
-To get a test build of a PR (TestFlight, Play internal track, preview Docker tags), add the label `launchset:preview` to the PR (or whatever `preview.label` says in `launchset.config.*`). Previews have no side effects. PRs from forks don't get one.
+To get a test build of a PR (TestFlight, Play internal track, preview Docker tags), add the label `launchset:preview` to the PR (or whatever `preview.label` says in `launchset.config.*`). Previews have no side effects. PRs from forks don't get one. On GitLab, adding a label starts no pipeline: push a commit or start a new pipeline, or play the manual job `launchset-preview-plan` in the MR pipeline.
 
 ## Check the state
 
@@ -110,6 +112,16 @@ npx @demonsters/launchset status --json   # the same as JSON
 ## Manual targets
 
 A target with `release: "manual"` is stamped by every release but shipped on demand. **Never ship one unasked.** When `status` shows a manual target is behind (`ios: 1.3.0 (9 releases behind)`), tell the human. Say that it is shipped with the **Launchset release** workflow started by hand (`workflow_dispatch` with the `target` input, and optionally `version`), or by `launchset ship --target <name>` followed by `launchset mark`. Do not run those yourself without being asked.
+
+## On GitLab
+
+If the repo has a `.gitlab-ci.yml` and no `.github/workflows/launchset-*.yml`, it runs launchset on GitLab. The rules above hold. What differs:
+
+- **CI files.** launchset's jobs are in `.gitlab/launchset.yml` (included by `.gitlab-ci.yml`). The build and upload steps are in `.gitlab/launchset-targets.yml`: one hidden job `.launchset-<target>` per target. Edit build steps there, as plain GitLab CI YAML: no `rules`, `when`, `needs` or `stage`, one command per line (no `a && b`), no early `exit`. Don't edit `.gitlab/launchset.yml` or the generated `launchset-child.yml` unless asked.
+- **Never hand-edit** the release MR, tags that start with `v` or `launchset/`, version numbers or `CHANGELOG.md`, as on GitHub.
+- **Tokens.** The CI/CD variable `LAUNCHSET_TOKEN` (a project or group access token) is created by a human. Never ask for, read or print its value.
+- **Manual targets.** Ship one with Run pipeline on the base branch and the variable `LAUNCHSET_TARGET` (optionally `LAUNCHSET_RELEASE_VERSION`), not with the GitHub workflow input. Never ship one unasked.
+- **Debugging.** The plan job logs the child pipeline (collapsed section) and keeps `launchset-child.yml` as an artifact. `npx @demonsters/launchset plan --gitlab -` prints the child pipeline for the plan locally.
 
 ## If something looks wrong
 

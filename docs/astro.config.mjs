@@ -58,6 +58,10 @@ export default defineConfig({
           items: ["github-app", "guides/migrating", "guides/with-changesets"],
         },
         {
+          label: "GitLab",
+          items: ["gitlab/getting-started", "gitlab/token", "gitlab/previews", "gitlab/reference"],
+        },
+        {
           label: "Targets",
           items: [
             "targets",

@@ -5,6 +5,8 @@ description: Create the GitHub App that lets launchset open release PRs and push
 
 launchset needs a GitHub App. You create it once per org (or per user account), in the browser. An agent can't do this for you: it needs an org owner.
 
+On GitLab? You need an access token instead: see [Token and permissions](/gitlab/token/).
+
 ## Why an App
 
 Events caused by the default `GITHUB_TOKEN` don't start other workflows. That is a GitHub rule to stop endless loops. Two things in launchset would break because of it:
