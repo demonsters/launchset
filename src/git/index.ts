@@ -216,16 +216,25 @@ export function basicAuthHeader(token: string): string {
 
 /**
  * Environment variables that make git authenticate to `serverUrl` with `token`: first an
- * empty `http.<server>/.extraheader` (resets the multi-valued list, dropping the header that
+ * empty `http.<url>.extraheader` (resets the multi-valued list, dropping the header that
  * actions/checkout persisted), then the token's header. Entries already configured through
  * `GIT_CONFIG_COUNT` in `baseEnv` are kept; ours are appended after them.
+ *
+ * With `owner`, the key is `http.<server>/<owner>/.extraheader`, more specific than the
+ * `http.<server>/.extraheader` actions/checkout writes. That matters for git-lfs: it ignores
+ * the empty-value reset and would send the checkout's (read-only) header first, so its
+ * pre-push lock check fails with "must have push access". Like git, it uses only the most
+ * specific matching key, and `<owner>/` matches both the push URL and the LFS URL
+ * (`<owner>/<repo>.git/info/lfs`).
  */
 export function authConfigEnv(
   token: string,
   serverUrl?: string,
   baseEnv: NodeJS.ProcessEnv = process.env,
+  owner?: string,
 ): Record<string, string> {
-  const key = `http.${normalizeServerUrl(serverUrl)}.extraheader`;
+  const scope = owner ? `${encodeURIComponent(owner)}/` : "";
+  const key = `http.${normalizeServerUrl(serverUrl)}${scope}.extraheader`;
   const existing = Number.parseInt(baseEnv.GIT_CONFIG_COUNT ?? "0", 10);
   const start = Number.isInteger(existing) && existing > 0 ? existing : 0;
   return {
@@ -383,7 +392,9 @@ export class Git {
 
   /** Run git and return everything; throws only when git can't be started. */
   async exec(args: string[], options: RunOptions = {}): Promise<RunResult> {
-    const result = await this.#spawn(args, options);
+    const owner =
+      options.auth && this.#token ? (await this.repoFromRemote())?.split("/")[0] : undefined;
+    const result = await this.#spawn(args, options, owner);
     return { ...result, stdout: result.stdout.toString("utf8") };
   }
 
@@ -391,6 +402,8 @@ export class Git {
   #spawn(
     args: string[],
     options: RunOptions,
+    /** The remote's GitHub owner, which scopes the auth header (see {@link authConfigEnv}). */
+    owner?: string,
   ): Promise<{ stdout: Buffer; stderr: string; code: number }> {
     const env: NodeJS.ProcessEnv = {
       ...process.env,
@@ -401,7 +414,7 @@ export class Git {
       ...options.env,
     };
     if (options.auth && this.#token)
-      Object.assign(env, authConfigEnv(this.#token, this.serverUrl, env));
+      Object.assign(env, authConfigEnv(this.#token, this.serverUrl, env, owner));
     const command = this.mask(`git ${args.join(" ")}`);
     return new Promise((resolve, reject) => {
       const child = execFile(
@@ -808,7 +821,9 @@ export class Git {
     assertRefName("tag", name);
     const ref = `refs/tags/${name}`;
     const args = ["push", "--porcelain", this.remote, `${ref}:${ref}`];
-    const result = await this.exec(args, { auth: true });
+    // launchset's tags point at commits that are already on the remote, so there are no LFS
+    // objects to upload: git-lfs's pre-push hook is skipped (no lock check, no network).
+    const result = await this.exec(args, { auth: true, env: { GIT_LFS_SKIP_PUSH: "1" } });
     const status = this.#pushStatus(result.stdout, ref);
     if (result.code === 0) return status ?? "created";
 
