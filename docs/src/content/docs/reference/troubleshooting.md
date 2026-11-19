@@ -23,6 +23,12 @@ See [GitHub App setup](/github-app/). Close the old release PR (or let launchset
 
 **Fix.** Give the App **Workflows: read & write** (App settings → Permissions & events). After you change permissions, an owner of the org has to **accept the new permissions** for the installation (GitHub shows a banner and sends an email). See [GitHub App setup](/github-app/#permissions).
 
+## `mark` fails with `Authentication required: You must have push access to verify locks`
+
+**Cause.** The repo uses Git LFS, and launchset 1.0.2 or older pushed with an App token that git-lfs didn't use. The `build` job's checkout persists the read-only `GITHUB_TOKEN`, and git-lfs's pre-push hook sent that token to the lock check. The image or app was built and uploaded, but `mark` failed, so `finalize` didn't release either.
+
+**Fix.** Update launchset (`demonsters/launchset-action@v1` picks up new releases). From 1.0.3 on, tag pushes skip the LFS hook and branch pushes give git-lfs the App token. Then start **Launchset release** by hand (`workflow_dispatch`) without inputs. It builds the targets without a marker again (with `verify`, the existing uploads are found and the build is skipped), then `mark` and `finalize` finish the release. On an older version, add `git config lfs.locksverify false` as a step before `mark` in `launchset-release.yml`.
+
 ## `The token lacks access. The GitHub App needs "Contents: read & write"...`
 
 The App isn't installed on this repository, or the token comes from another App. Install it on the repo (App settings → Install App) and check the secrets.
