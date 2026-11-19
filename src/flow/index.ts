@@ -28,6 +28,7 @@ export * from "./gather.ts";
 export * from "./git-ops.ts";
 export { type HotfixData, type HotfixOptions, hotfix, parseVersionLine } from "./hotfix.ts";
 export { type MarkData, type MarkOptions, mark } from "./mark.ts";
+export { outputsFor } from "./outputs.ts";
 export * from "./preview.ts";
 export {
   type ReleaseData,

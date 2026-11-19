@@ -5,8 +5,8 @@
 
 import { resolve } from "node:path";
 import * as core from "@actions/core";
-import { createContext, type FlowResult, type Logger } from "../../src/flow/index.ts";
-import { dispatch, outputsFor } from "./commands.ts";
+import { createContext, type FlowResult, type Logger, outputsFor } from "../../src/flow/index.ts";
+import { dispatch } from "./commands.ts";
 import { errorSummary, errorText, formatError } from "./errors.ts";
 import { readInputs } from "./inputs.ts";
 

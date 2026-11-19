@@ -26,7 +26,7 @@ import { parse as parseYaml } from "yaml";
 import { runCli } from "../../src/cli/program.ts";
 import { configJsonSchema } from "../../src/core/config/json-schema.ts";
 import { REQUIRED_APP_PERMISSIONS } from "../../src/forge/github/permissions.ts";
-import { CLI_INTROS, COMMON_FLAGS_NOTE } from "./cli-intros.ts";
+import { CI_OUTPUT_NOTE, CLI_INTROS, COMMON_FLAGS_NOTE } from "./cli-intros.ts";
 import { CONFIG_DESCRIPTIONS } from "./descriptions.ts";
 
 const docsRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -317,7 +317,7 @@ async function helpText(args: string[]): Promise<string> {
 async function renderCliCommands(): Promise<string> {
   const top = await helpText([]);
   // Command names from the top-level help ("Commands:" section).
-  const names = [...top.matchAll(/^ {2}([a-z]+)(?: \[options\])?(?: <[^>]+>)?\s{2,}\S/gm)]
+  const names = [...top.matchAll(/^ {2}([a-z][a-z-]*)(?: \[options\])?(?: <[^>]+>)?\s{2,}\S/gm)]
     .map((m) => m[1] as string)
     .filter((n) => n !== "help");
   const missing = names.filter((n) => CLI_INTROS[n] === undefined);
@@ -331,6 +331,7 @@ async function renderCliCommands(): Promise<string> {
     "### Help of the main command",
     ["```text", top, "```"].join("\n"),
     COMMON_FLAGS_NOTE,
+    CI_OUTPUT_NOTE,
   ];
   for (const name of names) {
     blocks.push(

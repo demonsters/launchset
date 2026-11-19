@@ -22,6 +22,7 @@ export interface GlobalOpts {
   token?: string;
   repo?: string;
   yes?: boolean;
+  ci?: boolean;
 }
 
 /** The directory with the launchset config: `--cwd`, else the nearest parent that has one. */
@@ -48,7 +49,8 @@ export function cliLogger(io: CliIo): Logger {
   };
 }
 
-const REPO = /^[^/\s]+\/[^/\s]+$/;
+/** `owner/repo`, or a nested GitLab path (`group/sub/project`): two or more segments. */
+const REPO = /^[^/\s]+(?:\/[^/\s]+)+$/;
 
 export async function makeContext(
   io: CliIo,

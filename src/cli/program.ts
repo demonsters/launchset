@@ -21,14 +21,15 @@ import {
   verify,
   version,
 } from "../flow/index.ts";
-import { previewPlan } from "../flow/preview.ts";
+import { previewComment, previewPlan } from "../flow/preview.ts";
 import { Git } from "../git/index.ts";
 import { INIT_FLAGS, parseDecide } from "../init/flags.ts";
 import { packageFile } from "../init/package-files.ts";
 import type { InitOptions } from "../init/types.ts";
+import { emitCi, finishCi } from "./ci-output.ts";
 import { exitCodeFor, reportError, UsageError } from "./errors.ts";
 import { type CliIo, processIo } from "./io.ts";
-import { emit, type GlobalOpts, makeContext, readPlanInput, toJson } from "./run.ts";
+import { cliLogger, emit, type GlobalOpts, makeContext, readPlanInput, toJson } from "./run.ts";
 
 /** Exit code of the command that ran (0 until a command says otherwise). */
 export interface RunState {
@@ -67,7 +68,13 @@ type Handler<O> = (opts: O & GlobalOpts, args: string[]) => Promise<number>;
 /** Shared options; `--cwd` etc. are also accepted before the command name. */
 function withGlobals(
   cmd: Command,
-  options: { json?: boolean; yes?: boolean; github?: boolean; cwdHelp?: string } = {},
+  options: {
+    json?: boolean;
+    yes?: boolean;
+    github?: boolean;
+    ci?: boolean;
+    cwdHelp?: string;
+  } = {},
 ): Command {
   cmd.option(
     "--cwd <dir>",
@@ -76,15 +83,37 @@ function withGlobals(
   );
   if (options.json) cmd.option("--json", "print JSON on stdout (logs go to stderr)");
   if (options.yes) cmd.option("--yes", "never ask; accept defaults");
+  if (options.ci) {
+    cmd.option(
+      "--ci",
+      "write plan.json, launchset.env and launchset.sh (default: on when $GITLAB_CI is true)",
+    );
+    cmd.option("--no-ci", "don't write the CI output files");
+  }
   if (options.github !== false) {
-    cmd.option("--token <token>", "GitHub token (default: $LAUNCHSET_TOKEN, then $GITHUB_TOKEN)");
-    cmd.option("--repo <owner/repo>", "GitHub repository (default: from the origin remote)");
+    cmd.option(
+      "--token <token>",
+      "token (default: $LAUNCHSET_TOKEN, then $GITHUB_TOKEN / $GITLAB_TOKEN)",
+    );
+    cmd.option(
+      "--repo <path>",
+      "repository path (owner/repo, or group/sub/project on GitLab; default: from the origin remote)",
+    );
   }
   return cmd;
 }
 
 function examples(cmd: Command, ...lines: string[]): Command {
   return cmd.addHelpText("after", `\nExample:\n${lines.map((l) => `  $ ${l}`).join("\n")}\n`);
+}
+
+/** Help text on the variables a command writes in `--ci` mode. */
+function ciHelp(cmd: Command, variables?: string): Command {
+  const names = variables ? `\nVariables: ${variables}` : "";
+  return cmd.addHelpText(
+    "after",
+    `\nIn --ci mode also writes plan.json, launchset.env and launchset.sh (see docs).${names}\n`,
+  );
 }
 
 function missingPlan(command: string): UsageError {
@@ -289,7 +318,7 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
     "status",
     "Show pending changesets, the next version, the last release and anything unfinished.",
     (cmd) => {
-      withGlobals(cmd, { json: true });
+      withGlobals(cmd, { json: true, ci: true });
       cmd.option(
         "--require-changeset",
         "exit 1 unless a changeset was added or changed compared with --since",
@@ -299,11 +328,12 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
         "base ref for --require-changeset (default: origin/<base branch>)",
       );
       cmd.option("--no-fetch", "don't fetch tags first");
-      return examples(
+      examples(
         cmd,
         "launchset status --json",
         "launchset status --require-changeset --since origin/main",
       );
+      return ciHelp(cmd);
     },
     async (opts) => {
       if (opts.since !== undefined && !opts.requireChangeset) {
@@ -312,12 +342,13 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
           "Add --require-changeset, or drop --since.",
         );
       }
-      const result = await status(await makeContext(io, opts), {
+      const context = await makeContext(io, opts);
+      const result = await status(context, {
         ...(opts.requireChangeset ? { requireChangeset: true } : {}),
         ...(opts.since ? { since: opts.since } : {}),
         fetch: opts.fetch !== false,
       });
-      return emit(io, result, { json: opts.json });
+      return emitCi(io, cliLogger(io), "status", result, context, opts);
     },
   );
 
@@ -353,7 +384,7 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
     "plan",
     "Print the release plan (mode, matrix, version, build number) as JSON. Writes nothing.",
     (cmd) => {
-      withGlobals(cmd, { json: true });
+      withGlobals(cmd, { json: true, ci: true });
       cmd.option(
         "--preview",
         "plan a preview build instead (a dry run: prerelease tags are not reserved)",
@@ -375,7 +406,11 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
         ).argParser(positiveInt),
       );
       cmd.option("--no-fetch", "don't fetch tags first");
-      return examples(cmd, "launchset plan > plan.json", "launchset plan --preview");
+      examples(cmd, "launchset plan > plan.json", "launchset plan --preview");
+      return ciHelp(
+        cmd,
+        "LAUNCHSET_MODE, LAUNCHSET_MATRIX, LAUNCHSET_VERSION, LAUNCHSET_BUILD_NUMBER, LAUNCHSET_CHANNEL, LAUNCHSET_RELEASE_SHA, ...",
+      );
     },
     async (opts) => {
       const context = await makeContext(
@@ -399,6 +434,10 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
           ),
         );
         io.stderr(`${result.lines.join("\n")}\n`);
+        await finishCi(io, cliLogger(io), "preview-plan", result, context, {
+          ...opts,
+          summaryToStderr: true,
+        });
         return result.ok ? 0 : 1;
       }
       const result = await release(context, {
@@ -412,7 +451,98 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
       io.stdout(toJson(result.data.plan));
       const notes = result.lines.filter((l) => /^(warning|note):/.test(l));
       if (notes.length > 0) io.stderr(`${notes.join("\n")}\n`);
+      await finishCi(io, cliLogger(io), "release", result, context, {
+        ...opts,
+        summaryToStderr: true,
+      });
       return result.ok ? 0 : 1;
+    },
+  );
+
+  // release ------------------------------------------------------------------------------
+  command<{
+    target?: string;
+    version?: string;
+    force?: boolean;
+    branch?: string;
+    fetch?: boolean;
+  }>(
+    "release",
+    "Decide the release mode and update (or close) the release PR/MR. `plan` is the dry run.",
+    (cmd) => {
+      withGlobals(cmd, { json: true, ci: true });
+      cmd.option("--target <name>", "a manual target to ship");
+      cmd.option("--version <version>", "with --target: the released version to ship");
+      cmd.option(
+        "--force",
+        "with --target: allow a version lower than the target's highest marker",
+      );
+      cmd.option("--branch <name>", "release for this branch (default: the current branch)");
+      cmd.option("--no-fetch", "don't fetch tags first");
+      examples(cmd, "launchset release --ci", "launchset release --target ios --version 1.5.0");
+      return ciHelp(
+        cmd,
+        "LAUNCHSET_MODE, LAUNCHSET_MATRIX, LAUNCHSET_VERSION, LAUNCHSET_BUILD_NUMBER, LAUNCHSET_CHANNEL, LAUNCHSET_RELEASE_SHA, LAUNCHSET_TAG, LAUNCHSET_DIST_TAG, LAUNCHSET_PR_NUMBER, ...",
+      );
+    },
+    async (opts) => {
+      const context = await makeContext(io, opts);
+      const result = await release(context, {
+        fetch: opts.fetch !== false,
+        ...(opts.target ? { target: opts.target } : {}),
+        ...(opts.version ? { version: opts.version } : {}),
+        ...(opts.force ? { force: true } : {}),
+        ...(opts.branch ? { branch: opts.branch } : {}),
+      });
+      return emitCi(io, cliLogger(io), "release", result, context, opts);
+    },
+  );
+
+  // preview-plan -------------------------------------------------------------------------
+  command<{ target?: string; fetch?: boolean }>(
+    "preview-plan",
+    "Plan a preview build and reserve its prerelease tag. `plan --preview` is the dry run.",
+    (cmd) => {
+      withGlobals(cmd, { json: true, ci: true });
+      cmd.option("--target <names>", "targets to build for a manual run (comma separated, or all)");
+      cmd.option("--no-fetch", "don't fetch tags first");
+      examples(cmd, "launchset preview-plan --ci", "launchset preview-plan --target web,android");
+      return ciHelp(
+        cmd,
+        "LAUNCHSET_MATRIX, LAUNCHSET_VERSION, LAUNCHSET_BUILD_NUMBER, LAUNCHSET_CHANNEL, LAUNCHSET_PRERELEASE, LAUNCHSET_RELEASE_SHA, LAUNCHSET_TAG, LAUNCHSET_SKIPPED, ...",
+      );
+    },
+    async (opts) => {
+      const context = await makeContext(io, opts);
+      // A target without a name means "not given"; previewPlan splits the comma-separated list.
+      const given = opts.target !== undefined && /[^\s,]/.test(opts.target);
+      const result = await previewPlan(context, {
+        fetch: opts.fetch !== false,
+        ...(given && opts.target !== undefined ? { targets: [opts.target] } : {}),
+      });
+      return emitCi(io, cliLogger(io), "preview-plan", result, context, opts);
+    },
+  );
+
+  // preview-comment ----------------------------------------------------------------------
+  command<{ plan?: string }>(
+    "preview-comment",
+    "Post the preview results (a sticky comment, or the prerelease notes).",
+    (cmd) => {
+      withGlobals(cmd, { json: true, ci: true });
+      cmd.option(
+        "--plan <json|@file>",
+        "the preview plan (default: $LAUNCHSET_PLAN; empty: nothing to report)",
+      );
+      examples(cmd, "launchset preview-comment --plan @plan.json");
+      return ciHelp(cmd, "LAUNCHSET_COMMENT_URL, LAUNCHSET_RELEASE_URL");
+    },
+    async (opts) => {
+      // Empty when the preview was skipped: the flow reports "nothing to report".
+      const plan = (await readPlanInput(io, opts.plan)) ?? "";
+      const context = await makeContext(io, opts);
+      const result = await previewComment(context, { plan });
+      return emitCi(io, cliLogger(io), "preview-comment", result, context, opts);
     },
   );
 
@@ -427,7 +557,7 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
     "stamp",
     "Write the version and build number into one target's files (never committed).",
     (cmd) => {
-      withGlobals(cmd, { json: true, github: false });
+      withGlobals(cmd, { json: true, github: false, ci: true });
       cmd.requiredOption("--target <name>", "target name from the config");
       cmd.option("--plan <json|@file>", "the plan (default: $LAUNCHSET_PLAN)");
       cmd.option("--version <version>", "without a plan: the version to write");
@@ -439,10 +569,15 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
           CHANNELS,
         ),
       );
-      return examples(
+      examples(
         cmd,
         "launchset stamp --target android --version 1.5.0 --build-number 217000000",
         "launchset stamp --target web --plan @plan.json",
+        "launchset stamp --target web --plan @plan.json --ci && . ./launchset.sh",
+      );
+      return ciHelp(
+        cmd,
+        "LAUNCHSET_VERSION, LAUNCHSET_BUILD_NUMBER, LAUNCHSET_CHANNEL, LAUNCHSET_MARKETING_VERSION, LAUNCHSET_RELEASE_SHA, ...",
       );
     },
     async (opts) => {
@@ -456,14 +591,15 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
       }
       // Neither the plan nor --version: stamp says so (exit code 2).
       const plan = await readPlanInput(io, opts.plan, !byFlags);
-      const result = await stamp(await makeContext(io, opts), {
+      const context = await makeContext(io, opts);
+      const result = await stamp(context, {
         target: opts.target,
         ...(plan !== undefined ? { plan } : {}),
         ...(opts.version !== undefined ? { version: opts.version } : {}),
         ...(opts.buildNumber !== undefined ? { buildNumber: opts.buildNumber } : {}),
         ...(opts.channel ? { channel: opts.channel } : {}),
       });
-      return emit(io, result, { json: opts.json });
+      return emitCi(io, cliLogger(io), "stamp", result, context, opts);
     },
   );
 
@@ -472,16 +608,21 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
     "verify",
     "Check the stores and registries: is this version and build number already published?",
     (cmd) => {
-      withGlobals(cmd, { json: true, github: false });
+      withGlobals(cmd, { json: true, github: false, ci: true });
       cmd.requiredOption("--target <name>", "target name from the config");
       cmd.option("--plan <json|@file>", "the plan (default: $LAUNCHSET_PLAN)");
-      return examples(cmd, "launchset verify --target docker-api --plan @plan.json");
+      examples(cmd, "launchset verify --target docker-api --plan @plan.json");
+      return ciHelp(
+        cmd,
+        "LAUNCHSET_ALREADY_PUBLISHED, LAUNCHSET_VERSION, LAUNCHSET_BUILD_NUMBER, ...",
+      );
     },
     async (opts) => {
       const plan = await readPlanInput(io, opts.plan);
       if (plan === undefined) throw missingPlan("verify");
-      const result = await verify(await makeContext(io, opts), { target: opts.target, plan });
-      return emit(io, result, { json: opts.json });
+      const context = await makeContext(io, opts);
+      const result = await verify(context, { target: opts.target, plan });
+      return emitCi(io, cliLogger(io), "verify", result, context, opts);
     },
   );
 
@@ -490,7 +631,7 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
     "mark",
     "Create and push the marker tag for a target (for a manual target: --version).",
     (cmd) => {
-      withGlobals(cmd, { json: true });
+      withGlobals(cmd, { json: true, ci: true });
       cmd.requiredOption("--target <name>", "target name from the config");
       cmd.option("--plan <json|@file>", "the plan (default: $LAUNCHSET_PLAN)");
       cmd.option("--version <version>", "a released version shipped by hand (manual targets)");
@@ -499,18 +640,20 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
           positiveInt,
         ),
       );
-      return examples(cmd, "launchset mark --target ios --version 1.5.0 --build-number 217000000");
+      examples(cmd, "launchset mark --target ios --version 1.5.0 --build-number 217000000");
+      return ciHelp(cmd, "LAUNCHSET_VERSION, LAUNCHSET_RELEASE_SHA");
     },
     async (opts) => {
       // Neither the plan nor --version: mark says so (exit code 2).
       const plan = await readPlanInput(io, opts.plan, opts.version === undefined);
-      const result = await mark(await makeContext(io, opts), {
+      const context = await makeContext(io, opts);
+      const result = await mark(context, {
         target: opts.target,
         ...(plan !== undefined ? { plan } : {}),
         ...(opts.version !== undefined ? { version: opts.version } : {}),
         ...(opts.buildNumber !== undefined ? { buildNumber: opts.buildNumber } : {}),
       });
-      return emit(io, result, { json: opts.json });
+      return emitCi(io, cliLogger(io), "mark", result, context, opts);
     },
   );
 
@@ -519,21 +662,26 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
     "ship",
     "Prepare a manual target for a hand-made build of a released version, then stamp it.",
     (cmd) => {
-      withGlobals(cmd, { json: true });
+      withGlobals(cmd, { json: true, ci: true });
       cmd.requiredOption("--target <name>", "a manual target from the config");
       cmd.option("--version <version>", "the released version (default: the latest release)");
       cmd.option("--force", "allow a version lower than the target's highest marker");
       cmd.option("--no-fetch", "don't fetch tags first");
-      return examples(cmd, "launchset ship --target ios --json");
+      examples(cmd, "launchset ship --target ios --json");
+      return ciHelp(
+        cmd,
+        "LAUNCHSET_VERSION, LAUNCHSET_BUILD_NUMBER, LAUNCHSET_CHANNEL, LAUNCHSET_MARKETING_VERSION, ...",
+      );
     },
     async (opts) => {
-      const result = await ship(await makeContext(io, opts), {
+      const context = await makeContext(io, opts);
+      const result = await ship(context, {
         target: opts.target,
         fetch: opts.fetch !== false,
         ...(opts.version ? { version: opts.version } : {}),
         ...(opts.force ? { force: true } : {}),
       });
-      return emit(io, result, { json: opts.json });
+      return emitCi(io, cliLogger(io), "ship", result, context, opts);
     },
   );
 
@@ -542,19 +690,21 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
     "finalize",
     "Create the release tag and GitHub Release once every target is built.",
     (cmd) => {
-      withGlobals(cmd, { json: true });
+      withGlobals(cmd, { json: true, ci: true });
       cmd.option("--plan <json|@file>", "the plan (default: $LAUNCHSET_PLAN)");
       cmd.option("--no-fetch", "don't fetch tags first");
-      return examples(cmd, "launchset finalize --plan @plan.json --token $GITHUB_TOKEN");
+      examples(cmd, "launchset finalize --plan @plan.json --token $GITHUB_TOKEN");
+      return ciHelp(cmd, "LAUNCHSET_VERSION, LAUNCHSET_TAG, LAUNCHSET_PR_NUMBER, ...");
     },
     async (opts) => {
       const plan = await readPlanInput(io, opts.plan);
       if (plan === undefined) throw missingPlan("finalize");
-      const result = await finalize(await makeContext(io, opts), {
+      const context = await makeContext(io, opts);
+      const result = await finalize(context, {
         plan,
         fetch: opts.fetch !== false,
       });
-      return emit(io, result, { json: opts.json });
+      return emitCi(io, cliLogger(io), "finalize", result, context, opts);
     },
   );
 
@@ -582,12 +732,13 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
     "check",
     "Run the PR check: is there a valid changeset? (--push: the pre-push hook warning.)",
     (cmd) => {
-      withGlobals(cmd, { json: true });
+      withGlobals(cmd, { json: true, ci: true });
       cmd.option("--base <ref>", "compare against this ref (default: the PR's base commit)");
       cmd.option("--push", "pre-push hook mode: warn when a changeset is missing, never fail");
       cmd.option("--no-comment", "don't post the sticky PR comment");
       cmd.option("--no-fetch", "don't fetch tags first (--push never fetches)");
-      return examples(cmd, "launchset check --base origin/main", "launchset check --push");
+      examples(cmd, "launchset check --base origin/main", "launchset check --push");
+      return ciHelp(cmd, "LAUNCHSET_PR_NUMBER");
     },
     async (opts) => {
       const context = await makeContext(io, opts);
@@ -600,7 +751,7 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
       const result = opts.push
         ? await check(context, { ...common, push: true })
         : await check(context, common);
-      return emit(io, result, { json: opts.json });
+      return emitCi(io, cliLogger(io), "check", result, context, opts);
     },
   );
 

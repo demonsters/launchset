@@ -38,8 +38,10 @@ Options:
                                   launchset config)
   --json                          print JSON on stdout (logs go to stderr)
   --yes                           never ask; accept defaults
-  --token <token>                 GitHub token (default: $LAUNCHSET_TOKEN, then $GITHUB_TOKEN)
-  --repo <owner/repo>             GitHub repository (default: from the origin remote)
+  --token <token>                 token (default: $LAUNCHSET_TOKEN, then $GITHUB_TOKEN /
+                                  $GITLAB_TOKEN)
+  --repo <path>                   repository path (owner/repo, or group/sub/project on GitLab;
+                                  default: from the origin remote)
   -h, --help                      display help for command
 
 Commands:
@@ -53,6 +55,12 @@ Commands:
                                   does).
   plan [options]                  Print the release plan (mode, matrix, version, build number) as
                                   JSON. Writes nothing.
+  release [options]               Decide the release mode and update (or close) the release PR/MR.
+                                  `plan` is the dry run.
+  preview-plan [options]          Plan a preview build and reserve its prerelease tag. `plan
+                                  --preview` is the dry run.
+  preview-comment [options]       Post the preview results (a sticky comment, or the prerelease
+                                  notes).
   stamp [options]                 Write the version and build number into one target's files (never
                                   committed).
   verify [options]                Check the stores and registries: is this version and build number
@@ -80,7 +88,20 @@ Rules that hold for every command:
 - `--cwd <dir>` sets the repo root. Without it, launchset uses the nearest parent folder that has a `launchset.config.*` file. `init` has no config yet, so it defaults to the git repository root (GitHub only runs workflows from there) and says so when that isn't the folder you ran it in.
 - GitHub-facing commands take a token from `--token`, then `LAUNCHSET_TOKEN`, then `GITHUB_TOKEN`, and the repository from `--repo`, then `GITHUB_REPOSITORY`, then the `origin` remote.
 - `--plan` takes the plan JSON itself, `@file.json`, or reads `LAUNCHSET_PLAN`.
+- `--ci` (default: on when `GITLAB_CI=true`; `--no-ci` turns it off) is accepted by every command that produces outputs: `release`, `plan`, `preview-plan`, `preview-comment`, `stamp`, `verify`, `mark`, `finalize`, `check`, `ship` and `status`. See CI output files below.
 - Colors are only used in a terminal, and never when `NO_COLOR` is set. `LAUNCHSET_DEBUG=1` prints stack traces.
+
+### CI output files (`--ci`)
+
+A CI runner without the GitHub Action gets a command's results as files, written to the working directory after the command ran (also when it failed, not when it crashed):
+
+- `plan.json` (`LAUNCHSET_PLAN_FILE`): the plan JSON, written when the command produced a plan. Pass it on with `--plan @plan.json`.
+- `launchset.env` (`LAUNCHSET_DOTENV`): GitLab `artifacts:reports:dotenv` format, one `NAME=value` per line. Values with a line break are left out. GitLab accepts at most 5 KB and (by default) 20 variables, and launchset warns when the file is over that.
+- `launchset.sh` (`LAUNCHSET_SHELL_ENV`): the same variables as `export NAME='value'` lines, including multi-line values. Run `launchset stamp --target web --plan @plan.json --ci && . ./launchset.sh` and later script lines see `$LAUNCHSET_VERSION`.
+
+Every output except `plan` becomes `LAUNCHSET_` plus its name in upper snake case: `already-published` is `LAUNCHSET_ALREADY_PUBLISHED`, `build-number` is `LAUNCHSET_BUILD_NUMBER`, `release-sha` is `LAUNCHSET_RELEASE_SHA`. The exported variables of `stamp` and `ship` (`LAUNCHSET_VERSION`, `LAUNCHSET_BUILD_NUMBER`, `LAUNCHSET_CHANNEL`) are added as they are and win on a clash.
+
+Commands that run in one job (`stamp`, then `verify`, then `mark`) merge into the same files: variables a command sets are replaced, the others stay. With `--ci` the job summary is printed after the result lines (on stderr with `--json`).
 
 ### launchset init
 
@@ -156,8 +177,12 @@ Show pending changesets, the next version, the last release and anything unfinis
 Options:
   --cwd <dir>          run in this directory (default: the nearest folder with a launchset config)
   --json               print JSON on stdout (logs go to stderr)
-  --token <token>      GitHub token (default: $LAUNCHSET_TOKEN, then $GITHUB_TOKEN)
-  --repo <owner/repo>  GitHub repository (default: from the origin remote)
+  --ci                 write plan.json, launchset.env and launchset.sh (default: on when $GITLAB_CI
+                       is true)
+  --no-ci              don't write the CI output files
+  --token <token>      token (default: $LAUNCHSET_TOKEN, then $GITHUB_TOKEN / $GITLAB_TOKEN)
+  --repo <path>        repository path (owner/repo, or group/sub/project on GitLab; default: from
+                       the origin remote)
   --require-changeset  exit 1 unless a changeset was added or changed compared with --since
   --since <ref>        base ref for --require-changeset (default: origin/<base branch>)
   --no-fetch           don't fetch tags first
@@ -166,6 +191,9 @@ Options:
 Example:
   $ launchset status --json
   $ launchset status --require-changeset --since origin/main
+
+
+In --ci mode also writes plan.json, launchset.env and launchset.sh (see docs).
 ```
 
 ### launchset version
@@ -178,13 +206,14 @@ Usage: launchset version [options]
 Apply the pending changesets locally (what the release PR commit does).
 
 Options:
-  --cwd <dir>          run in this directory (default: the nearest folder with a launchset config)
-  --json               print JSON on stdout (logs go to stderr)
-  --token <token>      GitHub token (default: $LAUNCHSET_TOKEN, then $GITHUB_TOKEN)
-  --repo <owner/repo>  GitHub repository (default: from the origin remote)
-  --dry-run            print the diff, write nothing
-  --no-fetch           don't fetch tags first
-  -h, --help           display help for command
+  --cwd <dir>      run in this directory (default: the nearest folder with a launchset config)
+  --json           print JSON on stdout (logs go to stderr)
+  --token <token>  token (default: $LAUNCHSET_TOKEN, then $GITHUB_TOKEN / $GITLAB_TOKEN)
+  --repo <path>    repository path (owner/repo, or group/sub/project on GitLab; default: from the
+                   origin remote)
+  --dry-run        print the diff, write nothing
+  --no-fetch       don't fetch tags first
+  -h, --help       display help for command
 
 Example:
   $ launchset version --dry-run
@@ -202,8 +231,12 @@ Print the release plan (mode, matrix, version, build number) as JSON. Writes not
 Options:
   --cwd <dir>          run in this directory (default: the nearest folder with a launchset config)
   --json               print JSON on stdout (logs go to stderr)
-  --token <token>      GitHub token (default: $LAUNCHSET_TOKEN, then $GITHUB_TOKEN)
-  --repo <owner/repo>  GitHub repository (default: from the origin remote)
+  --ci                 write plan.json, launchset.env and launchset.sh (default: on when $GITLAB_CI
+                       is true)
+  --no-ci              don't write the CI output files
+  --token <token>      token (default: $LAUNCHSET_TOKEN, then $GITHUB_TOKEN / $GITLAB_TOKEN)
+  --repo <path>        repository path (owner/repo, or group/sub/project on GitLab; default: from
+                       the origin remote)
   --preview            plan a preview build instead (a dry run: prerelease tags are not reserved)
   --target <names>     a manual target to ship; with --preview: targets to build (comma separated,
                        or all)
@@ -217,6 +250,104 @@ Options:
 Example:
   $ launchset plan > plan.json
   $ launchset plan --preview
+
+
+In --ci mode also writes plan.json, launchset.env and launchset.sh (see docs).
+Variables: LAUNCHSET_MODE, LAUNCHSET_MATRIX, LAUNCHSET_VERSION, LAUNCHSET_BUILD_NUMBER, LAUNCHSET_CHANNEL, LAUNCHSET_RELEASE_SHA, ...
+```
+
+### launchset release
+
+Decides the release mode from the pending changesets and the tags, then acts on it: opens or updates the release PR/MR, or closes it when nothing is pending. The `plan` command is the dry run. For a manual target, `--target` and `--version` plan a hand-made build. This is what the action's `release` command does.
+
+```text
+Usage: launchset release [options]
+
+Decide the release mode and update (or close) the release PR/MR. `plan` is the dry run.
+
+Options:
+  --cwd <dir>          run in this directory (default: the nearest folder with a launchset config)
+  --json               print JSON on stdout (logs go to stderr)
+  --ci                 write plan.json, launchset.env and launchset.sh (default: on when $GITLAB_CI
+                       is true)
+  --no-ci              don't write the CI output files
+  --token <token>      token (default: $LAUNCHSET_TOKEN, then $GITHUB_TOKEN / $GITLAB_TOKEN)
+  --repo <path>        repository path (owner/repo, or group/sub/project on GitLab; default: from
+                       the origin remote)
+  --target <name>      a manual target to ship
+  --version <version>  with --target: the released version to ship
+  --force              with --target: allow a version lower than the target's highest marker
+  --branch <name>      release for this branch (default: the current branch)
+  --no-fetch           don't fetch tags first
+  -h, --help           display help for command
+
+Example:
+  $ launchset release --ci
+  $ launchset release --target ios --version 1.5.0
+
+
+In --ci mode also writes plan.json, launchset.env and launchset.sh (see docs).
+Variables: LAUNCHSET_MODE, LAUNCHSET_MATRIX, LAUNCHSET_VERSION, LAUNCHSET_BUILD_NUMBER, LAUNCHSET_CHANNEL, LAUNCHSET_RELEASE_SHA, LAUNCHSET_TAG, LAUNCHSET_DIST_TAG, LAUNCHSET_PR_NUMBER, ...
+```
+
+### launchset preview-plan
+
+Plans a preview build and, on a prerelease branch, reserves the prerelease tag by pushing it. `plan --preview` is the dry run. `--target` lists the targets of a manual run (comma separated, or `all`). The plan is skipped (with a reason) when there is nothing to preview.
+
+```text
+Usage: launchset preview-plan [options]
+
+Plan a preview build and reserve its prerelease tag. `plan --preview` is the dry run.
+
+Options:
+  --cwd <dir>       run in this directory (default: the nearest folder with a launchset config)
+  --json            print JSON on stdout (logs go to stderr)
+  --ci              write plan.json, launchset.env and launchset.sh (default: on when $GITLAB_CI is
+                    true)
+  --no-ci           don't write the CI output files
+  --token <token>   token (default: $LAUNCHSET_TOKEN, then $GITHUB_TOKEN / $GITLAB_TOKEN)
+  --repo <path>     repository path (owner/repo, or group/sub/project on GitLab; default: from the
+                    origin remote)
+  --target <names>  targets to build for a manual run (comma separated, or all)
+  --no-fetch        don't fetch tags first
+  -h, --help        display help for command
+
+Example:
+  $ launchset preview-plan --ci
+  $ launchset preview-plan --target web,android
+
+
+In --ci mode also writes plan.json, launchset.env and launchset.sh (see docs).
+Variables: LAUNCHSET_MATRIX, LAUNCHSET_VERSION, LAUNCHSET_BUILD_NUMBER, LAUNCHSET_CHANNEL, LAUNCHSET_PRERELEASE, LAUNCHSET_RELEASE_SHA, LAUNCHSET_TAG, LAUNCHSET_SKIPPED, ...
+```
+
+### launchset preview-comment
+
+Posts the preview results: the sticky PR comment, or the prerelease notes on a prerelease branch. Pass the plan from `preview-plan`. An empty or missing plan means the preview was skipped, and nothing is posted.
+
+```text
+Usage: launchset preview-comment [options]
+
+Post the preview results (a sticky comment, or the prerelease notes).
+
+Options:
+  --cwd <dir>          run in this directory (default: the nearest folder with a launchset config)
+  --json               print JSON on stdout (logs go to stderr)
+  --ci                 write plan.json, launchset.env and launchset.sh (default: on when $GITLAB_CI
+                       is true)
+  --no-ci              don't write the CI output files
+  --token <token>      token (default: $LAUNCHSET_TOKEN, then $GITHUB_TOKEN / $GITLAB_TOKEN)
+  --repo <path>        repository path (owner/repo, or group/sub/project on GitLab; default: from
+                       the origin remote)
+  --plan <json|@file>  the preview plan (default: $LAUNCHSET_PLAN; empty: nothing to report)
+  -h, --help           display help for command
+
+Example:
+  $ launchset preview-comment --plan @plan.json
+
+
+In --ci mode also writes plan.json, launchset.env and launchset.sh (see docs).
+Variables: LAUNCHSET_COMMENT_URL, LAUNCHSET_RELEASE_URL
 ```
 
 ### launchset stamp
@@ -231,6 +362,9 @@ Write the version and build number into one target's files (never committed).
 Options:
   --cwd <dir>          run in this directory (default: the nearest folder with a launchset config)
   --json               print JSON on stdout (logs go to stderr)
+  --ci                 write plan.json, launchset.env and launchset.sh (default: on when $GITLAB_CI
+                       is true)
+  --no-ci              don't write the CI output files
   --target <name>      target name from the config
   --plan <json|@file>  the plan (default: $LAUNCHSET_PLAN)
   --version <version>  without a plan: the version to write
@@ -242,6 +376,11 @@ Options:
 Example:
   $ launchset stamp --target android --version 1.5.0 --build-number 217000000
   $ launchset stamp --target web --plan @plan.json
+  $ launchset stamp --target web --plan @plan.json --ci && . ./launchset.sh
+
+
+In --ci mode also writes plan.json, launchset.env and launchset.sh (see docs).
+Variables: LAUNCHSET_VERSION, LAUNCHSET_BUILD_NUMBER, LAUNCHSET_CHANNEL, LAUNCHSET_MARKETING_VERSION, LAUNCHSET_RELEASE_SHA, ...
 ```
 
 ### launchset verify
@@ -256,12 +395,19 @@ Check the stores and registries: is this version and build number already publis
 Options:
   --cwd <dir>          run in this directory (default: the nearest folder with a launchset config)
   --json               print JSON on stdout (logs go to stderr)
+  --ci                 write plan.json, launchset.env and launchset.sh (default: on when $GITLAB_CI
+                       is true)
+  --no-ci              don't write the CI output files
   --target <name>      target name from the config
   --plan <json|@file>  the plan (default: $LAUNCHSET_PLAN)
   -h, --help           display help for command
 
 Example:
   $ launchset verify --target docker-api --plan @plan.json
+
+
+In --ci mode also writes plan.json, launchset.env and launchset.sh (see docs).
+Variables: LAUNCHSET_ALREADY_PUBLISHED, LAUNCHSET_VERSION, LAUNCHSET_BUILD_NUMBER, ...
 ```
 
 ### launchset mark
@@ -276,8 +422,12 @@ Create and push the marker tag for a target (for a manual target: --version).
 Options:
   --cwd <dir>          run in this directory (default: the nearest folder with a launchset config)
   --json               print JSON on stdout (logs go to stderr)
-  --token <token>      GitHub token (default: $LAUNCHSET_TOKEN, then $GITHUB_TOKEN)
-  --repo <owner/repo>  GitHub repository (default: from the origin remote)
+  --ci                 write plan.json, launchset.env and launchset.sh (default: on when $GITLAB_CI
+                       is true)
+  --no-ci              don't write the CI output files
+  --token <token>      token (default: $LAUNCHSET_TOKEN, then $GITHUB_TOKEN / $GITLAB_TOKEN)
+  --repo <path>        repository path (owner/repo, or group/sub/project on GitLab; default: from
+                       the origin remote)
   --target <name>      target name from the config
   --plan <json|@file>  the plan (default: $LAUNCHSET_PLAN)
   --version <version>  a released version shipped by hand (manual targets)
@@ -286,6 +436,10 @@ Options:
 
 Example:
   $ launchset mark --target ios --version 1.5.0 --build-number 217000000
+
+
+In --ci mode also writes plan.json, launchset.env and launchset.sh (see docs).
+Variables: LAUNCHSET_VERSION, LAUNCHSET_RELEASE_SHA
 ```
 
 ### launchset ship
@@ -300,8 +454,12 @@ Prepare a manual target for a hand-made build of a released version, then stamp 
 Options:
   --cwd <dir>          run in this directory (default: the nearest folder with a launchset config)
   --json               print JSON on stdout (logs go to stderr)
-  --token <token>      GitHub token (default: $LAUNCHSET_TOKEN, then $GITHUB_TOKEN)
-  --repo <owner/repo>  GitHub repository (default: from the origin remote)
+  --ci                 write plan.json, launchset.env and launchset.sh (default: on when $GITLAB_CI
+                       is true)
+  --no-ci              don't write the CI output files
+  --token <token>      token (default: $LAUNCHSET_TOKEN, then $GITHUB_TOKEN / $GITLAB_TOKEN)
+  --repo <path>        repository path (owner/repo, or group/sub/project on GitLab; default: from
+                       the origin remote)
   --target <name>      a manual target from the config
   --version <version>  the released version (default: the latest release)
   --force              allow a version lower than the target's highest marker
@@ -310,6 +468,10 @@ Options:
 
 Example:
   $ launchset ship --target ios --json
+
+
+In --ci mode also writes plan.json, launchset.env and launchset.sh (see docs).
+Variables: LAUNCHSET_VERSION, LAUNCHSET_BUILD_NUMBER, LAUNCHSET_CHANNEL, LAUNCHSET_MARKETING_VERSION, ...
 ```
 
 ### launchset finalize
@@ -324,14 +486,22 @@ Create the release tag and GitHub Release once every target is built.
 Options:
   --cwd <dir>          run in this directory (default: the nearest folder with a launchset config)
   --json               print JSON on stdout (logs go to stderr)
-  --token <token>      GitHub token (default: $LAUNCHSET_TOKEN, then $GITHUB_TOKEN)
-  --repo <owner/repo>  GitHub repository (default: from the origin remote)
+  --ci                 write plan.json, launchset.env and launchset.sh (default: on when $GITLAB_CI
+                       is true)
+  --no-ci              don't write the CI output files
+  --token <token>      token (default: $LAUNCHSET_TOKEN, then $GITHUB_TOKEN / $GITLAB_TOKEN)
+  --repo <path>        repository path (owner/repo, or group/sub/project on GitLab; default: from
+                       the origin remote)
   --plan <json|@file>  the plan (default: $LAUNCHSET_PLAN)
   --no-fetch           don't fetch tags first
   -h, --help           display help for command
 
 Example:
   $ launchset finalize --plan @plan.json --token $GITHUB_TOKEN
+
+
+In --ci mode also writes plan.json, launchset.env and launchset.sh (see docs).
+Variables: LAUNCHSET_VERSION, LAUNCHSET_TAG, LAUNCHSET_PR_NUMBER, ...
 ```
 
 ### launchset hotfix
@@ -344,15 +514,16 @@ Usage: launchset hotfix [options] <major.minor>
 Create a maintenance branch for a released <major>.<minor> line.
 
 Arguments:
-  major.minor          the version line, e.g. 1.4
+  major.minor      the version line, e.g. 1.4
 
 Options:
-  --cwd <dir>          run in this directory (default: the nearest folder with a launchset config)
-  --json               print JSON on stdout (logs go to stderr)
-  --token <token>      GitHub token (default: $LAUNCHSET_TOKEN, then $GITHUB_TOKEN)
-  --repo <owner/repo>  GitHub repository (default: from the origin remote)
-  --no-fetch           don't fetch tags first
-  -h, --help           display help for command
+  --cwd <dir>      run in this directory (default: the nearest folder with a launchset config)
+  --json           print JSON on stdout (logs go to stderr)
+  --token <token>  token (default: $LAUNCHSET_TOKEN, then $GITHUB_TOKEN / $GITLAB_TOKEN)
+  --repo <path>    repository path (owner/repo, or group/sub/project on GitLab; default: from the
+                   origin remote)
+  --no-fetch       don't fetch tags first
+  -h, --help       display help for command
 
 Example:
   $ launchset hotfix 1.4
@@ -368,18 +539,26 @@ Usage: launchset check [options]
 Run the PR check: is there a valid changeset? (--push: the pre-push hook warning.)
 
 Options:
-  --cwd <dir>          run in this directory (default: the nearest folder with a launchset config)
-  --json               print JSON on stdout (logs go to stderr)
-  --token <token>      GitHub token (default: $LAUNCHSET_TOKEN, then $GITHUB_TOKEN)
-  --repo <owner/repo>  GitHub repository (default: from the origin remote)
-  --base <ref>         compare against this ref (default: the PR's base commit)
-  --push               pre-push hook mode: warn when a changeset is missing, never fail
-  --no-comment         don't post the sticky PR comment
-  --no-fetch           don't fetch tags first (--push never fetches)
-  -h, --help           display help for command
+  --cwd <dir>      run in this directory (default: the nearest folder with a launchset config)
+  --json           print JSON on stdout (logs go to stderr)
+  --ci             write plan.json, launchset.env and launchset.sh (default: on when $GITLAB_CI is
+                   true)
+  --no-ci          don't write the CI output files
+  --token <token>  token (default: $LAUNCHSET_TOKEN, then $GITHUB_TOKEN / $GITLAB_TOKEN)
+  --repo <path>    repository path (owner/repo, or group/sub/project on GitLab; default: from the
+                   origin remote)
+  --base <ref>     compare against this ref (default: the PR's base commit)
+  --push           pre-push hook mode: warn when a changeset is missing, never fail
+  --no-comment     don't post the sticky PR comment
+  --no-fetch       don't fetch tags first (--push never fetches)
+  -h, --help       display help for command
 
 Example:
   $ launchset check --base origin/main
   $ launchset check --push
+
+
+In --ci mode also writes plan.json, launchset.env and launchset.sh (see docs).
+Variables: LAUNCHSET_PR_NUMBER
 ```
 <!-- generated:cli-commands:end -->
