@@ -45,8 +45,8 @@ Options:
   -h, --help                      display help for command
 
 Commands:
-  init [options]                  Set up a repo: detect versions and targets, write the config,
-                                  workflows and README.
+  init [options]                  Set up a repo: detect versions and targets, write the config, CI
+                                  files (GitHub workflows or GitLab CI) and README.
   add [options]                   Create a changeset: the bump (major, minor, patch) and a summary
                                   for the changelog.
   status [options]                Show pending changesets, the next version, the last release and
@@ -85,7 +85,7 @@ Rules that hold for every command:
 - Nothing asks a question when stdin is not a terminal, or when `--yes` or `--json` is given. A command that needs an answer then says which flag to pass.
 - `--json` prints JSON on stdout and sends logs and warnings to stderr.
 - The exit code is `0` on success, `1` when the command failed and `2` for wrong usage (an unknown command or flag).
-- `--cwd <dir>` sets the repo root. Without it, launchset uses the nearest parent folder that has a `launchset.config.*` file. `init` has no config yet, so it defaults to the git repository root (GitHub only runs workflows from there) and says so when that isn't the folder you ran it in.
+- `--cwd <dir>` sets the repo root. Without it, launchset uses the nearest parent folder that has a `launchset.config.*` file. `init` has no config yet, so it defaults to the git repository root (CI configuration only runs from there: GitHub workflows, `.gitlab-ci.yml`) and says so when that isn't the folder you ran it in.
 - GitHub-facing commands take a token from `--token`, then `LAUNCHSET_TOKEN`, then `GITHUB_TOKEN`, and the repository from `--repo`, then `GITHUB_REPOSITORY`, then the `origin` remote.
 - `--plan` takes the plan JSON itself, `@file.json`, or reads `LAUNCHSET_PLAN`.
 - `--ci` (default: on when `GITLAB_CI=true`; `--no-ci` turns it off) is accepted by every command that produces outputs: `release`, `plan`, `preview-plan`, `preview-comment`, `stamp`, `verify`, `mark`, `finalize`, `check`, `ship` and `status`. See CI output files below.
@@ -112,11 +112,12 @@ In a terminal it asks the open questions. With `--yes` it accepts every default.
 ```text
 Usage: launchset init [options]
 
-Set up a repo: detect versions and targets, write the config, workflows and README.
+Set up a repo: detect versions and targets, write the config, CI files (GitHub workflows or GitLab
+CI) and README.
 
 Options:
-  --cwd <dir>          set up this folder (default: the git repo root; GitHub only runs workflows
-                       from the root)
+  --cwd <dir>          set up this folder (default: the git repo root; CI configuration only runs
+                       from the root: GitHub workflows, .gitlab-ci.yml)
   --yes                Accept the default for every decision that isn't given; never prompt.
   --decide <id=value>  Answer a decision: --decide <id>=<value> (repeatable). See --detect --json
                        for the ids.

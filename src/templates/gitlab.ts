@@ -334,9 +334,22 @@ function targetJob(
   }
 }
 
-function renderTargetsFile(input: GitLabTemplateInput): string {
+/**
+ * The hidden `.launchset-<target>` job of each target, as it appears in
+ * `.gitlab/launchset-targets.yml` (with its `# --- <target> ---` heading), by target name. init
+ * appends the ones an existing targets file lacks.
+ */
+export function renderGitLabTargetJobs(input: GitLabTemplateInput): Record<string, string> {
   const registries = new Set(input.gitlabRegistries ?? [GITLAB_COM_REGISTRY]);
-  const jobs = Object.values(input.config.targets).map((t) => targetJob(t, input, registries));
+  const out: Record<string, string> = {};
+  for (const t of Object.values(input.config.targets)) {
+    out[t.name] = targetJob(t, input, registries);
+  }
+  return out;
+}
+
+function renderTargetsFile(input: GitLabTemplateInput): string {
+  const jobs = Object.values(renderGitLabTargetJobs(input));
   return fillTemplate(
     template("launchset-targets.yml"),
     { jobs: jobs.join("\n") },

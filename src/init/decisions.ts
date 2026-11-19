@@ -5,6 +5,7 @@
  *
  * | id                         | values                         | default                                             |
  * |----------------------------|--------------------------------|-----------------------------------------------------|
+ * | `host`                     | `github` `gitlab` (only shown when something points at GitLab) | the origin remote's host, else the CI files found |
  * | `version`                  | a plain X.Y.Z                  | the highest version found (never lower by default)  |
  * | `tags.release`             | a template with `{version}`    | `v{version}`                                        |
  * | `target.<name>`            | `auto` `manual` `none`         | auto when a workflow builds it; manual for native projects no workflow builds |
@@ -13,7 +14,7 @@
  * | `docker.<name>.verify`     | `yes` `no`                     | yes: `verify: ["registry"]`, so a re-run skips an image that's already pushed |
  * | `machinery.<path>#<n>`     | `remove` `disable` `keep`      | disable (keep when no minimal edit exists)          |
  * | `image.<path>`             | `stamp` `leave`                | leave (deploy manifests are never aligned unasked)  |
- * | `file.<path>`              | `keep` `overwrite`             | keep (an existing generated file is never overwritten unasked) |
+ * | `file.<path>`              | `keep` `overwrite`             | keep (an existing generated file is never overwritten unasked; a kept .gitlab/launchset-targets.yml still gets the jobs of new targets) |
  * | `baseline`                 | `yes` `no`                     | yes only when a tag in another format marks the version as released |
  * | `offset`                   | an integer >= 0                | enough to stay above the highest build number found |
  * | `skill`                    | `yes` `no`                     | yes                                                 |
@@ -102,9 +103,22 @@ function tagListError(value: string): string | undefined {
   return undefined;
 }
 
-function guessImage(ctx: DetectContext, target: DetectedTarget): string {
-  const repo = ctx.detection.git.github?.toLowerCase();
+function guessImage(ctx: DetectContext, target: DetectedTarget, host: string): string {
   const root = target.docker?.dockerfile === "Dockerfile";
+  if (host === "gitlab") {
+    // gitlab.com's registry, or registry.<host> of a self-managed GitLab (a guess: it's asked).
+    const server = ctx.host.remoteHost;
+    const registry =
+      server && server !== "gitlab.com" && ctx.host.gitlabProject
+        ? `registry.${server}`
+        : "registry.gitlab.com";
+    const project = (
+      ctx.host.gitlabProject ??
+      `your-group/${ctx.detection.packageJson?.name?.replace(/^@[^/]+\//, "") ?? target.name}`
+    ).toLowerCase();
+    return root ? `${registry}/${project}` : `${registry}/${project}/${target.name}`;
+  }
+  const repo = ctx.detection.git.github?.toLowerCase();
   if (repo) return root ? `ghcr.io/${repo}` : `ghcr.io/${repo}-${target.name}`;
   const name = (ctx.detection.packageJson?.name ?? target.name)
     .replace(/^@[^/]+\//, "")
@@ -113,9 +127,34 @@ function guessImage(ctx: DetectContext, target: DetectedTarget): string {
 }
 
 /** The decision specs for a detection, in the order they're asked. */
-export function decisionSpecs(ctx: DetectContext): Spec[] {
+export function decisionSpecs(ctx: DetectContext, explicit: Answers = {}): Spec[] {
   const d = ctx.detection;
   const specs: Spec[] = [];
+
+  // Code host: only shown when something points at GitLab (or it's answered).
+  const hostShown = ctx.host.gitlabSignals || explicit.host !== undefined;
+  if (hostShown) {
+    specs.push({
+      id: "host",
+      build: () => ({
+        id: "host",
+        question:
+          "Which code host is the repo on? init writes GitHub Actions workflows or GitLab CI files for it.",
+        options: [
+          { value: "github", label: "github: .github/workflows/launchset-*.yml" },
+          {
+            value: "gitlab",
+            label:
+              "gitlab: .gitlab/launchset.yml, .gitlab/launchset-targets.yml and the include in .gitlab-ci.yml",
+          },
+        ],
+        default: ctx.host.host,
+        evidence: ctx.host.evidence,
+        ask: ctx.host.ask,
+      }),
+      validate: oneOf,
+    });
+  }
 
   // Canonical version
   specs.push({
@@ -254,9 +293,9 @@ export function decisionSpecs(ctx: DetectContext): Spec[] {
     const on = { id: `target.${t.name}`, values: ["auto", "manual"] };
     specs.push({
       id: `docker.${t.name}.image`,
-      build() {
+      build(answers) {
         const found = t.docker?.images?.join(", ");
-        const guess = guessImage(ctx, t);
+        const guess = guessImage(ctx, t, answers.host ?? ctx.host.host);
         const value = found ?? guess;
         return {
           id: `docker.${t.name}.image`,
@@ -266,7 +305,9 @@ export function decisionSpecs(ctx: DetectContext): Spec[] {
               value,
               label: found
                 ? `${value} (from the existing workflow)`
-                : `${value} (a guess: no workflow pushes this image)`,
+                : (answers.host ?? ctx.host.host) === "gitlab"
+                  ? `${value} (a guess: no CI job pushes this image${ctx.host.remoteHost && ctx.host.remoteHost !== "gitlab.com" ? `; registry.${ctx.host.remoteHost} is only a guess for this GitLab's registry` : ""})`
+                  : `${value} (a guess: no workflow pushes this image)`,
             },
           ],
           freeform: "an image name like ghcr.io/org/app (no tag), or several separated by commas",
@@ -406,18 +447,36 @@ export function decisionSpecs(ctx: DetectContext): Spec[] {
 
   // Files a re-run would overwrite
   for (const path of d.existingFiles) {
+    const gitlab = path.startsWith(".gitlab/");
+    const targetsFile = path === ".gitlab/launchset-targets.yml";
+    const onHost = gitlab ? "gitlab" : path.startsWith(".github/") ? "github" : undefined;
     specs.push({
       id: `file.${path}`,
       build: () => ({
         id: `file.${path}`,
-        question: `${path} already exists. Keep it, or overwrite it with what init writes now?`,
+        question: targetsFile
+          ? `${path} already exists (your build steps). Keep it (init only adds the jobs of targets it lacks), or overwrite it with what init writes now?`
+          : `${path} already exists. Keep it, or overwrite it with what init writes now?`,
         options: [
-          { value: "keep", label: "keep: leave the existing file as it is" },
+          {
+            value: "keep",
+            label: targetsFile
+              ? "keep: leave your jobs as they are, add jobs for targets that have none"
+              : "keep: leave the existing file as it is",
+          },
           { value: "overwrite", label: "overwrite: replace it with the newly generated file" },
         ],
         default: "keep",
-        evidence: [{ path, note: "written by an earlier init, maybe edited since" }],
-        ask: true,
+        evidence: [
+          {
+            path,
+            note: targetsFile
+              ? "your build steps per target, written by an earlier init"
+              : "written by an earlier init, maybe edited since",
+          },
+        ],
+        ask: !targetsFile,
+        ...(hostShown && onHost ? { onlyIf: { id: "host", values: [onHost] } } : {}),
       }),
       validate: oneOf,
     });
@@ -565,7 +624,7 @@ export async function resolveDecisions(
   ctx: DetectContext,
   options: ResolveOptions,
 ): Promise<{ decisions: Decision[]; answers: Answers }> {
-  const specs = decisionSpecs(ctx);
+  const specs = decisionSpecs(ctx, options.explicit);
   const ids = specs.map((s) => s.id);
   const unknown = Object.keys(options.explicit).filter((id) => !ids.includes(id));
   if (unknown.length > 0) {

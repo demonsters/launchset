@@ -7,12 +7,19 @@
 
 import { rm, writeFile } from "node:fs/promises";
 import { findNodeAtLocation, type Node as JsonNode, parseTree } from "jsonc-parser";
-import { isMap, isScalar, isSeq, type Pair, type YAMLMap, type YAMLSeq } from "yaml";
+import { isMap, isScalar, isSeq, type Pair, type Scalar, type YAMLMap, type YAMLSeq } from "yaml";
 import { escapeRegExp } from "../core/regex.ts";
 import { detectEol, indentAt, lineEnd, lineOf, lineStart } from "../core/text.ts";
 import { absolute, linesOf, readTextOrNull } from "./fs.ts";
-import type { Edit, MachineryFinding } from "./machinery.ts";
-import { pairLines, removeListEntry, removeSeqItem, SpliceSet } from "./text-edit.ts";
+import type { Edit, GitLabOp, MachineryFinding } from "./machinery.ts";
+import {
+  itemLines,
+  latestFlagRange,
+  pairLines,
+  removeListEntry,
+  removeSeqItem,
+  SpliceSet,
+} from "./text-edit.ts";
 import type { Change, MachineryAction } from "./types.ts";
 import {
   isBlock,
@@ -25,6 +32,7 @@ import {
 } from "./workflow-scan.ts";
 
 type WorkflowEdit = Extract<Edit, { kind: "workflow" }>;
+type GitLabEdit = Extract<Edit, { kind: "gitlab" }>;
 type Op = WorkflowEdit["op"];
 
 interface WorkflowResult {
@@ -303,6 +311,147 @@ export function retireWorkflow(workflow: Workflow, ops: Op[]): WorkflowResult {
   return { text: out, notes, followUps };
 }
 
+/** `# launchset: disabled — <reason>: <line>` for the first line, `# <line>` for the others. */
+function commentedLines(lines: { text: string }[], reason: string, indent?: string): string[] {
+  return lines.map((l, i) => {
+    const own = indent ?? /^[ \t]*/.exec(l.text)?.[0] ?? "";
+    const trimmed = l.text.trim();
+    return i === 0 ? `${own}# launchset: disabled — ${reason}: ${trimmed}` : `${own}# ${trimmed}`;
+  });
+}
+
+/** The start of the comment lines right above `start` (same indentation, no blank line). */
+function commentsAbove(text: string, start: number): number {
+  const indent = indentAt(text, start);
+  let at = start;
+  while (at > 0) {
+    const prev = lineStart(text, at - 1);
+    const line = text.slice(prev, at).replace(/\r?\n$/, "");
+    if (!line.startsWith(`${indent}#`) || /^[ \t]/.test(line.slice(indent.length))) break;
+    at = prev;
+  }
+  return at;
+}
+
+/**
+ * Apply GitLab CI edits to one file (all computed on its original text): remove or hide jobs,
+ * comment out script lines (or turn the last one into `":"`), disable commands inside block
+ * scalars, drop `release:` keys, `-t …:latest` flags and include entries.
+ */
+export function retireGitLab(text: string, ops: GitLabOp[]): string {
+  const edits = new SpliceSet();
+  const offsets = lineOffsets(text);
+  const replaceLines = (numbers: number[], content: string[]) => {
+    numbers.forEach((n, i) => {
+      const r = offsets.get(n);
+      if (r) edits.add({ start: r[0], end: r[1], text: content[i] ?? "" });
+    });
+  };
+  const itemLineNumbers = (node: Scalar): number[] => {
+    const [s, e] = itemLines(text, node);
+    const first = lineOf(text, s);
+    const last = lineOf(text, Math.max(s, e - 1));
+    return Array.from({ length: last - first + 1 }, (_, i) => first + i);
+  };
+  for (const op of ops) {
+    switch (op.op) {
+      case "remove-job": {
+        const [s, e] = pairLines(text, op.job.pair);
+        let from = commentsAbove(text, s);
+        // The last job: its blank line before goes too, so the file doesn't end in one.
+        if (e === text.length && /\r?\n\r?\n$/.test(text.slice(0, from))) {
+          from = text.slice(0, from).replace(/\r?\n$/, "").length;
+        }
+        edits.remove(from, e);
+        break;
+      }
+      case "hide-job": {
+        const key = op.job.pair.key as Scalar;
+        const [start, end] = key.range ?? [0, 0];
+        edits.add({
+          start,
+          end: key.type === "PLAIN" ? start : end,
+          text: key.type === "PLAIN" ? "." : JSON.stringify(`.${op.job.name}`),
+        });
+        break;
+      }
+      case "comment-item":
+      case "noop-item": {
+        const node = op.item.ref.node;
+        if (!op.inSeq) {
+          // `script: <string>`: the value becomes the no-op.
+          const [start, end] = node.range ?? [0, 0];
+          edits.add({
+            start,
+            end,
+            text: `":" # launchset: disabled — ${op.reason}: ${text.slice(start, end).trim()}`,
+          });
+          break;
+        }
+        const numbers = itemLineNumbers(node);
+        const lines = numbers.map((n) => ({ text: linesOf(text)[n - 1]?.text ?? "" }));
+        const indent = /^[ \t]*/.exec(lines[0]?.text ?? "")?.[0] ?? "";
+        if (op.op === "comment-item") {
+          replaceLines(numbers, commentedLines(lines, op.reason));
+        } else {
+          const [first, ...rest] = lines.map((l) => l.text.trim());
+          replaceLines(numbers, [
+            `${indent}- ":" # launchset: disabled — ${op.reason}: ${(first ?? "").replace(/^-\s*/, "")}`,
+            ...rest.map((r) => `${indent}  # ${r}`),
+          ]);
+        }
+        break;
+      }
+      case "commands": {
+        for (const c of op.commands) {
+          if (c.removal === "neutralize") {
+            c.lines.forEach((l, i) => {
+              const indent = /^[ \t]*/.exec(l.text)?.[0] ?? "";
+              const trimmed = l.text.trim();
+              replaceLines(
+                [l.number],
+                [
+                  i === 0
+                    ? `${indent}:${c.trailingOp ? ` ${c.trailingOp}` : ""} # launchset: disabled — ${op.reason}: ${trimmed}`
+                    : `${indent}# ${trimmed}`,
+                ],
+              );
+            });
+          } else {
+            replaceLines(
+              c.lines.map((l) => l.number),
+              commentedLines(c.lines, op.reason),
+            );
+          }
+        }
+        break;
+      }
+      case "remove-pair": {
+        const [s, e] = pairLines(text, op.pair);
+        edits.remove(s, e);
+        break;
+      }
+      case "remove-flag": {
+        const range = latestFlagRange(text, op.item.ref.node, op.entry);
+        if (!range) throw new Error(`internal: can't find ${op.entry} in the script`);
+        edits.remove(range[0], range[1]);
+        break;
+      }
+      case "remove-include": {
+        const { include } = op;
+        if (include.seq && include.seq.items.length > 1) {
+          removeSeqItem(text, include.seq, include.node, edits);
+        } else {
+          const [s, e] = pairLines(text, include.pair);
+          edits.remove(s, e);
+        }
+        break;
+      }
+    }
+  }
+  return edits.apply(text);
+}
+
 /** Remove `&&`-separated parts from a script command, keeping the other separators as written. */
 export function removeSegments(command: string, segments: string[]): string | null {
   const parts = command.split(/(\s*&&\s*)/);
@@ -450,14 +599,13 @@ export async function applyRetirement(
       notes.push(...result.notes);
       followUps.push(...result.followUps);
     }
-    const gitlab = forPath.filter((e) => e.kind === "gitlab-job");
+    const gitlab = forPath.filter((e): e is GitLabEdit => e.kind === "gitlab");
     if (gitlab.length > 0) {
-      const set = new SpliceSet();
-      for (const e of gitlab) {
-        const [s, end] = pairLines(e.text, e.pair);
-        set.remove(s, end);
-      }
-      text = set.apply(text);
+      if (gitlab[0]?.text !== text) throw new Error(`internal: ${path} changed during init`);
+      text = retireGitLab(
+        text,
+        gitlab.map((e) => e.op),
+      );
     }
     for (const e of forPath) {
       if (e.kind === "comment-lines") text = commentLines(text, e.lines, e.reason);

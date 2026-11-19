@@ -111,7 +111,9 @@ export type MachineryKind =
   | "docker-latest"
   | "version-writer"
   | "changesets-write"
-  | "release-docs";
+  | "release-docs"
+  /** GitLab: `npm publish` / `pnpm publish` / `yarn npm publish` outside Changesets. */
+  | "package-publish";
 
 export type MachineryAction = "remove" | "disable" | "keep";
 
@@ -169,6 +171,8 @@ export interface Detection {
     branch?: string;
     /** `owner/repo` from the `origin` remote, when it's GitHub. */
     github?: string;
+    /** The project path (`group/sub/project`) from the `origin` remote, when it's GitLab. */
+    gitlab?: string;
   };
   /** An existing `launchset.config.*`: init won't overwrite it. */
   existingConfig?: string;

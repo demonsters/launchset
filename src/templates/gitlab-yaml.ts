@@ -27,7 +27,10 @@ const REFERENCE_TAG = {
     new GitLabReference(value instanceof YAMLSeq ? (value.toJSON() as unknown[]) : []),
 };
 
-const GITLAB_YAML: ParseOptions & SchemaOptions = { strict: true, customTags: [REFERENCE_TAG] };
+/** The custom tags of GitLab CI YAML (`!reference`), for parsing it with `yaml` directly. */
+export const GITLAB_CUSTOM_TAGS = [REFERENCE_TAG];
+
+const GITLAB_YAML: ParseOptions & SchemaOptions = { strict: true, customTags: GITLAB_CUSTOM_TAGS };
 
 /** Parse GitLab CI YAML; `!reference` sequences become {@link GitLabReference}s. Throws on errors. */
 export function parseGitLabYaml(text: string): unknown {

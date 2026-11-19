@@ -14,15 +14,32 @@
  *   evidence here and as manual steps after writing; they don't block `disable`.
  */
 
-import { isMap, isScalar, isSeq, type Pair, parseDocument, type YAMLMap } from "yaml";
+import { isMap, isScalar, isSeq, type Pair, type YAMLMap } from "yaml";
 import { escapeRegExp } from "../core/regex.ts";
 import { lineOf } from "../core/text.ts";
 import { joinRel, linesOf, normalizeRel } from "./fs.ts";
 import { matchesFilter } from "./github-filter.ts";
+import {
+  type GitLabCi,
+  type GitLabDockerBuild,
+  type GitLabFile,
+  type GitLabInclude,
+  type GitLabJob,
+  type GitLabLatestRef,
+  type GitLabScriptItem,
+  gitlabCiOf,
+  gitlabDockerBuilds,
+  referencesTo,
+  runsOnTags,
+  usersOf,
+} from "./gitlab-scan.ts";
+import { latestFlagRange } from "./text-edit.ts";
 import type { Evidence, MachineryAction, MachineryItem, MachineryKind } from "./types.ts";
 import {
   type DockerBuild,
+  isBlock,
   type LatestRef,
+  pairOf,
   type RunCommand,
   runCommands,
   type ScalarRef,
@@ -55,10 +72,28 @@ export type WorkflowOp =
   /** Make an unfiltered `push` skip tags. */
   | { op: "exclude-tags" };
 
+/** Edits of a GitLab CI file (all computed on the text detection read). */
+export type GitLabOp =
+  | { op: "remove-job"; job: GitLabJob }
+  /** Rename `job` to `.job` (GitLab's hidden jobs never run). */
+  | { op: "hide-job"; job: GitLabJob }
+  /** Comment out a script line (a plain sequence item). */
+  | { op: "comment-item"; item: GitLabScriptItem; inSeq: boolean; reason: string }
+  /** Replace a script line with the no-op `":"` (the script would be empty otherwise). */
+  | { op: "noop-item"; item: GitLabScriptItem; inSeq: boolean; reason: string }
+  /** Comment out (or neutralize) commands inside a block scalar script item. */
+  | { op: "commands"; item: GitLabScriptItem; commands: RunCommand[]; reason: string }
+  /** A key of a job, e.g. `release:`. */
+  | { op: "remove-pair"; pair: Pair }
+  /** A `-t <image>:latest` flag of a build that has other tags. */
+  | { op: "remove-flag"; item: GitLabScriptItem; entry: string }
+  /** The include entry of a deleted file. */
+  | { op: "remove-include"; include: GitLabInclude };
+
 export type Edit =
   | { kind: "delete-file"; path: string }
   | { kind: "workflow"; path: string; workflow: Workflow; op: WorkflowOp }
-  | { kind: "gitlab-job"; path: string; text: string; pair: Pair }
+  | { kind: "gitlab"; path: string; text: string; op: GitLabOp }
   | {
       kind: "script";
       /** The package.json. */
@@ -90,8 +125,12 @@ export interface MachineryInput {
   packages: PackageScripts[];
   /** Script files to inspect (repo-relative) with their text. */
   scriptFiles: { path: string; text: string }[];
-  /** `.gitlab-ci.yml` text, if present. */
+  /** `.gitlab-ci.yml` text, if present (without its includes; see `gitlabCi`). */
   gitlab?: { path: string; text: string };
+  /** The GitLab CI configuration with its local includes (wins over `gitlab`). */
+  gitlabCi?: GitLabCi;
+  /** Docker builds in the GitLab jobs (computed from the configuration when missing). */
+  gitlabBuilds?: GitLabDockerBuild[];
   /** Fastfiles with their text. */
   fastfiles: { path: string; text: string }[];
   /** CLAUDE.md, AGENTS.md, README with their text. */
@@ -153,6 +192,8 @@ const REASON: Record<MachineryKind, string> = {
     "writes Changesets files (@changesets/write); launchset reads .launchset/ instead",
   "release-docs":
     "describes the old release process (npm version, git tag, changeset); launchset releases through the release PR",
+  "package-publish":
+    "publishes the npm package on its own; launchset publishes it when a release ships (put npm publish in a target's build steps)",
 };
 
 /** Short reasons for `# launchset: disabled — <reason>` comments. */
@@ -166,6 +207,7 @@ const SHORT: Record<MachineryKind, string> = {
   "version-writer": "launchset stamps versions and build numbers",
   "changesets-write": "launchset reads .launchset/",
   "release-docs": "launchset releases through the release PR",
+  "package-publish": "launchset publishes when a release ships",
 };
 
 /** The machinery kinds a shell command matches. */
@@ -676,81 +718,286 @@ function stepDrafts(workflow: Workflow, builds: DockerBuild[], scriptPaths: stri
 // ---------------------------------------------------------------------------
 // GitLab
 
-/** Top-level `.gitlab-ci.yml` keys that aren't jobs. */
-const GITLAB_RESERVED = new Set([
-  "default",
-  "include",
-  "stages",
-  "variables",
-  "workflow",
-  "image",
-  "services",
-  "cache",
-  "before_script",
-  "after_script",
-  "types",
-  "spec",
-]);
+/** Reasons that differ on GitLab (no App token, GitLab releases). */
+const GITLAB_REASON: Partial<Record<MachineryKind, string>> = {
+  "tag-trigger":
+    "runs again when launchset pushes its tags (with LAUNCHSET_TOKEN), so its build or publish steps run a second time",
+  "tag-creation":
+    "creates release tags or GitLab releases, which launchset's finalize creates (it would create v{version} before finalize)",
+};
+const GITLAB_RELEASE_COMMAND = /\bglab\s+release\s+create\b|\brelease-cli\b[^\n]*\bcreate\b/;
+const PACKAGE_PUBLISH_COMMAND = /\b(?:npm|pnpm)\s+publish\b|\byarn\s+(?:npm\s+)?publish\b/;
+/** Script lines that only print: a job left with them does nothing. */
+const TRIVIAL_COMMAND = /^(?:echo|printf|true|:)(?:\s|$)/;
 
-function gitlabDrafts(path: string, text: string): Draft[] {
-  const doc = parseDocument(text);
-  if (doc.errors.length > 0 || !isMap(doc.contents)) return [];
-  const root = doc.contents as YAMLMap;
-  const byName = new Map<string, YAMLMap>();
-  for (const pair of root.items) {
-    if (isScalar(pair.key) && isMap(pair.value))
-      byName.set(String(pair.key.value), pair.value as YAMLMap);
+/** The machinery kinds of a GitLab script command ({@link commandKinds} plus GitLab's tools). */
+export function gitlabCommandKinds(command: string): MachineryKind[] {
+  const kinds = commandKinds(command);
+  if (GITLAB_RELEASE_COMMAND.test(command) && !kinds.includes("tag-creation")) {
+    kinds.push("tag-creation");
   }
-  /** `key` of a job, following `extends` (later templates win, the job's own value wins). */
-  const effective = (job: YAMLMap, key: string, seen = new Set<YAMLMap>()): unknown => {
-    if (seen.has(job)) return undefined;
-    seen.add(job);
-    const own = job.get(key, true);
-    if (own !== undefined) return own;
-    const ext = job.get("extends", true);
-    const names = isSeq(ext)
-      ? ext.items.map((i) => String((i as { value?: unknown }).value))
-      : isScalar(ext)
-        ? [String(ext.value)]
-        : [];
-    for (const name of [...names].reverse()) {
-      const parent = byName.get(name);
-      const value = parent ? effective(parent, key, seen) : undefined;
-      if (value !== undefined) return value;
+  if (PACKAGE_PUBLISH_COMMAND.test(command) && !kinds.includes("changesets")) {
+    kinds.push("package-publish");
+  }
+  return kinds;
+}
+
+function gitlabEdit(file: { path: string; text: string }, op: GitLabOp): Edit {
+  return { kind: "gitlab", path: file.path, text: file.text, op };
+}
+
+function singleLine(item: GitLabScriptItem, text: string): boolean {
+  const [start, end] = item.ref.node.range ?? [0, 0];
+  return !text.slice(start, end).includes("\n");
+}
+
+interface GitLabJobDraft {
+  job: GitLabJob;
+  draft: Draft;
+  /** The disable is "remove the job" (switched to hiding it when its file would be empty). */
+  removesJob: boolean;
+}
+
+function gitlabJobDraft(
+  ci: GitLabCi,
+  file: GitLabFile,
+  job: GitLabJob,
+  build: GitLabDockerBuild | undefined,
+): GitLabJobDraft | undefined {
+  const kinds: MachineryKind[] = [];
+  const evidence: Evidence[] = [];
+  const add = (k: MachineryKind) => {
+    if (!kinds.includes(k)) kinds.push(k);
+  };
+  const tagged = !job.hidden && runsOnTags(ci, job);
+  if (tagged) {
+    add("tag-trigger");
+    evidence.push({
+      path: file.path,
+      line: job.line,
+      note: `job "${job.name}" runs on tag pipelines`,
+    });
+  }
+  const matched = new Map<GitLabScriptItem, RunCommand[]>();
+  for (const script of job.scripts) {
+    for (const item of script.items) {
+      for (const command of item.commands) {
+        const found = gitlabCommandKinds(command.command);
+        if (found.length === 0) continue;
+        for (const k of found) add(k);
+        evidence.push({
+          path: file.path,
+          line: command.lines[0]?.number ?? item.ref.line,
+          note: `runs \`${command.command.slice(0, 80)}\``,
+        });
+        matched.set(item, [...(matched.get(item) ?? []), command]);
+      }
     }
+  }
+  const releasePair = pairOf(job.map, "release");
+  if (releasePair) {
+    add("tag-creation");
+    evidence.push({
+      path: file.path,
+      line: lineOf(file.text, (releasePair.key as { range?: number[] }).range?.[0] ?? 0),
+      note: "the release: keyword creates a GitLab release",
+    });
+  }
+  const latest = build?.pushes && build.onBranch ? build.latest : [];
+  if (latest.length > 0) {
+    add("docker-latest");
+    for (const ref of latest) {
+      evidence.push({ path: file.path, line: ref.line, note: `pushes ${ref.entry}` });
+    }
+  }
+  if (kinds.length === 0) return undefined;
+
+  const refs = referencesTo(ci, job);
+  const removable = !job.hidden && !job.anchored && refs.length === 0;
+  for (const r of refs) evidence.push({ path: file.path, line: job.line, note: r });
+  const label = job.hidden ? `GitLab template "${job.name}"` : `GitLab job "${job.name}"`;
+  const draft: Draft = {
+    kinds,
+    path: file.path,
+    line: Math.min(...evidence.map((e) => e.line ?? job.line)),
+    what: tagged ? `GitLab job "${job.name}" (runs on tags)` : label,
+    remove: [],
+    effects: { keep: "leaves it as is" },
+    evidence,
+    reasons: kinds.map((k) => GITLAB_REASON[k] ?? REASON[k]),
+  };
+  const result: GitLabJobDraft = { job, draft, removesJob: false };
+  const noDisable = (why: string) => {
+    draft.why = why;
+    return result;
+  };
+  const removeJob = () => {
+    draft.disable = [gitlabEdit(file, { op: "remove-job", job })];
+    draft.effects.disable = `removes the job "${job.name}"`;
+    result.removesJob = true;
+    return result;
+  };
+  const blocker = refs[0] ?? (job.anchored ? "it has a YAML anchor others may use" : undefined);
+  if (tagged) {
+    if (removable) return removeJob();
+    return noDisable(
+      `${blocker ?? "it is a template"}, so it can't simply be removed; edit it by hand`,
+    );
+  }
+
+  // Lines to comment out (plain items), commands to disable inside block scalars.
+  const commented = new Set<GitLabScriptItem>();
+  const inBlock = new Map<GitLabScriptItem, RunCommand[]>();
+  const fully = (item: GitLabScriptItem) =>
+    (matched.get(item)?.length ?? 0) === item.commands.length;
+  const takeOut = (item: GitLabScriptItem, commands: RunCommand[]): string | undefined => {
+    if (!isBlock(item.ref.node)) {
+      if (commands.length < item.commands.length) {
+        return "a conflicting command shares its script line with other commands; edit it by hand";
+      }
+      commented.add(item);
+      return undefined;
+    }
+    if (commands.some((c) => c.removal === null)) {
+      return "a conflicting command is part of a heredoc or a compound line (if/case on one line); edit it by hand";
+    }
+    const list = inBlock.get(item) ?? [];
+    for (const c of commands) if (!list.includes(c)) list.push(c);
+    inBlock.set(item, list);
     return undefined;
   };
-  const json = (node: unknown) =>
-    node && typeof node === "object" && "toJSON" in node
-      ? JSON.stringify((node as { toJSON(): unknown }).toJSON())
-      : "";
-  const drafts: Draft[] = [];
-  for (const pair of root.items) {
-    if (!isScalar(pair.key) || !isMap(pair.value)) continue;
-    const name = String(pair.key.value);
-    if (GITLAB_RESERVED.has(name) || name.startsWith(".")) continue;
-    const job = pair.value as YAMLMap;
-    const onlyText = json(effective(job, "only"));
-    const rulesText = json(effective(job, "rules"));
-    const onTags =
-      /"tags"/.test(onlyText) ||
-      /(?<![!])\$CI_COMMIT_TAG(?!\s*==\s*null)(?!\s*==\s*"")/.test(rulesText);
-    if (!onTags) continue;
-    const line = lineOf(text, (pair.key as { range?: number[] }).range?.[0] ?? 0);
-    drafts.push({
-      kinds: ["tag-trigger"],
-      path,
-      line,
-      what: `GitLab job "${name}" (runs on tags)`,
-      disable: [{ kind: "gitlab-job", path, text, pair: pair as Pair }],
-      remove: [{ kind: "delete-file", path }],
-      effects: {
-        disable: `removes the job "${name}"`,
-        remove: `deletes ${path}`,
-        keep: "leaves it as is",
-      },
-      evidence: [{ path, line, note: `job "${name}" runs on tag pipelines` }],
+  for (const [item, commands] of matched) {
+    const why = takeOut(item, commands);
+    if (why) return noDisable(why);
+  }
+  const flags: GitLabLatestRef[] = [];
+  for (const ref of latest) {
+    if (commented.has(ref.item)) continue;
+    if (ref.removal === "command") {
+      const why = takeOut(ref.item, [ref.command]);
+      if (why) return noDisable(why);
+    } else if (
+      ref.removal === "flag" &&
+      latestFlagRange(file.text, ref.item.ref.node, ref.entry) !== undefined
+    ) {
+      flags.push(ref);
+    } else {
+      return noDisable("the latest tag is part of a longer command that can't be edited safely");
+    }
+  }
+  const script = job.scripts.find((s) => s.key === "script");
+  const scriptDone =
+    script !== undefined &&
+    script.others === 0 &&
+    script.items.every(
+      (i) =>
+        fully(i) ||
+        commented.has(i) ||
+        (releasePair !== undefined &&
+          i.commands.every((c) => TRIVIAL_COMMAND.test(c.command.trim()))),
+    );
+  if (removable && scriptDone && (matched.size > 0 || releasePair)) return removeJob();
+
+  const ops: GitLabOp[] = [];
+  const parts: string[] = [];
+  const reason = SHORT[kinds.find((k) => k !== "tag-trigger") ?? (kinds[0] as MachineryKind)];
+  for (const s of job.scripts) {
+    const gone = s.items.filter((i) => commented.has(i));
+    if (gone.length === 0) continue;
+    if (s.flow) return noDisable("the script is written in flow style ([a, b]); edit it by hand");
+    const left = s.items.length - gone.length + s.others;
+    gone.forEach((item, index) => {
+      // A script can't be empty: the last line left becomes the no-op `:`.
+      const noop = left === 0 && index === 0;
+      ops.push({
+        op: noop ? "noop-item" : "comment-item",
+        item,
+        inSeq: s.seq !== undefined,
+        reason,
+      });
     });
+    if (s.seq === undefined && !singleLine(gone[0] as GitLabScriptItem, file.text)) {
+      return noDisable("the script is one multi-line string; edit it by hand");
+    }
+    parts.push(
+      left === 0
+        ? `turns ${s.key} into the no-op ":" (# launchset: disabled — …)`
+        : `comments out the conflicting ${s.key} ${gone.length === 1 ? "line" : "lines"} (# launchset: disabled — …)`,
+    );
+  }
+  for (const [item, commands] of inBlock) ops.push({ op: "commands", item, commands, reason });
+  if (inBlock.size > 0) {
+    parts.push("disables the conflicting commands in its script (# launchset: disabled — …)");
+  }
+  for (const ref of flags) ops.push({ op: "remove-flag", item: ref.item, entry: ref.entry });
+  if (flags.length > 0) parts.push("stops tagging latest");
+  if (releasePair) {
+    if ((job.map as { flow?: boolean }).flow) {
+      return noDisable("the job is written in flow style ({ ... }); edit it by hand");
+    }
+    ops.push({ op: "remove-pair", pair: releasePair });
+    parts.push("removes its release: keyword");
+  }
+  if (ops.length === 0) return noDisable("nothing in it can be taken out on its own");
+  draft.disable = ops.map((op) => gitlabEdit(file, op));
+  draft.effects.disable = `${parts.join(", ")} in ${job.hidden ? "template" : "job"} "${job.name}"`;
+  return result;
+}
+
+function gitlabDrafts(ci: GitLabCi, builds: readonly GitLabDockerBuild[]): Draft[] {
+  const byFile = new Map<GitLabFile, GitLabJobDraft[]>();
+  for (const file of ci.files) {
+    const list: GitLabJobDraft[] = [];
+    for (const job of file.jobs) {
+      if (ci.jobs.get(job.name) !== job || usersOf(ci, job).length === 0) continue;
+      const d = gitlabJobDraft(
+        ci,
+        file,
+        job,
+        builds.find((b) => b.job === job),
+      );
+      if (d) list.push(d);
+    }
+    byFile.set(file, list);
+  }
+  const drafts: Draft[] = [];
+  for (const [file, list] of byFile) {
+    const jobNames = new Set(file.jobs.map((j) => j.name));
+    const everyKey = (test: (job: GitLabJob) => boolean) =>
+      file.root.items.length > 0 &&
+      file.root.items.every((pair) => {
+        const job = file.jobs.find((j) => j.pair === pair);
+        return job !== undefined && test(job);
+      });
+    const draftOf = (job: GitLabJob) => list.find((d) => d.job === job);
+    // An included file can't be left empty (GitLab rejects it): jobs are hidden instead.
+    if (file.includedBy && everyKey((j) => draftOf(j)?.removesJob === true)) {
+      for (const d of list) {
+        d.draft.disable = [gitlabEdit(file, { op: "hide-job", job: d.job })];
+        d.draft.effects.disable = `hides the job "${d.job.name}" (renamed to ".${d.job.name}", GitLab's way to turn a job off; removing every job would leave ${file.path} empty, which GitLab rejects)`;
+      }
+    }
+    // A file that is all machinery can go, with its include entry.
+    const includedBy = file.includedBy;
+    const usedOutside = file.jobs.some((j) =>
+      referencesTo(ci, j).some((r) => {
+        const other = /^job "([^"]+)"/.exec(r)?.[1];
+        return other !== undefined && !jobNames.has(other);
+      }),
+    );
+    if (includedBy && !usedOutside && everyKey((j) => draftOf(j) !== undefined)) {
+      const parent = ci.files.find((f) => f.path === includedBy.path);
+      for (const d of list) {
+        d.draft.remove = [
+          { kind: "delete-file", path: file.path },
+          ...(parent
+            ? [gitlabEdit(parent, { op: "remove-include", include: includedBy.include })]
+            : []),
+        ];
+        d.draft.effects.remove = `deletes ${file.path} (everything in it conflicts) and its include in ${includedBy.path}`;
+      }
+    }
+    drafts.push(...list.map((d) => d.draft));
   }
   return drafts;
 }
@@ -991,7 +1238,11 @@ export function detectMachinery(input: MachineryInput): MachineryFinding[] {
     drafts.push(...triggerDrafts(workflow, samples, publishesOrDeploys(workflow, builds)));
     drafts.push(...stepDrafts(workflow, builds, scriptPaths));
   }
-  if (input.gitlab) drafts.push(...gitlabDrafts(input.gitlab.path, input.gitlab.text));
+  const gitlab = input.gitlabCi ?? (input.gitlab ? gitlabCiOf([input.gitlab]) : undefined);
+  if (gitlab) {
+    const builds = input.gitlabBuilds ?? gitlabDockerBuilds(gitlab, { gitTagPrefix: "v" });
+    drafts.push(...gitlabDrafts(gitlab, builds));
+  }
   for (const pkg of input.packages) drafts.push(...scriptDrafts(pkg, scriptPaths));
   drafts.push(...scriptItems);
   for (const f of input.fastfiles) {

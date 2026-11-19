@@ -4,6 +4,7 @@
  */
 
 import { isSeq, type Node, type Pair, type Scalar, type YAMLSeq } from "yaml";
+import { escapeRegExp } from "../core/regex.ts";
 import { detectEol, lineEnd, lineStart } from "../core/text.ts";
 import type { Splice } from "../platforms/types.ts";
 
@@ -131,6 +132,35 @@ export function removeListEntry(
   const before = /,\s*$/.exec(text.slice(r[0], start));
   edits.remove(before ? start - before[0].length : start, end);
   return true;
+}
+
+/**
+ * The text range of a `-t <ref>` / `--tag <ref>` flag inside a script scalar, with the
+ * whitespace before it; the whole line when the flag is alone on a continued line
+ * (`  -t x:latest \\`). Undefined unless the flag occurs exactly once.
+ */
+export function latestFlagRange(
+  text: string,
+  node: Scalar,
+  ref: string,
+): [number, number] | undefined {
+  const r = range(node);
+  if (!r) return undefined;
+  const source = text.slice(r[0], r[1]);
+  const flag = new RegExp(
+    `[ \\t]+(?:-t|--tag)(?:[ \\t]+|=)(["']?)${escapeRegExp(ref)}\\1(?=\\s|$)`,
+    "g",
+  );
+  const found = [...source.matchAll(flag)];
+  if (found.length !== 1) return undefined;
+  const at = r[0] + (found[0]?.index ?? 0);
+  const end = at + (found[0]?.[0].length ?? 0);
+  const ls = lineStart(text, at);
+  const le = lineEnd(text, at);
+  if (text.slice(ls, at).trim() === "" && /^[ \t]*\\[ \t]*\r?\n?$/.test(text.slice(end, le))) {
+    return [ls, le];
+  }
+  return [at, end];
 }
 
 export { isSeq };

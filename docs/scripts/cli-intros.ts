@@ -10,7 +10,7 @@ export const COMMON_FLAGS_NOTE = [
   "- Nothing asks a question when stdin is not a terminal, or when `--yes` or `--json` is given. A command that needs an answer then says which flag to pass.",
   "- `--json` prints JSON on stdout and sends logs and warnings to stderr.",
   "- The exit code is `0` on success, `1` when the command failed and `2` for wrong usage (an unknown command or flag).",
-  "- `--cwd <dir>` sets the repo root. Without it, launchset uses the nearest parent folder that has a `launchset.config.*` file. `init` has no config yet, so it defaults to the git repository root (GitHub only runs workflows from there) and says so when that isn't the folder you ran it in.",
+  "- `--cwd <dir>` sets the repo root. Without it, launchset uses the nearest parent folder that has a `launchset.config.*` file. `init` has no config yet, so it defaults to the git repository root (CI configuration only runs from there: GitHub workflows, `.gitlab-ci.yml`) and says so when that isn't the folder you ran it in.",
   "- GitHub-facing commands take a token from `--token`, then `LAUNCHSET_TOKEN`, then `GITHUB_TOKEN`, and the repository from `--repo`, then `GITHUB_REPOSITORY`, then the `origin` remote.",
   "- `--plan` takes the plan JSON itself, `@file.json`, or reads `LAUNCHSET_PLAN`.",
   "- `--ci` (default: on when `GITLAB_CI=true`; `--no-ci` turns it off) is accepted by every command that produces outputs: `release`, `plan`, `preview-plan`, `preview-comment`, `stamp`, `verify`, `mark`, `finalize`, `check`, `ship` and `status`. See CI output files below.",

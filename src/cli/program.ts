@@ -3,9 +3,9 @@
  * flags, decides whether it may ask questions, builds the flow context and prints results.
  */
 
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { Command, CommanderError, InvalidArgumentError, Option } from "commander";
 import { DOCS_URL } from "../core/links.ts";
 import { BUMPS, type Bump, type Channel } from "../core/types.ts";
@@ -146,8 +146,18 @@ function sameDir(a: string, b: string): boolean {
   }
 }
 
+/** True when the repo at `top` looks like a GitLab project (a `.gitlab-ci.yml`, a GitLab remote). */
+async function looksLikeGitLab(top: string): Promise<boolean> {
+  if (existsSync(join(top, ".gitlab-ci.yml"))) return true;
+  try {
+    return /gitlab/i.test(await new Git({ cwd: top }).remoteUrl());
+  } catch {
+    return false;
+  }
+}
+
 /**
- * The folder `init` sets up: `--cwd`, else the git top-level folder (GitHub only runs workflows
+ * The folder `init` sets up: `--cwd`, else the git top-level folder (CI configuration only runs
  * from the repo root), else the shell's folder. Says so when that isn't the folder it ran in.
  */
 async function initRoot(io: CliIo, cwd: string | undefined): Promise<string> {
@@ -161,7 +171,9 @@ async function initRoot(io: CliIo, cwd: string | undefined): Promise<string> {
     return top;
   }
   io.stderr(
-    `warning: ${base} is a subfolder of the repo ${top}. GitHub only runs workflows from the repo root, so the workflows init writes in ${base}/.github won't run.\n`,
+    (await looksLikeGitLab(top))
+      ? `warning: ${base} is a subfolder of the repo ${top}. GitLab only reads .gitlab-ci.yml from the repo root, so the CI files init writes in ${base} won't run unless the root .gitlab-ci.yml includes them.\n`
+      : `warning: ${base} is a subfolder of the repo ${top}. GitHub only runs workflows from the repo root, so the workflows init writes in ${base}/.github won't run.\n`,
   );
   return base;
 }
@@ -239,12 +251,12 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
     hook?: boolean;
   }>(
     "init",
-    "Set up a repo: detect versions and targets, write the config, workflows and README.",
+    "Set up a repo: detect versions and targets, write the config, CI files (GitHub workflows or GitLab CI) and README.",
     (cmd) => {
       withGlobals(cmd, {
         github: false,
         cwdHelp:
-          "set up this folder (default: the git repo root; GitHub only runs workflows from the root)",
+          "set up this folder (default: the git repo root; CI configuration only runs from the root: GitHub workflows, .gitlab-ci.yml)",
       });
       for (const flag of INIT_FLAGS) {
         if (flag.type === "string[]") {

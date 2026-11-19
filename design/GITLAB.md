@@ -1,6 +1,6 @@
 # GitLab support: plan
 
-Status: in progress (phases 1–4 done). Last updated 2026-11-19.
+Status: in progress (phases 1–4 and init done). Last updated 2026-11-19.
 
 launchset runs on GitHub only today. This plan covers what it takes to also run on GitLab
 (gitlab.com and self-managed), in an order that keeps the GitHub path safe at every step.
@@ -240,6 +240,8 @@ Renderers, not yet written by `init` (phase 5): `renderGitLabCi()` in `src/templ
 
 ### Phase 5: `init`, docs, skills
 
+`init` is done (5a); the docs and skills (5b) are not.
+
 - Ask for or detect the host (remote URL, `.gitlab-ci.yml` present).
 - Scan `.gitlab-ci.yml` (and its local `include:` files) for release machinery: jobs with
   `only: tags`, `rules: - if: $CI_COMMIT_TAG`, `changeset` commands, `release:` keywords,
@@ -327,5 +329,5 @@ Still needs a real GitLab instance:
 
 ## Estimate
 
-Phases 1–4: done. Phase 5 is larger; before it ships, a trial on a real GitLab project settles
+Phases 1–4 and the init part of phase 5: done. The rest of phase 5 (docs, skills) is larger; before it ships, a trial on a real GitLab project settles
 the "Still needs a real GitLab instance" list.
