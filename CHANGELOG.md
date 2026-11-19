@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.2 (2026-11-19)
+
+### Patch changes
+- Document running launchset alongside Changesets in repos that also publish independently versioned npm packages: launchset releases the app, Changesets keeps the packages. The adoption skill now proposes this setup instead of stopping, and the `launchset` skill and `AGENTS.md` section explain that a PR changing such a package needs both a `.changeset/` file and a `.launchset/` changeset. ([#11](https://github.com/demonsters/launchset/pull/11), @rene-demonsters)
+- `launchset init` reads existing Docker workflows correctly: the build context of a `docker build` run step with `${{ secrets.X }}` build args is no longer read as `}}`, image tags taken from the pushed git tag through a variable (`RELEASE_VERSION=${GITHUB_REF#refs/*/}` in `$GITHUB_ENV`) keep their `v`, docker targets get `verify: ["registry"]` (decision `docker.<name>.verify`), no pre-push hook is offered for a husky setup that isn't there or a hook file git ignores, and gitignored folders are no longer searched for targets. ([#9](https://github.com/demonsters/launchset/pull/9), @rene-demonsters)
+
 ## 1.0.1 (2026-11-18)
 
 ### Patch changes
