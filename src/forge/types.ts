@@ -1,5 +1,5 @@
 /**
- * The host-neutral interface to the code host's API ("forge": GitHub today, GitLab later).
+ * The host-neutral interface to the code host's API ("forge": GitHub or GitLab).
  * Tags and branches are pushed with git (src/git); a forge client handles PRs, comments,
  * releases and lookups. Every failure is a {@link ForgeError} (see `./errors.ts`).
  */

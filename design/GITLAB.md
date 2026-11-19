@@ -1,8 +1,8 @@
 # GitLab support: plan
 
-Status: in progress (phases 1–4 and init done). Last updated 2026-11-19.
+Status: implemented (all phases); needs a trial on a real GitLab instance (see To verify). Last updated 2026-11-19.
 
-launchset runs on GitHub only today. This plan covers what it takes to also run on GitLab
+launchset ran on GitHub only. This plan covers what it takes to also run on GitLab
 (gitlab.com and self-managed), in an order that keeps the GitHub path safe at every step.
 
 ## Decisions
@@ -146,7 +146,7 @@ Each phase is its own PR and leaves GitHub behaviour unchanged (the existing tes
 
 ### Phase 4: GitLab CI templates (done)
 
-Renderers, not yet written by `init` (phase 5): `renderGitLabCi()` in `src/templates/gitlab.ts`
+Renderers, written by `init` (phase 5): `renderGitLabCi()` in `src/templates/gitlab.ts`
 (templates in `templates/gitlab/`) and `renderChildPipeline()` in `src/templates/gitlab-child.ts`.
 
 - No CI/CD component for now (open decision 4): `init` will write plain YAML files, like the GitHub
@@ -155,10 +155,16 @@ Renderers, not yet written by `init` (phase 5): `renderGitLabCi()` in `src/templ
   rendered the file>`; `NPM_TOKEN` for the private package; skipped when `launchset` is on the
   PATH). The bundle targets Node 24, so every job that runs launchset needs Node 24+ and npm.
 - `.gitlab/launchset.yml` (launchset's jobs, included by `.gitlab-ci.yml`): `launchset-check` (MR
-  pipelines into the base, maintenance and prerelease branches), `launchset-release` +
+  pipelines into the base, maintenance and prerelease branches; not a fork MR's pipeline that
+  runs in the fork, `$CI_PROJECT_ID != $CI_MERGE_REQUEST_PROJECT_ID`, which has no `NPM_TOKEN`
+  to install launchset with), `launchset-release` +
   `launchset-build` (trigger) on pushes and `web` / `api` pipelines of the base and maintenance
   branches, `launchset-preview-plan` + `launchset-preview` (trigger) +
   `launchset-preview-comment`. No top-level `workflow:` (it would override the project's).
+  launchset's jobs set `cache: []` and the release job `dependencies: []`: files a cache or an
+  earlier stage's artifacts put in the checkout would count as uncommitted changes when the
+  release branch is built. launchset's own `--ci` files (plan.json from a parent job's
+  artifacts, launchset.env, launchset.sh, the child pipeline) never count.
 - `.gitlab/launchset-targets.yml` (the user's file): one hidden `.launchset-<target>` job per
   target with image, services, tags, variables, before_script and the build steps (GitLab
   versions of the GitHub snippets). No `rules` in them: a child whose jobs are all ruled out
@@ -238,9 +244,9 @@ Renderers, not yet written by `init` (phase 5): `renderGitLabCi()` in `src/templ
 - `preview-comment --plan @plan.json` treats a missing file as "no plan" (a skipped preview
   writes none).
 
-### Phase 5: `init`, docs, skills
+### Phase 5: `init`, docs, skills (done)
 
-`init` is done (5a); the docs and skills (5b) are not.
+`init` (5a) and the docs and skills (5b) are done.
 
 - Ask for or detect the host (remote URL, `.gitlab-ci.yml` present).
 - Scan `.gitlab-ci.yml` (and its local `include:` files) for release machinery: jobs with
@@ -280,7 +286,9 @@ Settled from the docs (docs.gitlab.com, November 2026):
 
 - Dotenv report limits: 5 KB and 20 variables by default on self-managed (instance settings,
   17.1+); on GitLab.com 50 / 100 / 150 variables (Free / Premium / Ultimate). The plan doesn't go
-  through dotenv (plan.json artifacts); `--ci` warns when launchset.env exceeds the defaults.
+  through dotenv (plan.json artifacts). `release --ci`, whose launchset.env the templates upload
+  as a dotenv report, writes 14 variables and warns when the file exceeds the defaults; other
+  commands (the child's build jobs add stamp, verify and mark variables) only log it at debug.
 - `CI_JOB_TOKEN`: may push when the project allows it ("Allow Git push requests to the
   repository", 18.4, off by default), but those pushes never start pipelines, so it can't push the
   release branch. It may read MRs and notes and use the Releases API, but not post notes, create
@@ -329,5 +337,5 @@ Still needs a real GitLab instance:
 
 ## Estimate
 
-Phases 1–4 and the init part of phase 5: done. The rest of phase 5 (docs, skills) is larger; before it ships, a trial on a real GitLab project settles
-the "Still needs a real GitLab instance" list.
+All phases are done. Before it ships, a trial on a real GitLab project settles the "Still needs a
+real GitLab instance" list.

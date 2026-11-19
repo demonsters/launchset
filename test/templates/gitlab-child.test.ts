@@ -122,6 +122,21 @@ describe("renderChildPipeline", () => {
     expect(job(doc, ".launchset_cli").image).toBe("node:24");
   });
 
+  it("puts every job in stage test, which a child pipeline always has", () => {
+    const stages = (doc: Child) =>
+      Object.entries(doc as Record<string, Job>)
+        .filter(([name]) => name !== "include")
+        .map(([name, j]) => [name, j.stage ?? (j.extends === ".launchset_cli" ? "(cli)" : "")]);
+    expect(stages(render().doc)).toEqual([
+      [".launchset_cli", "test"],
+      ["build-api", "test"],
+      ["build-web", "test"],
+      ["launchset-finalize", "(cli)"],
+    ]);
+    const nothing = render({ plan: plan({ mode: "none", matrix: [] }) }).doc;
+    expect(job(nothing, "launchset-nothing-to-build").stage).toBe("test");
+  });
+
   it("ship of one manual target: its build job and finalize", () => {
     const { text, doc } = render({ plan: plan({ mode: "ship", matrix: ["ios"] }) });
     expect(Object.keys(doc)).toEqual([

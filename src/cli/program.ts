@@ -442,19 +442,20 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
       cmd.addOption(
         new Option(
           "--run-number <n>",
-          "with --preview: the workflow run number (default: $GITHUB_RUN_NUMBER)",
+          "with --preview: the run number (default: $GITHUB_RUN_NUMBER, on GitLab $CI_PIPELINE_IID)",
         ).argParser(positiveInt),
       );
       cmd.option("--no-fetch", "don't fetch tags first");
       cmd.option(
         "--gitlab [file]",
-        "also write the GitLab child pipeline for the plan (default: launchset-child.yml; -: print it on stdout instead of the plan)",
+        "write the GitLab child pipeline for the plan to <file> (default: launchset-child.yml) and print the plan JSON as usual; with -, print the child pipeline on stdout instead of the plan JSON",
       );
       examples(
         cmd,
         "launchset plan > plan.json",
         "launchset plan --preview",
         "launchset plan --gitlab -",
+        "launchset plan --gitlab child.yml",
       );
       return ciHelp(
         cmd,
@@ -640,7 +641,8 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
         cmd,
         "launchset stamp --target android --version 1.5.0 --build-number 217000000",
         "launchset stamp --target web --plan @plan.json",
-        "launchset stamp --target web --plan @plan.json --ci && . ./launchset.sh",
+        "launchset stamp --target web --plan @plan.json --ci",
+        ". ./launchset.sh",
       );
       return ciHelp(
         cmd,
@@ -755,7 +757,7 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
   // finalize -----------------------------------------------------------------------------
   command<{ plan?: string; fetch?: boolean }>(
     "finalize",
-    "Create the release tag and GitHub Release once every target is built.",
+    "Create the release tag and the GitHub (or GitLab) release once every target is built.",
     (cmd) => {
       withGlobals(cmd, { json: true, ci: true });
       cmd.option("--plan <json|@file>", "the plan (default: $LAUNCHSET_PLAN)");

@@ -2,6 +2,7 @@
 # A child pipeline needs at least one job.
 launchset-nothing-to-build:
   image: busybox:1
+  # A child pipeline has GitLab's default stages (not the parent's), so `test` always exists.
   stage: test
   interruptible: true
   variables:

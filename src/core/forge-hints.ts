@@ -50,6 +50,8 @@ export interface ForgeHints {
   runName: string;
   /** preview: the events a preview runs on. */
   previewEvents: string;
+  /** preview: the PR event lacks the PR's number, head branch or head commit (the message). */
+  previewPrIncomplete: string;
   /** preview: no branch for a push or manual preview. */
   previewNoBranch: string;
 }
@@ -86,6 +88,8 @@ const GITHUB: ForgeHints = {
   previewJobName: "Preview <target>",
   runName: "workflow run",
   previewEvents: "The preview workflow runs on pull_request, push and workflow_dispatch events.",
+  previewPrIncomplete:
+    "the pull_request event payload has no pull_request number, head.ref or head.sha",
   previewNoBranch: "Check out a branch (not a detached HEAD), or run this in GitHub Actions.",
 };
 
@@ -129,6 +133,8 @@ const GITLAB: ForgeHints = {
   previewJobName: "preview-<target>",
   runName: "pipeline",
   previewEvents: "The preview job runs in merge request, branch and manual (web, api) pipelines.",
+  previewPrIncomplete:
+    "the merge request pipeline has no CI_MERGE_REQUEST_IID, CI_MERGE_REQUEST_SOURCE_BRANCH_NAME or commit sha",
   previewNoBranch: "Check out a branch (not a detached HEAD), or run this in GitLab CI.",
 };
 

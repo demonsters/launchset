@@ -69,8 +69,8 @@ Commands:
                                   --version).
   ship [options]                  Prepare a manual target for a hand-made build of a released
                                   version, then stamp it.
-  finalize [options]              Create the release tag and GitHub Release once every target is
-                                  built.
+  finalize [options]              Create the release tag and the GitHub (or GitLab) release once
+                                  every target is built.
   hotfix [options] <major.minor>  Create a maintenance branch for a released <major>.<minor> line.
   check [options]                 Run the PR check: is there a valid changeset? (--push: the
                                   pre-push hook warning.)
@@ -96,12 +96,12 @@ Rules that hold for every command:
 A CI runner without the GitHub Action gets a command's results as files, written to the working directory after the command ran (also when it failed, not when it crashed):
 
 - `plan.json` (`LAUNCHSET_PLAN_FILE`): the plan JSON, written when the command produced a plan. Pass it on with `--plan @plan.json`.
-- `launchset.env` (`LAUNCHSET_DOTENV`): GitLab `artifacts:reports:dotenv` format, one `NAME=value` per line. Values with a line break are left out. GitLab accepts at most 5 KB and (by default) 20 variables, and launchset warns when the file is over that.
-- `launchset.sh` (`LAUNCHSET_SHELL_ENV`): the same variables as `export NAME='value'` lines, including multi-line values. Run `launchset stamp --target web --plan @plan.json --ci && . ./launchset.sh` and later script lines see `$LAUNCHSET_VERSION`.
+- `launchset.env` (`LAUNCHSET_DOTENV`): GitLab `artifacts:reports:dotenv` format, one `NAME=value` per line. Values with a line break are left out. GitLab accepts at most 5 KB and (by default) 20 variables in a dotenv report; `release`, whose file the GitLab templates upload as one, warns when it is over that.
+- `launchset.sh` (`LAUNCHSET_SHELL_ENV`): the same variables as `export NAME='value'` lines, including multi-line values. Run `launchset stamp --target web --plan @plan.json --ci`, then `. ./launchset.sh` as the next script line, and later lines see `$LAUNCHSET_VERSION`. Keep them two lines, not `a && b`: CI shells run with `set -e`, which ignores a failure on the left of `&&`.
 
 Every output except `plan` becomes `LAUNCHSET_` plus its name in upper snake case: `already-published` is `LAUNCHSET_ALREADY_PUBLISHED`, `build-number` is `LAUNCHSET_BUILD_NUMBER`, `release-sha` is `LAUNCHSET_RELEASE_SHA`. The exported variables of `stamp` and `ship` (`LAUNCHSET_VERSION`, `LAUNCHSET_BUILD_NUMBER`, `LAUNCHSET_CHANNEL`) are added as they are and win on a clash.
 
-Commands that run in one job (`stamp`, then `verify`, then `mark`) merge into the same files: variables a command sets are replaced, the others stay. With `--ci` the job summary is printed after the result lines (on stderr with `--json`).
+Commands that run in one job (`stamp`, then `verify`, then `mark`) merge into the same files: variables a command sets are replaced, the others stay. With `--ci` the job summary is printed after the result lines (on stderr with `--json`), and these files (also a `plan.json` from a parent job's artifacts) don't count as uncommitted changes for the commands that need a clean working tree.
 
 ### launchset init
 
@@ -244,16 +244,19 @@ Options:
   --version <version>  with --target: the released version to ship
   --force              with --target: allow a version lower than the target's highest marker
   --branch <name>      plan for this branch (default: the current branch)
-  --run-number <n>     with --preview: the workflow run number (default: $GITHUB_RUN_NUMBER)
+  --run-number <n>     with --preview: the run number (default: $GITHUB_RUN_NUMBER, on GitLab
+                       $CI_PIPELINE_IID)
   --no-fetch           don't fetch tags first
-  --gitlab [file]      also write the GitLab child pipeline for the plan (default:
-                       launchset-child.yml; -: print it on stdout instead of the plan)
+  --gitlab [file]      write the GitLab child pipeline for the plan to <file> (default:
+                       launchset-child.yml) and print the plan JSON as usual; with -, print the
+                       child pipeline on stdout instead of the plan JSON
   -h, --help           display help for command
 
 Example:
   $ launchset plan > plan.json
   $ launchset plan --preview
   $ launchset plan --gitlab -
+  $ launchset plan --gitlab child.yml
 
 
 In --ci mode also writes plan.json, launchset.env and launchset.sh (see docs).
@@ -381,7 +384,8 @@ Options:
 Example:
   $ launchset stamp --target android --version 1.5.0 --build-number 217000000
   $ launchset stamp --target web --plan @plan.json
-  $ launchset stamp --target web --plan @plan.json --ci && . ./launchset.sh
+  $ launchset stamp --target web --plan @plan.json --ci
+  $ . ./launchset.sh
 
 
 In --ci mode also writes plan.json, launchset.env and launchset.sh (see docs).
@@ -486,7 +490,7 @@ Creates the release tag and the GitHub Release once every auto target has a mark
 ```text
 Usage: launchset finalize [options]
 
-Create the release tag and GitHub Release once every target is built.
+Create the release tag and the GitHub (or GitLab) release once every target is built.
 
 Options:
   --cwd <dir>          run in this directory (default: the nearest folder with a launchset config)

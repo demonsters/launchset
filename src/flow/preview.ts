@@ -118,10 +118,7 @@ async function deriveSource(
     const branch = pr?.headRef;
     const headSha = pr?.headSha;
     if (!pr || number === undefined || !Number.isSafeInteger(number) || !branch || !headSha) {
-      throw invalidEvent(
-        context,
-        "the pull_request event payload has no pull_request number, head.ref or head.sha",
-      );
+      throw invalidEvent(context, forgeHints(context.host).previewPrIncomplete);
     }
     const trigger: PreviewTrigger = { kind: "pr", number, labels: pr.labels, fork: pr.fork };
     if (pr.manual) trigger.manual = true;
@@ -658,6 +655,8 @@ export async function previewComment(
   }
 
   const body = comment();
-  lines.push(`Preview ${plan.version}: ${plan.matrix.length} target(s), no PR to comment on`);
+  lines.push(
+    `Preview ${plan.version}: ${plan.matrix.length} target(s), no ${words.prName} to comment on`,
+  );
   return { ok: true, outputs, summary: body, lines, data };
 }

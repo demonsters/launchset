@@ -4,6 +4,8 @@
  * fake GitLab REST API.
  */
 
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { check } from "../../src/flow/check.ts";
 import { finalize } from "../../src/flow/finalize.ts";
@@ -309,6 +311,20 @@ describe("release on GitLab", () => {
     expect(authorOf(p, "launchset/release/main")).toBe(`${identity}|${identity}`);
   });
 
+  it("says MR, not PR, when the release MR can't be built (a dirty checkout)", async () => {
+    const p = await project();
+    const sha = p.push("Offline mode", minor);
+    new FakeGitLab();
+    const ci = runnerCheckout(p, sha);
+    writeFileSync(join(ci.dir, "coverage.xml"), "<coverage/>");
+    const error = await release(await gitlabContext(ci, pushEnv("main", sha))).catch(
+      (e: Error) => e,
+    );
+    expect((error as Error).message).toBe(
+      "Building the release MR needs a clean working tree, but there are uncommitted changes",
+    );
+  });
+
   it("without LAUNCHSET_TOKEN the push fails with a hint about CI_JOB_TOKEN", async () => {
     const p = await project();
     const sha = p.push("Offline mode", minor);
@@ -443,6 +459,14 @@ describe("previews in merge request pipelines", () => {
       reason:
         "MR !1 doesn't have the `launchset:preview` label: add the label and push, or start the manual preview job.",
     });
+  });
+
+  it("names GitLab's variables when the MR pipeline lacks the MR", async () => {
+    const { head, ci } = await previewSetup(["launchset:preview"]);
+    const env = mrEnv({ iid: 1, source: "feature", sha: head }, { CI_MERGE_REQUEST_IID: "" });
+    const error = await previewPlan(await gitlabContext(ci, env)).catch((e: Error) => e);
+    expect((error as Error).message).toContain("CI_MERGE_REQUEST_IID");
+    expect((error as Error).message).not.toContain("pull_request");
   });
 
   it("builds without the label when the manual preview job runs", async () => {

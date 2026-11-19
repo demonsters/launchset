@@ -1,6 +1,7 @@
 
 @@job@@:
   extends: @@extends@@
+  # A child pipeline has GitLab's default stages (not the parent's), so `test` always exists.
   stage: test
   needs:
     # plan.json from the plan job of the parent pipeline.

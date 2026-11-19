@@ -219,6 +219,19 @@ describe("refs and history", () => {
     repo.write("untracked.txt", "x");
     expect(await git.isClean()).toBe(false);
   });
+
+  it("doesn't count launchset's own files (the --ci files), wherever git runs", async () => {
+    const repo = initRepo();
+    repo.commit("a", { "a.txt": "a", "app/b.txt": "b" });
+    repo.write("plan.json", "{}");
+    repo.write("launchset.env", "X=1\n");
+    const own = [join(repo.dir, "plan.json"), join(repo.dir, "launchset.env"), "/elsewhere/x"];
+    expect(await new Git({ cwd: repo.dir, ownFiles: own }).isClean()).toBe(true);
+    expect(await new Git({ cwd: join(repo.dir, "app"), ownFiles: own }).isClean()).toBe(true);
+    expect(await new Git({ cwd: repo.dir }).isClean()).toBe(false);
+    repo.write("other.txt", "x");
+    expect(await new Git({ cwd: repo.dir, ownFiles: own }).isClean()).toBe(false);
+  });
 });
 
 describe("tags", () => {

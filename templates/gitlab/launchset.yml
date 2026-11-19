@@ -28,8 +28,9 @@
 #     comment.
 #   - The CI/CD variable NPM_TOKEN (masked): an npm token that may read the private
 #     @demonsters/launchset package, which every launchset job installs with npm.
-#     Fork MR pipelines run without this project's variables: there launchset can't be installed
-#     (and the check fails) unless LAUNCHSET_CLI points to a source that needs no token.
+#     Fork MR pipelines that run in the fork have none of this project's variables, so
+#     launchset can't be installed there: launchset-check skips them (run the MR's pipeline in
+#     this project, from the MR's Pipelines tab, to check it).
 #   - Runners for the node:24 image. launchset needs Node 24 or later, npm and git.
 #
 # Starting a pipeline by hand (Build > Pipelines > Run pipeline), with pipeline variables:
@@ -54,6 +55,9 @@
     GIT_DEPTH: "0"
     # The launchset package to install. A CI/CD variable of the same name overrides it.
     LAUNCHSET_CLI: @@cli_spec@@
+  # No cache: launchset needs none, and files a `default: cache` restores into the checkout
+  # would count as uncommitted changes when launchset builds the release branch.
+  cache: []
   before_script:
     @@install@@
 
@@ -73,6 +77,9 @@ launchset-check:
   interruptible: true
   rules:
     - if: $CI_PIPELINE_SOURCE != "merge_request_event"
+      when: never
+    # Not in a fork MR's pipeline that runs in the fork: it has no NPM_TOKEN or LAUNCHSET_TOKEN.
+    - if: $CI_PROJECT_ID != $CI_MERGE_REQUEST_PROJECT_ID
       when: never
     # MRs into the base branch, the maintenance branches (hotfixes) and the prerelease branches.
     @@check_rules@@
@@ -94,6 +101,9 @@ launchset-release:
   # .gitlab-ci.yml prevents that. If it happened anyway: Run pipeline on the branch without
   # variables retries the unfinished release.
   interruptible: false
+  # No artifacts from jobs of earlier stages: in the checkout they would count as uncommitted
+  # changes when launchset builds the release branch.
+  dependencies: []
   script:
     # Writes plan.json, launchset.env (below), launchset.sh and launchset-child.yml, the child
     # pipeline for the plan (printed to this log too).

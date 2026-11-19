@@ -38,6 +38,8 @@ interface Job {
   needs?: unknown[];
   interruptible?: boolean;
   resource_group?: string;
+  cache?: unknown;
+  dependencies?: string[];
   before_script?: string[];
   script?: string[];
   trigger?: { include: { artifact: string; job: string }[]; strategy: string };
@@ -195,6 +197,7 @@ const push = (branch: string): Vars => ({
 const mr = (target: string, extra: Vars = {}): Vars => ({
   CI_PIPELINE_SOURCE: "merge_request_event",
   CI_MERGE_REQUEST_TARGET_BRANCH_NAME: target,
+  CI_PROJECT_ID: "1",
   CI_MERGE_REQUEST_PROJECT_ID: "1",
   CI_MERGE_REQUEST_SOURCE_PROJECT_ID: "1",
   ...extra,
@@ -250,6 +253,8 @@ describe("renderGitLabCi", () => {
       'command -v launchset >/dev/null 2>&1 || npm install --global --no-fund --no-audit --loglevel=error "$LAUNCHSET_CLI"',
       "launchset --version",
     ]);
+    // A `default: cache` must not restore files into the checkout (they'd make it dirty).
+    expect(cli.cache).toEqual([]);
     for (const name of ["launchset-check", "launchset-release", "launchset-preview-plan"]) {
       expect(job(rendered.jobs.doc, name).extends).toBe(".launchset-cli");
     }
@@ -264,6 +269,8 @@ describe("renderGitLabCi", () => {
     expect(release.script).toEqual(["launchset release --ci"]);
     expect(release.interruptible).toBe(false);
     expect(release.resource_group).toBe("launchset-release-$CI_COMMIT_REF_SLUG");
+    // No artifacts of earlier stages in the checkout the release branch is built from.
+    expect(release.dependencies).toEqual([]);
     expect(release.artifacts).toEqual({
       paths: ["plan.json", "launchset-child.yml"],
       reports: { dotenv: "launchset.env" },
@@ -309,6 +316,10 @@ describe("renderGitLabCi", () => {
     expect(when(rules, mr("next/big"))).toBe("on_success");
     expect(when(rules, mr("develop"))).toBe("never");
     expect(when(rules, push("main"))).toBe("never");
+    // A fork MR's pipeline in the fork has no NPM_TOKEN: skipped. Run in this project: checked.
+    const fork = { CI_MERGE_REQUEST_SOURCE_PROJECT_ID: "2" };
+    expect(when(rules, mr("main", { ...fork, CI_PROJECT_ID: "2" }))).toBe("never");
+    expect(when(rules, mr("main", fork))).toBe("on_success");
   });
 
   it("preview plan rules: label, manual job, forks, manual runs and preview branches", () => {

@@ -125,16 +125,16 @@ export async function release(
       ? await baseMovedOn(context, plan.branch, state.headSha)
       : undefined;
   if (movedOn) {
-    const reason = `${plan.branch} has moved on to ${movedOn.slice(0, 7)}: the run for that commit updates the release PR.`;
+    const reason = `${plan.branch} has moved on to ${movedOn.slice(0, 7)}: the run for that commit updates the release ${words.prName}.`;
     if (plan.mode === "release-pr") data.releasePrSkipped = reason;
     summary = appendParagraphs(summary, [reason]);
-    lines.push(`release PR left alone: ${reason}`);
+    lines.push(`release ${words.prName} left alone: ${reason}`);
   } else if (!options.dryRun && plan.mode === "release-pr") {
     const pr = await openReleasePr(context, state, decision);
     if ("skipped" in pr) {
       data.releasePrSkipped = pr.reason;
       summary = appendParagraphs(summary, [pr.reason]);
-      lines.push(`release PR left alone: ${pr.reason}`);
+      lines.push(`release ${words.prName} left alone: ${pr.reason}`);
     } else {
       data.releasePr = pr;
       outputs["pr-number"] = String(pr.number);
@@ -188,13 +188,14 @@ async function openReleasePr(
   state: ReleaseState,
   decision: ReleaseDecision,
 ): Promise<ReleasePrResult | ReleasePrSkipped> {
-  const forge = requireForge(context, "The release PR");
+  const PR = forgeWords(context.host).prName;
+  const forge = requireForge(context, `The release ${PR}`);
   const content = await releasePrContent(context, state, decision);
   const { commit, pushed, superseded } = await rebuildBranch(context, {
     branch: content.branch,
     from: state.headSha,
     message: content.commitMessage,
-    what: "Building the release PR",
+    what: `Building the release ${PR}`,
     write: async () => {
       const changes = await planReleaseChanges(context, content);
       await writePlannedChanges(changes);
@@ -204,7 +205,7 @@ async function openReleasePr(
   if (superseded) {
     return {
       skipped: true,
-      reason: `${content.branch} was pushed by another run while this one built it: that run updates the release PR.`,
+      reason: `${content.branch} was pushed by another run while this one built it: that run updates the release ${PR}.`,
     };
   }
   const { pr, action } = await upsertPr(forge, {

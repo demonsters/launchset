@@ -143,6 +143,20 @@ function toFile(raw: RawDiff): PrFile {
   return { path: raw.new_path, status: "modified" };
 }
 
+/** The host name of a server URL; `gitlab.com` when it can't be parsed. */
+export function serverHostOf(serverUrl: string): string {
+  try {
+    return new URL(serverUrl).hostname || "gitlab.com";
+  } catch {
+    return "gitlab.com";
+  }
+}
+
+/** launchset's commits when the token's user is unknown: `launchset <launchset@noreply.<host>>`. */
+export function fallbackIdentity(host: string): CommitIdentity {
+  return { name: "launchset", email: `launchset@noreply.${host}` };
+}
+
 /** Our own bot: a project or group access token's user (`project_123_bot_ab12`). */
 const BOT_USERNAME = /^(project|group)_\d+_bot(_|$)/;
 
@@ -308,13 +322,7 @@ export function createGitLab(options: GitLabOptions): Forge {
         return null;
       },
     ));
-  const serverHost = (() => {
-    try {
-      return new URL(serverUrl).hostname;
-    } catch {
-      return "gitlab.com";
-    }
-  })();
+  const commitHost = options.commitHost || serverHostOf(serverUrl);
 
   /** Merged MRs into `base`, newest update first, down to `since` (ms). */
   async function listMergedMrs(base: string, since: number | undefined): Promise<PullRequest[]> {
@@ -368,11 +376,11 @@ export function createGitLab(options: GitLabOptions): Forge {
     // itself, so GitLab push rules that only accept known authors let launchset's commits in.
     async identity(): Promise<CommitIdentity> {
       const user = await whoAmI();
-      const host = options.commitHost || serverHost;
-      const fallback = `launchset@noreply.${host}`;
-      if (!user) return { name: "launchset", email: fallback };
-      const email = user.email ?? (user.username ? `${user.username}@noreply.${host}` : fallback);
-      return { name: user.name ?? user.username ?? "launchset", email };
+      const fallback = fallbackIdentity(commitHost);
+      if (!user) return fallback;
+      const email =
+        user.email ?? (user.username ? `${user.username}@noreply.${commitHost}` : fallback.email);
+      return { name: user.name ?? user.username ?? fallback.name, email };
     },
 
     async findOpenPrByHead(branch) {

@@ -119,7 +119,7 @@ On GitHub the same job is a matrix entry with `if: matrix.target == ...` guards.
 
 ### Check, in MR pipelines
 
-`launchset-check` runs in MR pipelines whose target branch is the base branch, a maintenance branch or a prerelease branch. It needs a changeset (or `bump: none`), except for bot MRs and the release MR. It posts one sticky MR note with the result. It is `interruptible`, so a new push replaces it.
+`launchset-check` runs in MR pipelines whose target branch is the base branch, a maintenance branch or a prerelease branch. It needs a changeset (or `bump: none`), except for bot MRs and the release MR. It posts one sticky MR note with the result. It is `interruptible`, so a new push replaces it. It skips a fork MR's pipeline that runs in the fork, which has none of your variables (see [Token and permissions](/gitlab/token/)).
 
 ### Release MR, then publish
 

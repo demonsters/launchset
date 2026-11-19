@@ -54,7 +54,10 @@ export interface ChildPipelineInput {
 
 const template = (name: string) => readTemplateFile("gitlab", `child/${name}`);
 
-/** `build-web` / `preview-web`: the names the flows look for (preview-comment, forge hints). */
+/**
+ * `build-web` / `preview-web`. preview-comment finds a target's job by this name
+ * (`findTargetJob`); `forgeHints("gitlab").previewJobName` names it in hints.
+ */
 export function childJobName(kind: ChildPipelineInput["kind"], target: string): string {
   return `${kind === "release" ? "build" : "preview"}-${target}`;
 }

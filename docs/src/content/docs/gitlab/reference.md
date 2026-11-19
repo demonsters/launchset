@@ -11,7 +11,7 @@ Parent pipeline, in `.gitlab/launchset.yml`:
 
 | Job | Runs in | What it does |
 | --- | --- | --- |
-| `launchset-check` | MR pipelines into the base, maintenance and prerelease branches | The changeset check and its sticky MR note. `interruptible`. |
+| `launchset-check` | MR pipelines into the base, maintenance and prerelease branches (not a fork MR's pipeline in the fork) | The changeset check and its sticky MR note. `interruptible`. |
 | `launchset-release` | Pushes, and Run pipeline / API pipelines, of the base and maintenance branches | Updates the release MR, or plans the release. Writes `plan.json`, `launchset.env`, `launchset.sh` and `launchset-child.yml`. `resource_group: launchset-release-$CI_COMMIT_REF_SLUG`, not interruptible. |
 | `launchset-build` | Same as `launchset-release` | Trigger job. Runs the child pipeline with `strategy: mirror`. Passes `PARENT_PIPELINE_ID`. |
 | `launchset-preview-plan` | MR pipelines (automatic with the label, else manual), preview and prerelease branch pushes, Run pipeline with `LAUNCHSET_PREVIEW=true` | Plans a preview or prerelease. |
@@ -58,7 +58,9 @@ Every command that produces outputs takes `--ci`. It is on by default when `GITL
 | `launchset.sh` | `LAUNCHSET_SHELL_ENV` | The same variables as `export NAME='value'`, multi-line values included. `. ./launchset.sh` loads them. |
 | `launchset-child.yml` | `LAUNCHSET_CHILD_PIPELINE` | The child pipeline. Only `release` and `preview-plan`, always. |
 
-Commands in one job merge into the same files. The plan doesn't go through the dotenv file, because GitLab limits it to 5 KB and 20 variables on self-managed (more on GitLab.com, by tier). launchset warns when `launchset.env` is over those defaults. `launchset-release` keeps `launchset.env` as a dotenv report for your own later jobs.
+Commands in one job merge into the same files. The plan doesn't go through the dotenv file, because GitLab limits it to 5 KB and 20 variables on self-managed (more on GitLab.com, by tier). `launchset-release` keeps `launchset.env` as a dotenv report for your own later jobs; `release` writes 14 variables and warns when the file is over those defaults. In the build jobs, where stamp, verify and mark add more, nothing uploads the file, so going over is only a debug message (`LAUNCHSET_DEBUG=1`).
+
+These files never count as uncommitted changes, also when they come from a parent job's artifacts (finalize needs a clean working tree for the changelog backport). Other untracked files do: launchset's jobs therefore set `cache: []`, and `launchset-release` sets `dependencies: []` so no artifacts of earlier stages land in its checkout.
 
 **Naming rule.** Every output except `plan` becomes `LAUNCHSET_` plus its name in upper snake case: `already-published` is `LAUNCHSET_ALREADY_PUBLISHED`, `release-sha` is `LAUNCHSET_RELEASE_SHA`, `dist-tag` is `LAUNCHSET_DIST_TAG`, `docker-tags` is `LAUNCHSET_DOCKER_TAGS`. The exported variables of `stamp` and `ship` (`LAUNCHSET_VERSION`, `LAUNCHSET_BUILD_NUMBER`, `LAUNCHSET_CHANNEL`) are added as they are and win on a clash. The outputs per command are in the [Action reference](/reference/action/#outputs) (same names); `launchset <command> --help` lists the main ones.
 
@@ -100,7 +102,7 @@ Pipeline events: `merge_request_event` is a check or preview of an MR; `push` is
 | `semver` build numbers | Use the run attempt | Always attempt 1: GitLab has no attempt counter. A retried plan job computes the same number, which is what a retry should upload. |
 | Concurrency | `concurrency` groups, one waiting run | `resource_group`, which keeps every waiting job. The order isn't guaranteed; the release flow handles that. |
 | Run number | `GITHUB_RUN_NUMBER` | `CI_PIPELINE_IID` |
-| Fork PRs | No secrets, skipped | No project variables, skipped |
+| Fork PRs | No secrets: no preview | No project variables: no preview, and no check in the fork's own pipeline (run the MR's pipeline in your project to check it) |
 | Bot PRs (`check.bots`) | `dependabot[bot]`, `renovate[bot]` | `renovate-bot` is also a default. Self-managed instances name their bots themselves: add yours to `check.bots`. |
 | Jobs summary | The job summary | The job log |
 | Repository path | `owner/repo` | `group/subgroup/project` (nested groups) |

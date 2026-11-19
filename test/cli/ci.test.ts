@@ -5,6 +5,8 @@ import {
   ciEnabled,
   ciVariableName,
   ciVariables,
+  DOTENV_MAX_BYTES,
+  DOTENV_MAX_VARIABLES,
   mergeVariables,
   parseDotenv,
   parseShell,
@@ -201,15 +203,19 @@ describe("--ci files", () => {
     expect(asJson.stderr).toContain("1.4.0");
   });
 
-  it("warns when the dotenv file is over GitLab's limits", async () => {
+  it("only notes a dotenv file over GitLab's limits where no job uploads it", async () => {
+    // Build jobs (stamp, verify, mark) never upload launchset.env as a dotenv report.
     const f = fixtureRepo();
     writeFileSync(
       join(f.dir, "launchset.env"),
       `${Array.from({ length: 25 }, (_, i) => `OTHER_${i}=x`).join("\n")}\n`,
     );
-    const r = await cli(["mark", "--target", "web", "--version", "1.4.0", "--ci"], { cwd: f.dir });
-    expect(r.stderr).toContain("warning:");
-    expect(r.stderr).toContain("at most 20 variables");
+    const argv = ["mark", "--target", "web", "--version", "1.4.0", "--ci"];
+    const r = await cli(argv, { cwd: f.dir });
+    expect(r.stderr).not.toContain("warning:");
+    const debug = await cli(argv, { cwd: f.dir, env: { LAUNCHSET_DEBUG: "1", NO_COLOR: "1" } });
+    expect(debug.stderr).toContain("debug: ");
+    expect(debug.stderr).toContain("at most 20 variables");
   });
 
   it("writes the files for verify", async () => {
@@ -241,6 +247,29 @@ describe("release, preview-plan, preview-comment", () => {
       LAUNCHSET_PR_NUMBER: String(github.openPrs()[0]?.number),
     });
     expect(JSON.parse(read(project.repo.dir, "plan.json"))).toMatchObject({ mode: "release-pr" });
+  });
+
+  it("release keeps its dotenv report within GitLab's limits, and warns when it isn't", async () => {
+    const project = setupProject();
+    project.push("Add offline mode", {
+      ".launchset/brave-lions-sing.md": changesetText("minor", "Add offline mode."),
+    });
+    new FakeGitHub(project.remote);
+    const argv = ["release", "--ci", "--repo", "acme/app", "--token", TOKEN];
+    const r = await cli(argv, { cwd: project.repo.dir });
+    expect(r.code).toBe(0);
+    const text = read(project.repo.dir, "launchset.env");
+    expect(Object.keys(parseDotenv(text)).length).toBeLessThanOrEqual(DOTENV_MAX_VARIABLES);
+    expect(Buffer.byteLength(text)).toBeLessThanOrEqual(DOTENV_MAX_BYTES);
+    expect(r.stderr).not.toContain("dotenv report");
+
+    writeFileSync(
+      join(project.repo.dir, "launchset.env"),
+      `${Array.from({ length: 25 }, (_, i) => `OTHER_${i}=x`).join("\n")}\n`,
+    );
+    const over = await cli(argv, { cwd: project.repo.dir });
+    expect(over.stderr).toContain("warning:");
+    expect(over.stderr).toContain("at most 20 variables");
   });
 
   it("release without --ci writes no files", async () => {
@@ -295,7 +324,14 @@ describe("release, preview-plan, preview-comment", () => {
     const bad = await cli(["status", "--repo", "justone"], { cwd: f.dir });
     expect(bad.code).toBe(2);
     expect(bad.stderr).toContain("is not owner/repo");
-    const nested = await cli(["status", "--repo", "group/sub/project"], { cwd: f.dir });
+    const nested = await cli(["status", "--repo", "group/sub/project"], {
+      cwd: f.dir,
+      env: { LAUNCHSET_HOST: "gitlab" },
+    });
     expect(nested.stderr).not.toContain("is not owner/repo");
+    // GitHub has no nested paths: still a usage error there, as before GitLab support.
+    const onGitHub = await cli(["status", "--repo", "group/sub/project"], { cwd: f.dir });
+    expect(onGitHub.code).toBe(2);
+    expect(onGitHub.stderr).toContain("is not owner/repo");
   });
 });

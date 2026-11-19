@@ -20,7 +20,7 @@
  */
 
 import { execFile } from "node:child_process";
-import { posix } from "node:path";
+import { posix, relative, sep } from "node:path";
 import { EXPECTED_ERROR } from "../core/errors.ts";
 import { forgeHints, GITLAB_JOB_TOKEN_PUSH, gitPushHints } from "../core/forge-hints.ts";
 import { DEFAULT_SERVER_URLS, type ForgeHost } from "../core/forge-links.ts";
@@ -53,6 +53,11 @@ export interface GitOptions {
    * an API call).
    */
   identity?: GitIdentity | (() => Promise<GitIdentity>);
+  /**
+   * Files launchset itself writes or receives in this run (absolute paths; the CLI's `--ci`
+   * files such as plan.json): {@link Git.isClean} doesn't count them.
+   */
+  ownFiles?: readonly string[];
 }
 
 export interface RunOptions {
@@ -485,6 +490,7 @@ export class Git {
   #resolvedIdentity: Promise<GitIdentity> | undefined;
   readonly #token: string | undefined;
   readonly #secrets: string[];
+  readonly #ownFiles: readonly string[];
   #prefix: Promise<string> | undefined;
   #remoteUrl: string | undefined;
 
@@ -495,6 +501,7 @@ export class Git {
     this.serverUrl = normalizeServerUrl(options.serverUrl, this.host);
     this.#identity = options.identity ?? LAUNCHSET_IDENTITY;
     this.#token = options.token || undefined;
+    this.#ownFiles = options.ownFiles ?? [];
     this.#secrets = [];
     if (this.#token) {
       this.#secrets.push(
@@ -1166,9 +1173,22 @@ export class Git {
     throw this.error(args, result);
   }
 
-  /** True when the working tree and index have no changes (untracked files count). */
+  /**
+   * True when the working tree and index have no changes (untracked files count, except
+   * `ownFiles`).
+   */
   async isClean(): Promise<boolean> {
-    const out = await this.run(["status", "--porcelain", "-z"], { raw: true });
+    const excluded: string[] = [];
+    for (const file of this.#ownFiles) {
+      try {
+        const path = await this.toRepoPath(relative(this.cwd, file).split(sep).join("/"));
+        excluded.push(`:(top,exclude,literal)${path}`);
+      } catch {
+        // Outside the repository: git never lists it.
+      }
+    }
+    const pathspecs = excluded.length > 0 ? ["--", ":(top)", ...excluded] : [];
+    const out = await this.run(["status", "--porcelain", "-z", ...pathspecs], { raw: true });
     return out.length === 0;
   }
 

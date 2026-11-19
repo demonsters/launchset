@@ -24,12 +24,12 @@ export const CI_OUTPUT_NOTE = [
   "A CI runner without the GitHub Action gets a command's results as files, written to the working directory after the command ran (also when it failed, not when it crashed):",
   "",
   "- `plan.json` (`LAUNCHSET_PLAN_FILE`): the plan JSON, written when the command produced a plan. Pass it on with `--plan @plan.json`.",
-  "- `launchset.env` (`LAUNCHSET_DOTENV`): GitLab `artifacts:reports:dotenv` format, one `NAME=value` per line. Values with a line break are left out. GitLab accepts at most 5 KB and (by default) 20 variables, and launchset warns when the file is over that.",
-  "- `launchset.sh` (`LAUNCHSET_SHELL_ENV`): the same variables as `export NAME='value'` lines, including multi-line values. Run `launchset stamp --target web --plan @plan.json --ci && . ./launchset.sh` and later script lines see `$LAUNCHSET_VERSION`.",
+  "- `launchset.env` (`LAUNCHSET_DOTENV`): GitLab `artifacts:reports:dotenv` format, one `NAME=value` per line. Values with a line break are left out. GitLab accepts at most 5 KB and (by default) 20 variables in a dotenv report; `release`, whose file the GitLab templates upload as one, warns when it is over that.",
+  "- `launchset.sh` (`LAUNCHSET_SHELL_ENV`): the same variables as `export NAME='value'` lines, including multi-line values. Run `launchset stamp --target web --plan @plan.json --ci`, then `. ./launchset.sh` as the next script line, and later lines see `$LAUNCHSET_VERSION`. Keep them two lines, not `a && b`: CI shells run with `set -e`, which ignores a failure on the left of `&&`.",
   "",
   "Every output except `plan` becomes `LAUNCHSET_` plus its name in upper snake case: `already-published` is `LAUNCHSET_ALREADY_PUBLISHED`, `build-number` is `LAUNCHSET_BUILD_NUMBER`, `release-sha` is `LAUNCHSET_RELEASE_SHA`. The exported variables of `stamp` and `ship` (`LAUNCHSET_VERSION`, `LAUNCHSET_BUILD_NUMBER`, `LAUNCHSET_CHANNEL`) are added as they are and win on a clash.",
   "",
-  "Commands that run in one job (`stamp`, then `verify`, then `mark`) merge into the same files: variables a command sets are replaced, the others stay. With `--ci` the job summary is printed after the result lines (on stderr with `--json`).",
+  "Commands that run in one job (`stamp`, then `verify`, then `mark`) merge into the same files: variables a command sets are replaced, the others stay. With `--ci` the job summary is printed after the result lines (on stderr with `--json`), and these files (also a `plan.json` from a parent job's artifacts) don't count as uncommitted changes for the commands that need a clean working tree.",
 ].join("\n");
 
 export const CLI_INTROS: Record<string, string> = {

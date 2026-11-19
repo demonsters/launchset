@@ -46,7 +46,7 @@ In **Settings → CI/CD → Variables**, add a variable:
 Don't mark `LAUNCHSET_TOKEN` as **Protected**. Protected variables are only passed to pipelines of protected branches and tags. MR pipelines run on the source branch, which is usually not protected, so the PR check couldn't post its note and MR previews couldn't comment. If you protect it anyway, the release jobs on the base branch still work, but the checks don't.
 :::
 
-Fork MR pipelines run without your project's variables. launchset can't be installed there (see [`NPM_TOKEN`](#npm_token)) and the check fails. That is the same trade-off as a fork PR on GitHub: no secrets for forks. Forks get no previews either.
+A fork MR's pipeline runs in the fork, without your project's variables, so launchset can't be installed there (see [`NPM_TOKEN`](#npm_token)). `launchset-check` therefore skips those pipelines. To check a fork MR, run its pipeline in your project (**Run pipeline** on the MR's **Pipelines** tab), which has your variables. Forks get no previews.
 
 ## Why Maintainer
 
