@@ -1,6 +1,6 @@
 ---
 name: launchset-adopt
-description: Use when asked to set up launchset in a repo, move a repo to launchset, migrate a repo from Changesets, tag-triggered release workflows or hand-made release scripts to launchset, or adopt "one version, many targets" releases (Docker, Android, iOS, web). Covers the whole procedure: detect, ask the human the right questions, retire conflicting release machinery, run launchset init with decisions, and open one PR. Not for working in a repo that already uses launchset (that is the launchset skill).
+description: Use when asked to set up launchset in a repo, move a repo to launchset, migrate a repo from Changesets, tag-triggered release workflows or hand-made release scripts to launchset, or adopt "one version, many targets" releases (Docker, Android, iOS, web), including repos that also publish independently versioned npm packages with Changesets. Covers the whole procedure: detect, ask the human the right questions, retire conflicting release machinery, run launchset init with decisions, and open one PR. Not for working in a repo that already uses launchset (that is the launchset skill).
 ---
 
 # Move a repo to launchset
@@ -77,7 +77,7 @@ The decision ids and values:
 launchset pushes its tags and creates GitHub Releases with a GitHub App token, which **does** start other workflows. Look at `detection.machinery[]` and read the files. Explain each in plain words, with `path:line`:
 
 - **Tag-triggered workflows** (`on: push: tags: v*` and similar): they would fire again on launchset's release tag and build or publish twice.
-- **Changesets**: `changesets/action`, `changeset version|status|publish|tag` in workflows or `package.json` scripts, `@changesets/write`. launchset's release PR replaces them.
+- **Changesets**: `changesets/action`, `changeset version|status|publish|tag` in workflows or `package.json` scripts, `@changesets/write`. launchset's release PR replaces them. Exception: when Changesets also publishes npm packages that have their own versions, it stays for those packages (see "Repos that also publish npm packages" below).
 - **Other release tools** (semantic-release, release-it, standard-version, release-please) and steps that create tags or GitHub Releases (`git tag`, `gh release create`): launchset's finalize creates `v<version>`.
 - **Scripts that write version or build numbers** (`MARKETING_VERSION`, `CURRENT_PROJECT_VERSION`, `versionCode`, `versionName`, fastlane version actions): they would overwrite the numbers stamped in CI.
 - **Docker pushes of `latest` on branch pushes**: launchset moves `latest` only when a release ships.
@@ -145,9 +145,22 @@ Everything goes in **one PR**. Its description lists:
 
 Don't merge it. Merging may start a release if the PR changed the root version of a version without a release tag.
 
+## Repos that also publish npm packages
+
+Some repos have something launchset should release (a Docker image, web or mobile apps) **and** npm packages that each have their own version, usually published with Changesets (public SDKs, a CLI, plugins). Don't stop, and don't put those packages on the one version: their version numbers would stop meaning anything to the people who install them. Propose the hybrid setup from the docs page "Alongside Changesets": launchset releases the one version and its targets, Changesets keeps versioning and publishing the npm packages. Each package is released by one tool, never both, so an npm package that Changesets publishes is never a launchset target.
+
+Tell the human what this means and ask them to confirm. Then:
+
+- **Version file.** Ask which `package.json` holds the one version: the workspace root (the default; Changesets never versions the root) or the app's own private package. For the second, set `version.file` and `changelog.file` in `launchset.config.ts` after init (for example `apps/app/package.json` and `apps/app/CHANGELOG.md`). `init` always writes the root.
+- **Machinery.** Answer `keep` for every Changesets step and script that versions, checks or publishes the npm packages (`changesets/action`, `changeset version|status|publish`, pre-mode checks). Then edit those workflows by hand and move what launchset does now into `launchset-release.yml`: Docker build and push, deploys, tags and GitHub Releases for the app, steps that read the app version from a `package.json`. Other machinery (tag triggers, release scripts for the app) is handled as in Step 3.
+- **Changesets config.** In `.changeset/config.json`, set `"privatePackages": { "version": false, "tag": false }`, so Changesets stops versioning and tagging the private app packages and `changeset status` only asks for a `.changeset` file when a public package changed.
+- **Converted changesets.** `init` converts every pending `.changeset/*.md`. Delete the `.launchset/` copies of files that only named npm packages (or set them to `bump: none`), and check the bump of files that named the app. The originals stay in `.changeset/`. Don't follow init's hint to delete that folder.
+- **The PR check.** Add `if: ${{ !startsWith(github.head_ref, 'changeset-release/') }}` to the `check` job in `launchset-check.yml`, so Changesets' Version Packages PR passes. A job `if`, not a `branches-ignore` filter: a skipped job counts as passed for a required check. Don't add `github-actions[bot]` to `check.bots`: every merged bot PR gets a `patch` entry and would release the app.
+- **The PR description** says that Changesets stays for the npm packages, and how a PR that changes a package now needs both a `.changeset/` file and a `.launchset/` changeset.
+
 ## Out of scope: say why, don't migrate
 
-- **Independently versioned packages** (per-package npm releases in a workspace, like Changesets does): launchset has one version per repo.
+- **Only independently versioned packages** (per-package npm releases in a workspace, like Changesets does), with nothing that shares one version: launchset has one version per repo. A repo with an app as well gets the hybrid setup above.
 - **Build services outside GitHub Actions** (Xcode Cloud, Codemagic) and other CI systems: v1 is GitHub Actions only. Expo EAS is supported with `buildNumber: { strategy: "eas" }`.
 - Repos with no shared version for their parts.
 

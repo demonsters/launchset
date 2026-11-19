@@ -14,6 +14,7 @@ This repo is released with [launchset](https://demonsters.github.io/launchset/):
 
 - **Bump:** `major` breaks users or API clients, `minor` adds a feature, `patch` fixes a bug, `none` needs no release.
 - **Summary:** one user-facing line for the changelog, no PR number. One changeset per change, not per commit. Edit an existing pending changeset when your work extends it.
+- **Repos that also use Changesets** (a `.changeset/` folder): npm packages with their own versions are released with Changesets. A PR that changes one needs a `.changeset/` file for the package **and** the `.launchset/` changeset. The launchset bump is about the launchset targets: `none` when no target uses the package, otherwise usually `patch`. Don't edit or merge the `Version Packages` PR (branch `changeset-release/*`) unless asked.
 - **Pushing straight to the base branch:** make sure a changeset covers the work before you push. `npx @demonsters/launchset status` shows what is pending.
 - **Never** edit version numbers, build numbers or `CHANGELOG.md` by hand. Never create tags starting with `v` or `launchset/` (or what `tags` sets in the launchset config). Never edit or push to the release PR (branch `launchset/release/*`), and don't merge it unless asked.
 - On a `release/X.Y.x` branch (or what `maintenanceBranches` sets) only `patch` or `none` is allowed.

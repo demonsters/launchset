@@ -218,7 +218,9 @@ Then **move the team's own build steps** into `launchset-release.yml`: the `dock
 
 `.changeset/config.json` and `README.md` are left alone, and the folder is not deleted. init tells you it can go. Converting twice is safe.
 
-Then retire the Changesets pipeline (the `changesets/action` workflow, `changeset` scripts in `package.json`). `init` offers to disable them. In a monorepo that publishes several npm packages independently, launchset is the wrong tool: it has one version per repo.
+Then retire the Changesets pipeline (the `changesets/action` workflow, `changeset` scripts in `package.json`). `init` offers to disable them.
+
+Does the repo also publish npm packages that each have their own version, next to the app? Then don't retire Changesets: keep it for those packages and let launchset release the rest. See [Alongside Changesets](/guides/with-changesets/).
 
 ### Pre mode
 
@@ -279,4 +281,4 @@ The other skill, `launchset` (installed into repos by `init` as `.claude/skills/
 
 ## Out of scope
 
-Repos where every package is versioned and published independently (per-package npm releases) don't fit: launchset has one version per repo. Build services outside GitHub Actions (Xcode Cloud, Codemagic) aren't covered either. Expo EAS is: see [Expo](/targets/expo/).
+Repos where every package is versioned and published independently (per-package npm releases), with nothing that shares one version, don't fit: launchset has one version per repo. A repo with an app **and** independently versioned npm packages does fit: launchset releases the app, Changesets keeps the packages. See [Alongside Changesets](/guides/with-changesets/). Build services outside GitHub Actions (Xcode Cloud, Codemagic) aren't covered either. Expo EAS is: see [Expo](/targets/expo/).
