@@ -1,0 +1,12 @@
+{
+  "name": "zing",
+  "version": "5.7.43",
+  "private": true,
+  "workspaces": ["apps/*"],
+  "scripts": {
+    "build": "turbo run build"
+  },
+  "devDependencies": {
+    "turbo": "^2.0.0"
+  }
+}

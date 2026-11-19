@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,9 +13,11 @@ import { packageFile, packageRoot } from "../../src/init/package-files.ts";
 import { applyRetirement, removeSegments } from "../../src/init/retire.ts";
 import {
   dockerBuilds,
+  githubFileWrite,
   metadataTagTemplates,
   parseWorkflow,
   tagTemplate,
+  tokens,
   type Workflow,
 } from "../../src/init/workflow-scan.ts";
 
@@ -100,6 +103,59 @@ describe("docker tag templates from workflows", () => {
     expect(tagTemplate("latest", "v")).toBe("latest");
     expect(tagTemplate("staging", "v")).toBeNull();
     expect(tagTemplate(`\${{ env.BRANCH }}`, "v")).toBeNull();
+    // The full ref minus `refs/<kind>/` is the pushed tag, `v` included.
+    expect(tagTemplate(`\${GITHUB_REF#refs/*/}`, "v")).toBe("v{version}");
+    expect(tagTemplate(`\${GITHUB_REF_NAME}`, "v")).toBe("v{version}");
+    expect(tagTemplate(`\${GITHUB_REF_NAME#v}`, "v")).toBe("{version}");
+    expect(tagTemplate(`\${GITHUB_REF#refs/*/v}`, "v")).toBe("{version}");
+  });
+
+  it("follows variables to what they're set to", () => {
+    const ctx = {
+      env: { RELEASE_VERSION: `\${GITHUB_REF#refs/*/}`, VERSION: `\${GITHUB_REF#refs/tags/v}` },
+      outputs: { "meta.tag": `\${{ github.ref_name }}` },
+    };
+    expect(tagTemplate(`\${{ env.RELEASE_VERSION }}`, "v", ctx)).toBe("v{version}");
+    expect(tagTemplate("$RELEASE_VERSION", "v", ctx)).toBe("v{version}");
+    expect(tagTemplate(`\${{ env.VERSION }}`, "v", ctx)).toBe("{version}");
+    expect(tagTemplate(`\${{ steps.meta.outputs.tag }}`, "v", ctx)).toBe("v{version}");
+    // Unknown variables keep the name-based guess.
+    expect(tagTemplate(`\${{ env.APP_VERSION }}`, "v", ctx)).toBe("{version}");
+  });
+
+  it("reads variables written to $GITHUB_ENV and $GITHUB_OUTPUT", () => {
+    expect(githubFileWrite(`echo "RELEASE_VERSION=\${GITHUB_REF#refs/*/}" >> $GITHUB_ENV`)).toEqual(
+      {
+        file: "GITHUB_ENV",
+        name: "RELEASE_VERSION",
+        value: `\${GITHUB_REF#refs/*/}`,
+      },
+    );
+    expect(githubFileWrite(`echo tag=\${GITHUB_REF_NAME} >> "\${GITHUB_OUTPUT}"`)).toEqual({
+      file: "GITHUB_OUTPUT",
+      name: "tag",
+      value: `\${GITHUB_REF_NAME}`,
+    });
+    expect(githubFileWrite("echo done")).toBeUndefined();
+  });
+
+  it(`splits commands into words, keeping \${{ … }} expressions whole`, () => {
+    expect(
+      tokens(
+        `docker build -t "ghcr.io/o/web:\${{ env.V }}" -f ./Dockerfile . --build-arg T=\${{ secrets.T }}`,
+      ),
+    ).toEqual([
+      "docker",
+      "build",
+      "-t",
+      `ghcr.io/o/web:\${{ env.V }}`,
+      "-f",
+      "./Dockerfile",
+      ".",
+      "--build-arg",
+      `T=\${{ secrets.T }}`,
+    ]);
+    expect(tokens(`echo it's`)).toEqual(["echo", "it's"]);
   });
 
   it("reads docker/metadata-action tags and flavor", () => {
@@ -291,6 +347,36 @@ describe("other machinery", () => {
 });
 
 describe("hooks", () => {
+  it("finds husky only when it's a dependency or .husky/ has hooks, and never in an ignored path", async () => {
+    const pkg = (extra = "") => `{\n  "name": "x"${extra}\n}\n`;
+    // Only husky's generated `_` folder, husky not a dependency: what removing husky leaves.
+    expect(
+      await detectHooks(
+        tempDir({ "package.json": pkg(), ".husky/_/pre-push": "git lfs pre-push\n" }),
+      ),
+    ).toEqual([]);
+    const husky = { tool: "husky", path: ".husky/pre-push", installed: false };
+    expect(
+      await detectHooks(
+        tempDir({
+          "package.json": pkg(',\n  "devDependencies": { "husky": "^9.0.0" }'),
+          ".husky/_/pre-push": "",
+        }),
+      ),
+    ).toEqual([husky]);
+    expect(
+      await detectHooks(tempDir({ "package.json": pkg(), ".husky/pre-commit": "pnpm lint\n" })),
+    ).toEqual([husky]);
+    // A gitignored .husky/ can't hold a committed hook, whatever else says husky is set up.
+    const ignored = tempDir({
+      "package.json": pkg(',\n  "devDependencies": { "husky": "^9.0.0" }'),
+      ".husky/pre-commit": "pnpm lint\n",
+      ".gitignore": ".husky/\n",
+    });
+    execFileSync("git", ["init", "--quiet"], { cwd: ignored });
+    expect(await detectHooks(ignored)).toEqual([]);
+  });
+
   it("adds the command to lefthook configs with and without a pre-push section", () => {
     expect(addLefthookCommand("pre-push:\n  commands:\n    test:\n      run: pnpm test\n")).toBe(
       "pre-push:\n  commands:\n    launchset:\n      run: npx @demonsters/launchset check --push\n    test:\n      run: pnpm test\n",

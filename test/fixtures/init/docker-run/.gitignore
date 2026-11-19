@@ -1,0 +1,5 @@
+node_modules/
+# A local build output with copies of the apps (and their Dockerfiles).
+out/
+# husky was removed; what's left in .husky/ is generated.
+.husky/

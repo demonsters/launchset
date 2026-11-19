@@ -6,7 +6,16 @@ import { loadConfig } from "../../src/config/load.ts";
 import { type InitDetectJson, runInit } from "../../src/init/index.ts";
 import { packageFile } from "../../src/init/package-files.ts";
 import { checkConsistency } from "../../src/platforms/index.ts";
-import { collect, fixture, fixtureRepo, git, options, read, status } from "./helpers.ts";
+import {
+  collect,
+  dockerRunRepo,
+  fixture,
+  fixtureRepo,
+  git,
+  options,
+  read,
+  status,
+} from "./helpers.ts";
 
 /** Replace `from` (which must occur exactly once) with `to`. */
 function edit(text: string, from: string, to: string): string {
@@ -52,10 +61,12 @@ export default defineConfig({
     // Built from Dockerfile (context .).
     // Tags as .github/workflows/docker.yml pushes today.
     // The image files are deploy manifests the release PR updates.
+    // verify: a re-run skips the build when the release tag is already pushed.
     docker: {
       type: "docker",
       image: "ghcr.io/demonsters/api",
       tags: ["v{version}", "latest"],
+      verify: ["registry"],
       files: [
         { path: "deploy/k8s/api.yaml", kind: "image" },
       ],
@@ -351,10 +362,12 @@ export default defineConfig({
   targets: {
     // Built from Dockerfile (context .).
     // Tags as .github/workflows/docker.yml pushes today.
+    // verify: a re-run skips the build when the release tag is already pushed.
     docker: {
       type: "docker",
       image: "ghcr.io/acme/app",
       tags: ["{version}", "sha-{shortSha}", "latest"],
+      verify: ["registry"],
     },
     // Shipped on demand: start the release workflow by hand with this target, or run \`launchset ship\`.
     android: {
@@ -413,6 +426,68 @@ export default defineConfig({
 `);
     const { config } = await loadConfig(dir);
     expect(config.buildNumber.offset).toBe(920000);
+  });
+});
+
+describe("init --yes: docker build run steps with expression build args", () => {
+  it("writes the real context, the v tags and registry verify, and no hook", async () => {
+    const dir = dockerRunRepo();
+    await runInit(options(dir, { yes: true }));
+
+    const config = read(dir, "launchset.config.ts");
+    expect(config).toContain(`    // Built from apps/web/Dockerfile (context .).
+    // Tags as .github/workflows/docker-image.yml pushes today.
+    // verify: a re-run skips the build when the release tag is already pushed.
+    "docker-web": {
+      type: "docker",
+      image: "ghcr.io/demonsters/zing/web",
+      tags: ["v{version}"],
+      verify: ["registry"],
+    },
+`);
+    expect(config).not.toContain("}}");
+    const { config: loaded } = await loadConfig(dir);
+    expect(loaded.targets["docker-web"]).toMatchObject({
+      tags: { release: ["v{version}"] },
+      verify: ["registry"],
+    });
+    expect(loaded.targets.digests).toMatchObject({ verify: ["registry"] });
+
+    for (const file of ["launchset-release.yml", "launchset-preview.yml"]) {
+      const workflow = read(dir, `.github/workflows/${file}`);
+      const builds = (
+        parseYaml(workflow) as {
+          jobs: Record<string, { steps?: { uses?: string; with?: Record<string, string> }[] }>;
+        }
+      ).jobs;
+      const contexts = Object.values(builds)
+        .flatMap((job) => job.steps ?? [])
+        .filter((step) => step.uses?.startsWith("docker/build-push-action"))
+        .map((step) => [step.with?.context, step.with?.file]);
+      expect(contexts, file).toEqual([
+        [".", "apps/digests/Dockerfile"],
+        [".", "apps/web/Dockerfile"],
+      ]);
+    }
+
+    // No hook was written into the gitignored .husky/, and none of the ignored files changed.
+    expect(existsSync(join(dir, ".husky/pre-push"))).toBe(false);
+    expect(status(dir).filter((line) => /\.husky|out\//.test(line))).toEqual([]);
+  });
+
+  it("leaves registry verify out when decided", async () => {
+    const dir = dockerRunRepo();
+    await runInit(options(dir, { yes: true, decide: { "docker.digests.verify": "no" } }));
+    const { config } = await loadConfig(dir);
+    expect(config.targets.digests?.verify).toEqual([]);
+    expect(config.targets["docker-web"]?.verify).toEqual(["registry"]);
+  });
+
+  it("--hook finds no hook setup to add to", async () => {
+    const dir = dockerRunRepo();
+    await expect(runInit(options(dir, { yes: true, hook: true }))).rejects.toThrow(
+      "--hook: no pre-push hook setup found",
+    );
   });
 });
 

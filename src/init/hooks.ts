@@ -3,11 +3,11 @@
  * simple-git-hooks, husky or lefthook setup. Never sets up a hook tool that isn't there.
  */
 
-import { chmod, writeFile } from "node:fs/promises";
+import { chmod, readdir, writeFile } from "node:fs/promises";
 import { applyEdits, findNodeAtLocation, modify, parseTree } from "jsonc-parser";
 import { isMap, parseDocument, type YAMLMap } from "yaml";
 import { detectEol, lineStart } from "../core/text.ts";
-import { absolute, isDirectory, readTextOrNull } from "./fs.ts";
+import { absolute, gitIgnored, isDirectory, readTextOrNull } from "./fs.ts";
 import { jsonFormatting } from "./text-edit.ts";
 import type { Change, DetectedHook } from "./types.ts";
 
@@ -19,15 +19,41 @@ const installed = (text: string | null | undefined) =>
 const LEFTHOOK_FILES = ["lefthook.yml", "lefthook.yaml", ".lefthook.yml", ".lefthook.yaml"];
 const SIMPLE_GIT_HOOKS_FILES = [".simple-git-hooks.json", "simple-git-hooks.json"];
 
-/** Hook setups in the repo root. */
+const DEPENDENCY_KEYS = ["dependencies", "devDependencies", "optionalDependencies"];
+
+/**
+ * husky is set up: it's a dependency, or `.husky/` has hook scripts. A `.husky/` with only
+ * husky's generated `_` folder is what's left after husky was removed (or what a global
+ * install leaves), not a setup this repo shares.
+ */
+async function huskySetUp(root: string, tree: ReturnType<typeof parseTree>): Promise<boolean> {
+  if (!(await isDirectory(absolute(root, ".husky")))) return false;
+  if (tree && DEPENDENCY_KEYS.some((k) => findNodeAtLocation(tree, [k, "husky"]))) return true;
+  const entries = await readdir(absolute(root, ".husky"));
+  return entries.some((e) => e !== "_" && e !== ".gitignore");
+}
+
+/**
+ * Hook setups in the repo root. Hook files git ignores are left out: a hook written there could
+ * never be committed.
+ */
 export async function detectHooks(root: string): Promise<DetectedHook[]> {
+  const found = await findHooks(root);
+  const ignored = await gitIgnored(
+    root,
+    found.map((h) => h.path),
+  );
+  return found.filter((h) => !ignored.has(h.path));
+}
+
+async function findHooks(root: string): Promise<DetectedHook[]> {
   const hooks: DetectedHook[] = [];
-  if (await isDirectory(absolute(root, ".husky"))) {
+  const pkgText = await readTextOrNull(absolute(root, "package.json"));
+  const tree = pkgText ? parseTree(pkgText) : undefined;
+  if (await huskySetUp(root, tree)) {
     const text = await readTextOrNull(absolute(root, ".husky/pre-push"));
     hooks.push({ tool: "husky", path: ".husky/pre-push", installed: installed(text) });
   }
-  const pkgText = await readTextOrNull(absolute(root, "package.json"));
-  const tree = pkgText ? parseTree(pkgText) : undefined;
   const sgh = tree ? findNodeAtLocation(tree, ["simple-git-hooks"]) : undefined;
   if (sgh?.type === "object") {
     const pre = findNodeAtLocation(sgh, ["pre-push"]);

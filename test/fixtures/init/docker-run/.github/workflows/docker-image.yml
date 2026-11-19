@@ -1,0 +1,27 @@
+name: Docker image
+
+on:
+  push:
+    tags:
+      - v*.*.*
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set releaseversion
+        run: echo "RELEASE_VERSION=${GITHUB_REF#refs/*/}" >> $GITHUB_ENV
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+      - name: Build and push web image
+        run: |
+          docker build -t "ghcr.io/demonsters/zing/web:${{ env.RELEASE_VERSION }}" -f ./apps/web/Dockerfile . --build-arg TURBO_TOKEN=${{ secrets.TURBO_TOKEN }} --build-arg REDIS_HOST=${{ secrets.REDIS_HOST }} --build-arg REDIS_PORT=${{ secrets.REDIS_PORT }}
+          docker push "ghcr.io/demonsters/zing/web:${{ env.RELEASE_VERSION }}"
+      - name: Build and push digests image
+        run: |
+          docker build -t "ghcr.io/demonsters/zing/digests:${{ env.RELEASE_VERSION }}" -f ./apps/digests/Dockerfile . --build-arg TURBO_TOKEN=${{ secrets.TURBO_TOKEN }}
+          docker push "ghcr.io/demonsters/zing/digests:${{ env.RELEASE_VERSION }}"

@@ -63,6 +63,8 @@ export function buildConfig(ctx: DetectContext, answers: Answers): ConfigPlan {
       entry.image = images.length === 1 ? images[0] : images;
       const tags = parseTagList(answers[`docker.${t.name}.tags`] ?? "default");
       if (tags !== "default") entry.tags = tags;
+      const verify = (answers[`docker.${t.name}.verify`] ?? "yes") === "yes";
+      if (verify) entry.verify = ["registry"];
       notes.push(`Built from ${t.docker.dockerfile} (context ${t.docker.context}).`);
       if (tags !== "default" && t.docker.tags && tags.join(",") === t.docker.tags.join(",")) {
         const e = t.docker.evidence[0];
@@ -81,6 +83,8 @@ export function buildConfig(ctx: DetectContext, answers: Answers): ConfigPlan {
       if (files.some((f) => f.kind === "image"))
         notes.push("The image files are deploy manifests the release PR updates.");
       if (files.length > 0) entry.files = files;
+      if (verify)
+        notes.push("verify: a re-run skips the build when the release tag is already pushed.");
       const hint: { dockerfile?: string; context?: string; platforms?: string } = {
         dockerfile: t.docker.dockerfile,
         context: t.docker.context,

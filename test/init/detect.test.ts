@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { type InitDetectJson, runInit } from "../../src/init/index.ts";
-import { collect, fixtureRepo, options, status } from "./helpers.ts";
+import { collect, dockerRunRepo, fixtureRepo, options, status } from "./helpers.ts";
 
 async function detectJson(dir: string): Promise<InitDetectJson> {
   const out = collect();
@@ -85,6 +85,7 @@ describe("init --detect --json: tag-triggered docker workflow with v-prefixed ta
       "target.web",
       "docker.docker.image",
       "docker.docker.tags",
+      "docker.docker.verify",
       "machinery..github/workflows/docker.yml#1",
       "image.deploy/k8s/api.yaml",
       "image.deploy/production/api.yaml",
@@ -388,5 +389,60 @@ describe("init --detect --json: workspace", () => {
     expect(decision(json, "baseline").options).toEqual([
       { value: "no", label: "No (not a git repository with commits)" },
     ]);
+  });
+});
+
+describe("init --detect --json: docker build run steps with expression build args", () => {
+  it(`reads the context past \${{ … }} build args, not the expression's closing }}`, async () => {
+    const json = await detectJson(dockerRunRepo());
+    const docker = json.detection.targets.filter((t) => t.type === "docker");
+    expect(docker.map((t) => [t.docker?.dockerfile, t.docker?.context, t.docker?.image])).toEqual([
+      ["apps/digests/Dockerfile", ".", "ghcr.io/demonsters/zing/digests"],
+      ["apps/web/Dockerfile", ".", "ghcr.io/demonsters/zing/web"],
+    ]);
+  });
+
+  it("keeps the v of image tags taken from the pushed git tag through $GITHUB_ENV", async () => {
+    const json = await detectJson(dockerRunRepo());
+    for (const t of json.detection.targets.filter((t) => t.type === "docker")) {
+      expect(t.docker?.tags).toEqual(["v{version}"]);
+      expect(decision(json, `docker.${t.name}.tags`)).toMatchObject({
+        default: "v{version}",
+        options: [
+          { value: "v{version}", label: "v{version} (as pushed today)" },
+          { value: "default", label: "default: {version}, {major}.{minor}, {major}, latest" },
+          {
+            value: "v{version}, v{major}.{minor}, v{major}, latest",
+            label: "v-prefixed: v{version}, v{major}.{minor}, v{major}, latest",
+          },
+        ],
+      });
+    }
+  });
+
+  it("checks the registry before building by default", async () => {
+    const json = await detectJson(dockerRunRepo());
+    expect(decision(json, "docker.digests.verify")).toMatchObject({
+      default: "yes",
+      options: [
+        { value: "yes", label: "Yes" },
+        { value: "no", label: "No" },
+      ],
+      ask: false,
+      onlyIf: { id: "target.digests", values: ["auto", "manual"] },
+    });
+  });
+
+  it("finds no hook setup in a gitignored .husky/ with only husky's generated _ folder", async () => {
+    const json = await detectJson(dockerRunRepo());
+    expect(json.detection.hooks).toEqual([]);
+    expect(json.decisions.some((d) => d.id === "hook")).toBe(false);
+  });
+
+  it("skips Dockerfiles in gitignored folders", async () => {
+    const json = await detectJson(dockerRunRepo());
+    const dockerfiles = json.detection.targets.map((t) => t.docker?.dockerfile).filter(Boolean);
+    expect(dockerfiles).not.toContain("out/apps/web/Dockerfile");
+    expect(dockerfiles).toHaveLength(2);
   });
 });

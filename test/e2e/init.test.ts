@@ -84,6 +84,7 @@ describe("init --detect --json", () => {
       "target.web",
       "docker.docker.image",
       "docker.docker.tags",
+      "docker.docker.verify",
       "machinery..github/workflows/docker.yml#1",
       "image.deploy/k8s/api.yaml",
       "image.deploy/production/api.yaml",
@@ -146,7 +147,7 @@ describe("init --yes --decide", () => {
     expectOk(await cli(["init", "--yes"], { cwd: dir }));
     const config = read(dir, "launchset.config.ts");
     expect(config).toContain(
-      'docker: { type: "docker", image: "ghcr.io/demonsters/api", tags: ["v{version}", "latest"] }',
+      'type: "docker",\n      image: "ghcr.io/demonsters/api",\n      tags: ["v{version}", "latest"],\n      verify: ["registry"],\n',
     );
     expect(config).not.toContain("web:");
     // Disabled, not deleted: the push trigger is gone, the workflow stays.

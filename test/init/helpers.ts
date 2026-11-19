@@ -131,3 +131,24 @@ export function repoFrom(files: Record<string, string>, options: RepoOptions = {
   if (options.remote) git(dir, "remote", "add", "origin", options.remote);
   return dir;
 }
+
+/**
+ * The docker-run fixture: `docker build` run steps in a `v*.*.*` workflow that tag images with
+ * the full git tag (`RELEASE_VERSION=${GITHUB_REF#refs/*\/}`), `${{ secrets.X }}` build args
+ * after the context, and gitignored leftovers: husky's generated `.husky/_` and an `out/` copy
+ * of the apps. Found while adopting launchset in a monorepo.
+ */
+export function dockerRunRepo(): string {
+  const dir = fixtureRepo("docker-run", { tags: ["v5.7.43"] });
+  // Untracked and gitignored, like the real leftovers (the fixture's .gitignore ignores them).
+  const ignored: Record<string, string> = {
+    ".husky/_/husky.sh": "#!/usr/bin/env sh\n",
+    ".husky/_/pre-push": '#!/bin/sh\ngit lfs pre-push "$@"\n',
+    "out/apps/web/Dockerfile": "FROM node:24-alpine\n",
+  };
+  for (const [path, text] of Object.entries(ignored)) {
+    mkdirSync(dirname(join(dir, path)), { recursive: true });
+    writeFileSync(join(dir, path), text);
+  }
+  return dir;
+}

@@ -63,6 +63,7 @@ The decision ids and values:
 | `target.<name>` | `auto`, `manual`, `none` | How a detected platform is released. |
 | `docker.<name>.image` | image name without a tag | Read from existing workflows, otherwise a guess (`ask`). |
 | `docker.<name>.tags` | `default` or a comma-separated list of templates | Keep the existing tag pattern, for example `v{version}, v{major}.{minor}, v{major}, latest`. |
+| `docker.<name>.verify` | `yes`, `no` | Default `yes`: `verify: ["registry"]`, so a re-run skips an image that is already pushed. |
 | `machinery.<path>#<n>` | `remove`, `disable`, `keep` | What to do with one piece of conflicting machinery. Copy the exact `id` from the JSON (a path starting with a dot gives `machinery..github/workflows/x.yml#1`). |
 | `image.<path>` | `stamp`, `leave` | Whether the release PR updates the image tag a deploy manifest pins. |
 | `file.<path>` | `keep`, `overwrite` | A file init would write already exists (`.launchset/README.md`, `launchset-*.yml`). Default `keep`: it stays as it is. `overwrite` replaces it with the newly generated file. Ask only if the existing file looks hand-edited and should be regenerated. |
