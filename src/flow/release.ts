@@ -105,7 +105,7 @@ export async function release(
     warnings,
   };
   const outputs = actionOutputs(plan);
-  let summary = appendAlerts(decision.summary, "WARNING", fileWarnings);
+  let summary = appendAlerts(decision.summary, "WARNING", fileWarnings, context.host);
   const words = forgeWords(context.host);
   const lines = [`mode: ${plan.mode}`];
   if (plan.mode !== "none") lines.push(`version: ${plan.version}`);
@@ -152,7 +152,7 @@ export async function release(
     const branch = releasePrBranch(plan.branch);
     const open = await context.forge.findOpenPrByHead(branch);
     if (open) {
-      await context.forge.closePr(open.number, releasePrCloseComment(plan.branch));
+      await context.forge.closePr(open.number, releasePrCloseComment(plan.branch, context.host));
       data.closedPr = { number: open.number, url: open.url };
       summary = appendParagraphs(summary, [
         `Closed the release ${words.prName} [${words.prText(open.number)}](${open.url}): nothing is pending anymore.`,

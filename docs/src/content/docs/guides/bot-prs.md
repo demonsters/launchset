@@ -7,7 +7,7 @@ Bots open PRs that nobody writes a changeset for. launchset handles two kinds.
 
 ## Dependabot and Renovate
 
-Authors in `check.bots` (default `dependabot[bot]` and `renovate[bot]`) **pass the PR check without a changeset**. launchset never pushes to their branches, because those bots stop rebasing a PR that someone else pushed to.
+Authors in `check.bots` (default `dependabot[bot]`, `renovate[bot]` and `renovate-bot`, Renovate's username on gitlab.com) **pass the PR check without a changeset**. launchset never pushes to their branches, because those bots stop rebasing a PR that someone else pushed to.
 
 When it builds the release PR, launchset looks at the PRs merged into the branch since the last release tag. For every one written by a bot that has no changeset, it adds a generated entry: `bump: patch`, and the PR title as the summary, for example `Bump react-native from 0.76.1 to 0.76.3`. These entries appear in the changelog under **Dependencies**.
 

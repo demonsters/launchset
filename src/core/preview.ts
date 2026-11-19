@@ -8,6 +8,7 @@
 import { findPreviewBranch, isMaintenanceBranch, matchBranch } from "./branches.ts";
 import type { ResolvedConfig } from "./config/schema.ts";
 import { LaunchsetError } from "./errors.ts";
+import { forgeHints } from "./forge-hints.ts";
 import { type ForgeHost, forgeWords } from "./forge-links.ts";
 import {
   buildTargetPlans,
@@ -48,6 +49,11 @@ export type PreviewTrigger =
       label?: string;
       /** True for a PR from a fork (no secrets). */
       fork?: boolean;
+      /**
+       * Started by hand (GitLab's manual preview job, `LAUNCHSET_PREVIEW_MANUAL=true`): builds
+       * without the preview label (never for forks).
+       */
+      manual?: boolean;
     }
   | { kind: "push" }
   | {
@@ -112,10 +118,13 @@ function resolveTargets(config: ResolvedConfig, list: "all" | readonly string[])
 /**
  * Decide whether and what to preview (spec 9.7, 9.9):
  *
- * - `pr`: only with `preview.label`; never for forks. A `labeled` event builds only when it
- *   added the preview label (`label`). With `rebuildOnPush: false` only that event builds;
- *   with `true`, `synchronize` / `reopened` (any non-`labeled` action) build too. Version
- *   `{next}-pr.{n}.{run}`.
+ * - `pr`: only with `preview.label`, or when started by hand (`manual`); never for forks. A
+ *   `labeled` event builds only when it added the preview label (`label`). With
+ *   `rebuildOnPush: false` only that event builds; with `true`, `synchronize` / `reopened`
+ *   (any non-`labeled` action) build too. Without an action (GitLab: labels never start a
+ *   pipeline, so there are no label events) every pipeline of a labeled MR builds;
+ *   `rebuildOnPush: false` is up to the CI template there (it makes the labeled job manual).
+ *   Version `{next}-pr.{n}.{run}`.
  * - push: the first matching `preview.branches` entry; maintenance branches never
  *   auto-preview. A `prerelease` entry makes it a prerelease `{next}-{preid}.{n}`, else a
  *   branch preview `{next}-{slug}.{run}`.
@@ -142,10 +151,12 @@ export function planPreview(input: PreviewInput): PreviewDecision {
         `${prLabel(trigger.number)} comes from a fork: secrets aren't available there, so no preview is built.`,
       );
     }
-    if (!trigger.labels.includes(config.preview.label)) {
+    if (!trigger.manual && !trigger.labels.includes(config.preview.label)) {
       return skip(
         "no-label",
-        `${prLabel(trigger.number)} doesn't have the ${code(config.preview.label)} label: add it to build a preview.`,
+        words.host === "gitlab"
+          ? `${prLabel(trigger.number)} doesn't have the ${code(config.preview.label)} label: add the label and push, or start the manual preview job.`
+          : `${prLabel(trigger.number)} doesn't have the ${code(config.preview.label)} label: add it to build a preview.`,
       );
     }
     if (
@@ -159,6 +170,7 @@ export function planPreview(input: PreviewInput): PreviewDecision {
       );
     }
     if (
+      !trigger.manual &&
       !config.preview.rebuildOnPush &&
       trigger.action !== undefined &&
       trigger.action !== "labeled"
@@ -207,9 +219,9 @@ export function planPreview(input: PreviewInput): PreviewDecision {
     if (runNumber === undefined) {
       throw new LaunchsetError(
         "no-run-number",
-        "a preview version needs the workflow run number, and there is none here",
+        `a preview version needs the ${forgeHints(input.host).runName} number, and there is none here`,
         {
-          hint: "Previews are built in GitHub Actions; `launchset plan --preview` needs --run-number outside CI.",
+          hint: forgeHints(input.host).previewNeedsRun,
         },
       );
     }
@@ -284,11 +296,13 @@ export function planPreview(input: PreviewInput): PreviewDecision {
     ...(prNumber !== undefined ? { prNumber } : {}),
     ...(slug !== undefined ? { branchSlug: slug } : {}),
     ...(preid !== undefined ? { preid } : {}),
+    ...(input.host ? { host: input.host } : {}),
   });
   plan.buildNumber = planBuildNumber(config, plan, {
     now: input.now,
     version: next,
     ...(input.run ? { run: input.run } : {}),
+    ...(input.host ? { host: input.host } : {}),
   });
 
   const notices: string[] = [];
@@ -309,6 +323,7 @@ export function planPreview(input: PreviewInput): PreviewDecision {
       tag ? `Reserving tag ${code(tag)}.` : "",
     ],
     notices,
+    ...(input.host ? { host: input.host } : {}),
   });
   return { kind: "plan", preview: kind, plan, notices, summary };
 }
@@ -360,6 +375,8 @@ export interface PreviewResultsInput {
   plan: Plan;
   /** Per target in `plan.matrix`; a missing target counts as `pending`. */
   results: Readonly<Record<string, TargetResult>>;
+  /** Code host, for "this PR" / "this MR" and the run link's text; default `github`. */
+  host?: ForgeHost;
 }
 
 /** Sticky comment id for previews (`<!-- launchset:preview -->`). */
@@ -393,9 +410,11 @@ function dockerList(plan: Plan): string {
   return ["Docker images:", "", ...refs.map((r) => `- ${code(r)}`)].join("\n");
 }
 
-function runLine(plan: Plan): string {
+function runLine(plan: Plan, host?: ForgeHost): string {
   const sha = code(plan.releaseSha.slice(0, 7));
-  return plan.run?.url ? `Commit ${sha}, [workflow run](${plan.run.url}).` : `Commit ${sha}.`;
+  return plan.run?.url
+    ? `Commit ${sha}, [${forgeHints(host).runName}](${plan.run.url}).`
+    : `Commit ${sha}.`;
 }
 
 /** The sticky preview comment (spec 9.7), without the hidden marker. */
@@ -404,10 +423,10 @@ export function renderPreviewComment(input: PreviewResultsInput): string {
   const failed = plan.matrix.filter((n) => input.results[n]?.status === "failure");
   const blocks = [
     `### launchset preview: ${code(plan.version)}`,
-    `${plan.channel === "prerelease" ? "Prerelease" : "Preview"} of ${plan.prNumber !== undefined ? "this PR" : code(plan.branch)}${failed.length > 0 ? `: ${joinWords(failed.map(code))} failed` : ""}.`,
+    `${plan.channel === "prerelease" ? "Prerelease" : "Preview"} of ${plan.prNumber !== undefined ? `this ${forgeWords(input.host).prName}` : code(plan.branch)}${failed.length > 0 ? `: ${joinWords(failed.map(code))} failed` : ""}.`,
     resultsTable(input),
     dockerList(plan),
-    runLine(plan),
+    runLine(plan, input.host),
   ].filter((b) => b !== "");
   return `${blocks.join("\n\n")}\n`;
 }
@@ -419,7 +438,10 @@ export interface PrereleaseReleaseInput extends PreviewResultsInput {
   baseChangesetPaths?: readonly string[];
 }
 
-/** The GitHub pre-release for a prerelease (spec 9.9): never "latest". */
+/**
+ * The GitHub pre-release for a prerelease (spec 9.9): never "latest". On GitLab the same input
+ * makes a plain release (no pre-release flag; `prerelease` and `makeLatest` are ignored).
+ */
 export function prereleaseRelease(input: PrereleaseReleaseInput): {
   tag: string;
   name: string;
@@ -457,7 +479,7 @@ export function renderPrereleaseBody(input: PrereleaseReleaseInput): string {
     `### Changes\n\n${changes}`,
     `### Targets\n\n${resultsTable(input)}`,
     dockerList(plan),
-    runLine(plan),
+    runLine(plan, input.host),
   ].filter((b) => b !== "");
   return `${blocks.join("\n\n")}\n`;
 }

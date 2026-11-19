@@ -15,6 +15,7 @@ import {
   planFinalize,
   type UnfinishedVersion,
 } from "../core/finalize.ts";
+import { type ForgeHost, forgeWords } from "../core/forge-links.ts";
 import { partialTag, releaseTag } from "../core/tags.ts";
 import type { Plan } from "../core/types.ts";
 import { mapLimit } from "../forge/concurrency.ts";
@@ -71,6 +72,19 @@ export async function existingReleases(
   return releases;
 }
 
+/**
+ * GitLab's latest release is the one created last (newest `released_at`; there is no "latest"
+ * flag): create pre-releases (superseded partial releases) before the others, so the real
+ * release stays the latest. Otherwise the order is kept.
+ */
+function gitlabReleaseOrder(actions: readonly FinalizeAction[]): FinalizeAction[] {
+  const pre = (a: FinalizeAction) => (a.kind === "create-release" && a.prerelease ? 0 : 1);
+  const releases = actions.filter((a) => a.kind === "create-release");
+  const sorted = [...releases].sort((a, b) => pre(a) - pre(b));
+  let next = 0;
+  return actions.map((a) => (a.kind === "create-release" ? (sorted[next++] as FinalizeAction) : a));
+}
+
 /** Run finalize actions in order (tags, releases, backport). */
 export async function executeFinalizeActions(
   context: FlowContext,
@@ -79,7 +93,8 @@ export async function executeFinalizeActions(
 ): Promise<{ executed: ExecutedAction[]; backportPr?: FinalizeData["backportPr"] }> {
   const executed: ExecutedAction[] = [];
   let backportPr: FinalizeData["backportPr"];
-  for (const action of actions) {
+  const ordered = context.host === "gitlab" ? gitlabReleaseOrder(actions) : actions;
+  for (const action of ordered) {
     switch (action.kind) {
       case "create-tag":
         executed.push({ action, result: await ensureTag(context, action.tag, action.sha) });
@@ -235,7 +250,7 @@ export async function finalize(
     result.status === "superseded"
       ? `${result.version} was superseded by a newer release: it never gets ${result.tag}`
       : `${result.tag}: ${result.status}${result.missing.length > 0 ? ` (missing: ${result.missing.join(", ")})` : ""}`,
-    ...executed.map((e) => `  ${describe(e)}`),
+    ...executed.map((e) => `  ${describe(e, context.host)}`),
     ...result.failures.map((f) => `error: ${plain(f.split("\n")[0] ?? f)}`),
     ...noteLines(result.warnings, result.notices),
   ];
@@ -244,16 +259,17 @@ export async function finalize(
   return { ok: result.ok, outputs, summary: result.summary, lines, data };
 }
 
-function describe(executed: ExecutedAction): string {
+function describe(executed: ExecutedAction, host: ForgeHost): string {
   const { action, result } = executed;
   switch (action.kind) {
     case "create-tag":
       return `tag ${action.tag} at ${action.sha.slice(0, 7)}: ${result}`;
     case "create-release":
-      return `created ${action.prerelease ? "pre-release" : "release"} ${action.name}: ${result}`;
+      // GitLab has no pre-releases: a release whose tag is a prerelease or partial is a release.
+      return `created ${action.prerelease && host !== "gitlab" ? "pre-release" : "release"} ${action.name}: ${result}`;
     case "update-release":
       return `updated release ${action.name}: ${result}`;
     case "backport-changelog":
-      return `changelog backport PR ${action.title}: ${result}`;
+      return `changelog backport ${forgeWords(host).prName} ${action.title}: ${result}`;
   }
 }

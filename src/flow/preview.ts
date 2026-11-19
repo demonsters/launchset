@@ -17,7 +17,8 @@
 
 import { isChangesetPath } from "../core/changesets.ts";
 import { errorMessage, LaunchsetError } from "../core/errors.ts";
-import { forgeWords } from "../core/forge-links.ts";
+import { forgeHints } from "../core/forge-hints.ts";
+import { type ForgeHost, forgeWords } from "../core/forge-links.ts";
 import { actionOutputs, parsePlan } from "../core/outputs.ts";
 import {
   alert,
@@ -62,9 +63,9 @@ export const MAX_RESERVATION_ATTEMPTS = 10;
 // ---------------------------------------------------------------------------
 // Reading the event
 
-function invalidEvent(message: string): LaunchsetError {
+function invalidEvent(context: FlowContext, message: string): LaunchsetError {
   return new LaunchsetError("invalid-event", message, {
-    hint: "The preview workflow runs on pull_request, push and workflow_dispatch events.",
+    hint: forgeHints(context.host).previewEvents,
   });
 }
 
@@ -101,7 +102,7 @@ async function currentBranch(context: FlowContext): Promise<string> {
   const branch = await context.git.currentBranch();
   if (branch) return branch;
   throw new LaunchsetError("no-branch", "can't tell which branch the preview is for", {
-    hint: "Check out a branch (not a detached HEAD), or run this in GitHub Actions.",
+    hint: forgeHints(context.host).previewNoBranch,
   });
 }
 
@@ -118,17 +119,19 @@ async function deriveSource(
     const headSha = pr?.headSha;
     if (!pr || number === undefined || !Number.isSafeInteger(number) || !branch || !headSha) {
       throw invalidEvent(
+        context,
         "the pull_request event payload has no pull_request number, head.ref or head.sha",
       );
     }
     const trigger: PreviewTrigger = { kind: "pr", number, labels: pr.labels, fork: pr.fork };
+    if (pr.manual) trigger.manual = true;
     if (pr.action !== undefined) trigger.action = pr.action;
     if (pr.action === "labeled" && pr.label !== undefined) trigger.label = pr.label;
     return { trigger, branch, headSha };
   }
 
   if (event && event.kind !== "push" && event.kind !== "dispatch") {
-    throw invalidEvent(`can't build a preview for the ${event.name} event`);
+    throw invalidEvent(context, `can't build a preview for the ${event.name} event`);
   }
   const branch = await currentBranch(context);
   const headSha = context.ci.sha || event?.sha || (await context.git.headSha());
@@ -162,7 +165,7 @@ async function rootVersion(context: FlowContext, sha: string): Promise<string> {
 async function requireCommit(context: FlowContext, sha: string): Promise<void> {
   if (await context.git.tryRevParse(sha)) return;
   throw new LaunchsetError("commit-not-found", `commit ${sha} isn't in this checkout`, {
-    hint: "Check out with `fetch-depth: 0` (actions/checkout) so the PR head and the tags are available.",
+    hint: forgeHints(context.host).previewCommitMissing,
   });
 }
 
@@ -224,7 +227,7 @@ function skipResult(
 /** Outcome of one tag reservation attempt. */
 type Reservation = "reserved" | "taken";
 
-function reservationFailure(tag: string, error: unknown): LaunchsetError {
+function reservationFailure(context: FlowContext, tag: string, error: unknown): LaunchsetError {
   const detail = errorMessage(error);
   if (error instanceof GitError && (error.reason === "auth" || error.reason === "forbidden")) {
     return new LaunchsetError(
@@ -232,7 +235,7 @@ function reservationFailure(tag: string, error: unknown): LaunchsetError {
       `Couldn't push the prerelease tag ${tag}: the token isn't allowed to push tags.\n${detail}`,
       {
         cause: error,
-        hint: "Prerelease branches reserve their tag with a push, which needs the GitHub App token (Contents: read & write), not the default GITHUB_TOKEN of a read-only workflow. Pass the App token as `token` and to actions/checkout. If tag rulesets protect the tag, let the launchset App bypass them.",
+        hint: forgeHints(context.host).tagPushDenied,
       },
     );
   }
@@ -255,7 +258,7 @@ async function tryReserve(context: FlowContext, tag: string, sha: string): Promi
   } catch (error) {
     if (error instanceof TagCleanupError) {
       // A failing cleanup must not hide the push error.
-      const failure = reservationFailure(tag, error.pushError);
+      const failure = reservationFailure(context, tag, error.pushError);
       throw new LaunchsetError(
         failure.code,
         `${failure.message}\nRemoving the local tag failed too (run \`git tag -d ${tag}\`): ${errorMessage(error.cleanupError)}`,
@@ -270,7 +273,7 @@ async function tryReserve(context: FlowContext, tag: string, sha: string): Promi
         { cause: error },
       );
     }
-    throw reservationFailure(tag, error);
+    throw reservationFailure(context, tag, error);
   }
   // `up-to-date`: the remote already had this tag at this very commit, so a concurrent run on
   // the same commit reserved it first. It isn't ours; take the next number.
@@ -391,12 +394,16 @@ export async function previewPlan(
     attempts = reserved.attempts;
     const { tag } = decision.plan;
     extra.push(
-      `Reserved tag ${code(tag as string)} at ${code(headSha.slice(0, 7))}${attempts > 1 ? ` (the tags before it were taken by concurrent runs: ${attempts} attempts)` : ""}. The GitHub pre-release is created once the builds are done.`,
+      `Reserved tag ${code(tag as string)} at ${code(headSha.slice(0, 7))}${attempts > 1 ? ` (the tags before it were taken by concurrent runs: ${attempts} attempts)` : ""}. The ${forgeWords(context.host).prereleaseName} is created once the builds are done.`,
     );
   }
   for (const bad of invalidChangesets) {
     extra.push(
-      alert("WARNING", `Ignored the changeset ${bad.path} (it doesn't parse): ${bad.error}`),
+      alert(
+        "WARNING",
+        `Ignored the changeset ${bad.path} (it doesn't parse): ${bad.error}`,
+        context.host,
+      ),
     );
   }
 
@@ -469,10 +476,19 @@ export function jobStatus(job: Job): TargetResultStatus {
 /**
  * The build job of `target`: named `Preview <target>` (the template's `Preview ${{ matrix.target }}`),
  * also found as `Build <target>` or the bare target name, with or without a caller-workflow
- * prefix (`ci / Preview android`). The last match wins.
+ * prefix (`ci / Preview android`). On GitLab the generated child pipeline names them
+ * `preview-<target>` (release builds `build-<target>`), also found as the bare target name.
+ * The last match wins.
  */
-export function findTargetJob(jobs: readonly Job[], target: string): Job | undefined {
-  const pattern = new RegExp(`^(?:.* / )?(?:Preview |Build )?${escapeRegExp(target)}$`, "i");
+export function findTargetJob(
+  jobs: readonly Job[],
+  target: string,
+  host: ForgeHost = "github",
+): Job | undefined {
+  const pattern =
+    host === "gitlab"
+      ? new RegExp(`^(?:preview-|build-)?${escapeRegExp(target)}$`, "i")
+      : new RegExp(`^(?:.* / )?(?:Preview |Build )?${escapeRegExp(target)}$`, "i");
   return jobs.filter((job) => pattern.test(job.name.trim())).at(-1);
 }
 
@@ -481,10 +497,14 @@ function unknownResults(targets: readonly string[]): Record<string, TargetResult
 }
 
 /** Per-target results of the run's jobs; targets without a job are `unknown`. */
-export function targetResults(plan: Plan, jobs: readonly Job[]): Record<string, TargetResult> {
+export function targetResults(
+  plan: Plan,
+  jobs: readonly Job[],
+  host: ForgeHost = "github",
+): Record<string, TargetResult> {
   const results: Record<string, TargetResult> = {};
   for (const name of plan.matrix) {
-    const job = findTargetJob(jobs, name);
+    const job = findTargetJob(jobs, name, host);
     results[name] = job
       ? { status: jobStatus(job), ...(job.url ? { jobUrl: job.url } : {}) }
       : { status: "unknown" };
@@ -492,12 +512,16 @@ export function targetResults(plan: Plan, jobs: readonly Job[]): Record<string, 
   return results;
 }
 
-/** The jobs of the current run. The App token first, then the workflow's own `GITHUB_TOKEN`. */
+/**
+ * The jobs of the current run. The App token first, then the workflow's own `GITHUB_TOKEN`.
+ * On GitLab only LAUNCHSET_TOKEN can list pipeline jobs: the fallback (CI_JOB_TOKEN) can't,
+ * so there's no retry.
+ */
 async function listRunJobs(context: FlowContext, forge: Forge, runId: number): Promise<Job[]> {
   try {
     return await forge.listJobs(runId);
   } catch (error) {
-    if (!context.fallbackForge) throw error;
+    if (!context.fallbackForge || context.host === "gitlab") throw error;
     context.log.warn(
       `Couldn't list the jobs with the App token (${errorMessage(error)}); trying GITHUB_TOKEN`,
     );
@@ -516,7 +540,7 @@ async function branchOnlyChangesets(
   const baseRef = await baseBranchRef(context);
   if (!(await git.tryRevParse(baseRef))) {
     return {
-      note: `_Couldn't compare with ${code(baseRef)} (not in this checkout), so every pending changeset is listed. Use \`fetch-depth: 0\` in actions/checkout._`,
+      note: `_Couldn't compare with ${code(baseRef)} (not in this checkout), so every pending changeset is listed. ${forgeHints(context.host).previewCompareNote}_`,
     };
   }
   const added = new Set<string>();
@@ -562,6 +586,7 @@ export async function previewComment(
   }
   const forge = requireForge(context, "The preview comment");
   const words = forgeWords(context.host);
+  const hints = forgeHints(context.host);
 
   // Per-target job results.
   const notes: string[] = [];
@@ -569,30 +594,31 @@ export async function previewComment(
   let results = unknownResults(plan.matrix);
   let listed = false;
   if (runId === undefined) {
-    notes.push("The workflow run id is unknown, so the per-target results can't be read.");
+    notes.push(`The ${hints.runName} id is unknown, so the per-target results can't be read.`);
   } else {
     try {
-      results = targetResults(plan, await listRunJobs(context, forge, runId));
+      results = targetResults(plan, await listRunJobs(context, forge, runId), context.host);
       listed = true;
     } catch (error) {
       // The comment is still worth posting; the failure is reported in it and in the summary.
       context.log.warn(`Couldn't list the jobs of run ${runId}: ${errorMessage(error)}`);
       notes.push(
-        `Couldn't read the job results of this run (${errorMessage(error)}). The App needs the Actions: read permission.`,
+        `Couldn't read the job results of this run (${errorMessage(error)}). ${hints.listJobsFailed}`,
       );
     }
   }
   const unmatched = plan.matrix.filter((name) => results[name]?.status === "unknown");
   if (listed && unmatched.length > 0) {
     notes.push(
-      `No build job found for ${unmatched.map(code).join(", ")}: the jobs are expected to be named ${code("Preview <target>")}.`,
+      `No build job found for ${unmatched.map(code).join(", ")}: the jobs are expected to be named ${code(hints.previewJobName)}.`,
     );
   }
   const noteBlock = notes.length > 0 ? `\n${notes.map((n) => `> ${n}`).join("\n")}\n` : "";
   const data: PreviewCommentData = { kind: "branch", plan, results, unmatched };
   const outputs: Record<string, string> = {};
   const lines: string[] = [];
-  const comment = () => `${renderPreviewComment({ plan, results })}${noteBlock}`;
+  const comment = () =>
+    `${renderPreviewComment({ plan, results, host: context.host })}${noteBlock}`;
 
   if (plan.prNumber !== undefined) {
     data.kind = "pr";
@@ -613,6 +639,7 @@ export async function previewComment(
     const release = prereleaseRelease({
       plan,
       results,
+      host: context.host,
       changesets: validChangesets(files),
       ...(compared.baseChangesetPaths ? { baseChangesetPaths: compared.baseChangesetPaths } : {}),
     });
@@ -625,7 +652,7 @@ export async function previewComment(
     data.releaseUrl = published.url;
     outputs["release-url"] = published.url;
     lines.push(
-      `GitHub pre-release ${existing ? "updated" : "created"} for ${release.tag}: ${published.url}`,
+      `${words.prereleaseName} ${existing ? "updated" : "created"} for ${release.tag}: ${published.url}`,
     );
     return { ok: true, outputs, summary: `${body}${noteBlock}`, lines, data };
   }

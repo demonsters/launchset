@@ -1,18 +1,20 @@
 /** Small helpers for building `FlowResult`s. */
 
 import { LaunchsetError } from "../core/errors.ts";
+import type { ForgeHost } from "../core/forge-links.ts";
 import { parsePlan } from "../core/outputs.ts";
 import { alert } from "../core/plan-common.ts";
 import type { Plan } from "../core/types.ts";
 
-/** Append `> [!KIND]` alert blocks to a rendered job summary. */
+/** Append `> [!KIND]` alert blocks to a rendered job summary (lowercase kinds on GitLab). */
 export function appendAlerts(
   summary: string,
   kind: "WARNING" | "NOTE" | "CAUTION",
   texts: readonly string[],
+  host?: ForgeHost,
 ): string {
   if (texts.length === 0) return summary;
-  const blocks = texts.map((text) => alert(kind, text));
+  const blocks = texts.map((text) => alert(kind, text, host));
   return `${summary.trimEnd()}\n\n${blocks.join("\n\n")}\n`;
 }
 

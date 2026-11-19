@@ -19,7 +19,11 @@ export const DEFAULT_DOCKER_TAGS = {
   prerelease: ["{version}", "{branchSlug}"],
 } as const;
 
-export const DEFAULT_BOTS = ["dependabot[bot]", "renovate[bot]"];
+/**
+ * Default `check.bots`: Dependabot's and Renovate's GitHub App logins, and Renovate's username
+ * on gitlab.com (`renovate-bot`; self-managed GitLab instances name their bots themselves).
+ */
+export const DEFAULT_BOTS = ["dependabot[bot]", "renovate[bot]", "renovate-bot"];
 
 const nonEmpty = z.string().min(1, "expected a non-empty string");
 

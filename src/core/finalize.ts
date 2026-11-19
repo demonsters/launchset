@@ -373,6 +373,7 @@ function finalizePublish(input: FinalizeInput): FinalizeResult {
       section,
       changelogFile,
       manualTargets: manualEntries(config, tags, v, existing?.body),
+      ...(input.host ? { host: input.host } : {}),
     });
     const action = releaseAction({
       tag: vTag,
@@ -436,6 +437,7 @@ function finalizePublish(input: FinalizeInput): FinalizeResult {
           missing: notShipped,
           section: input.changelog === null ? null : extractSection(input.changelog, u.version),
           changelogFile,
+          ...(input.host ? { host: input.host } : {}),
         }),
         prerelease: true,
         makeLatest: false,
@@ -536,7 +538,7 @@ function finalizeShip(input: FinalizeInput): FinalizeResult {
     };
     const entries = manualEntries(config, tags, version, existing?.body, update);
     if (existing) {
-      const body = upsertManualTargets(existing.body, entries, version);
+      const body = upsertManualTargets(existing.body, entries, version, input.host);
       const action = releaseAction({
         tag,
         name: existing.name || tag,
@@ -547,7 +549,10 @@ function finalizeShip(input: FinalizeInput): FinalizeResult {
         updateLatest: false,
       });
       if (action) actions.push(action);
-      else notices.push(`The ${tag} Release already lists ${target} as shipped.`);
+      else
+        notices.push(
+          `The ${tag} ${input.host === "gitlab" ? releaseName : "Release"} already lists ${target} as shipped.`,
+        );
     } else {
       const section = input.changelog === null ? null : extractSection(input.changelog, version);
       notices.push(`${tag} had no ${releaseName}: creating it.`);
@@ -560,6 +565,7 @@ function finalizeShip(input: FinalizeInput): FinalizeResult {
           section,
           changelogFile: config.changelog.file,
           manualTargets: entries,
+          ...(input.host ? { host: input.host } : {}),
         }),
         prerelease: false,
         makeLatest: !plan.maintenance && isHighestRelease(tags, version),
@@ -629,7 +635,11 @@ function renderFinalizeSummary(
   if (result.actions.length > 0) {
     paragraphs.push(result.actions.map((a) => `- ${describeAction(a, releaseName)}`).join("\n"));
   } else {
-    paragraphs.push("Nothing to change: tags and Releases are up to date.");
+    paragraphs.push(
+      host === "gitlab"
+        ? "Nothing to change: tags and releases are up to date."
+        : "Nothing to change: tags and Releases are up to date.",
+    );
   }
   return renderSummary({
     title: "launchset: finalize",
@@ -637,5 +647,6 @@ function renderFinalizeSummary(
     failures: result.failures,
     warnings: result.warnings,
     notices: result.notices,
+    ...(host ? { host } : {}),
   });
 }

@@ -26,7 +26,7 @@ export default defineConfig({
 
   buildNumber: { strategy: "timestamp", epoch: "2020-01-01T00:00:00Z", offset: 0 },
 
-  check: { bots: ["dependabot[bot]", "renovate[bot]"] },
+  check: { bots: ["dependabot[bot]", "renovate[bot]", "renovate-bot"] },
 
   preview: {
     label: "launchset:preview",
@@ -135,7 +135,7 @@ Everything is optional except `targets`. `$schema` is only for editors: point it
 | `buildNumber.epoch` | `string` | `"2020-01-01T00:00:00Z"` | Start of the `timestamp` strategy, as an ISO 8601 date-time. |
 | `buildNumber.offset` | `integer` | `0` | Added to every build number. Use it when existing builds in a store have higher numbers than the strategy would produce. |
 | `check` | `object` |  | The PR check. |
-| `check.bots` | `string[]` | `["dependabot[bot]", "renovate[bot]"]` | PR authors that pass the check without a changeset. Matched case-insensitively. Their merged PRs get a generated patch entry under Dependencies in the next release. |
+| `check.bots` | `string[]` | `["dependabot[bot]", "renovate[bot]", "renovate-bot"]` | PR authors that pass the check without a changeset. Matched case-insensitively. Their merged PRs get a generated patch entry under Dependencies in the next release. |
 
 ### Previews
 

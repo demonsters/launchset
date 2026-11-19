@@ -8,6 +8,7 @@
 import { forgeLinks } from "../../core/forge-links.ts";
 import { cachedClosedPrs } from "../closed-prs.ts";
 import type {
+  CommitIdentity,
   Forge,
   Job,
   Logger,
@@ -33,6 +34,11 @@ export interface GitLabOptions {
   apiUrl?: string;
   /** Web URL of the server (`CI_SERVER_URL`), for links; default derived from `apiUrl`. */
   serverUrl?: string;
+  /**
+   * Host name for the fallback commit email `launchset@noreply.<host>` when `GET /user` fails
+   * (`CI_SERVER_HOST`); default the server's host name.
+   */
+  commitHost?: string;
   /** Receives warnings; default: dropped. */
   log?: Partial<Logger>;
   /** For tests. */
@@ -263,12 +269,38 @@ export function createGitLab(options: GitLabOptions): Forge {
     return result;
   }
 
+  type OwnUser = {
+    id: number;
+    username?: string;
+    name?: string;
+    /** `commit_email`, else `email` (a bot's is `project_<id>_bot_<hash>@noreply.<host>`). */
+    email?: string;
+  };
+  type RawUser = {
+    id?: number;
+    username?: string;
+    name?: string;
+    email?: string;
+    commit_email?: string;
+  };
+  const text = (value: unknown) =>
+    typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
   // The token's own user, fetched at most once; null when `GET /user` isn't allowed for the
   // token (job tokens, and not every bot token is documented to).
-  let ownUser: Promise<{ id: number } | null> | undefined;
+  let ownUser: Promise<OwnUser | null> | undefined;
   const whoAmI = () =>
-    (ownUser ??= request<{ id?: number }>("GET", "/user").then(
-      (user) => (typeof user?.id === "number" ? { id: user.id } : null),
+    (ownUser ??= request<RawUser>("GET", "/user").then(
+      (user) => {
+        if (typeof user?.id !== "number") return null;
+        const own: OwnUser = { id: user.id };
+        const username = text(user.username);
+        const name = text(user.name);
+        const email = text(user.commit_email) ?? text(user.email);
+        if (username) own.username = username;
+        if (name) own.name = name;
+        if (email) own.email = email;
+        return own;
+      },
       (error) => {
         options.log?.debug?.(
           `GET /user failed (${(error as Error).message}); matching bot notes by name`,
@@ -276,6 +308,13 @@ export function createGitLab(options: GitLabOptions): Forge {
         return null;
       },
     ));
+  const serverHost = (() => {
+    try {
+      return new URL(serverUrl).hostname;
+    } catch {
+      return "gitlab.com";
+    }
+  })();
 
   /** Merged MRs into `base`, newest update first, down to `since` (ms). */
   async function listMergedMrs(base: string, since: number | undefined): Promise<PullRequest[]> {
@@ -324,6 +363,17 @@ export function createGitLab(options: GitLabOptions): Forge {
 
   return {
     repository,
+
+    // The token's own user (`GET /user`): a project or group access token's bot commits as
+    // itself, so GitLab push rules that only accept known authors let launchset's commits in.
+    async identity(): Promise<CommitIdentity> {
+      const user = await whoAmI();
+      const host = options.commitHost || serverHost;
+      const fallback = `launchset@noreply.${host}`;
+      if (!user) return { name: "launchset", email: fallback };
+      const email = user.email ?? (user.username ? `${user.username}@noreply.${host}` : fallback);
+      return { name: user.name ?? user.username ?? "launchset", email };
+    },
 
     async findOpenPrByHead(branch) {
       const mrs = await all<RawMr>(`${project}/merge_requests`, {

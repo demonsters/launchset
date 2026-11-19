@@ -160,6 +160,7 @@ export function buildReleasePr(input: ReleasePrInput): ReleasePrContent {
     section,
     autoTargets: auto,
     manualTargets: manual,
+    ...(input.host ? { host: input.host } : {}),
   });
 
   return {
@@ -185,10 +186,13 @@ function renderReleasePrBody(input: {
   section: string;
   autoTargets: string[];
   manualTargets: ManualTargetStatus[];
+  host?: ForgeHost;
 }): string {
+  const PR = forgeWords(input.host).prName;
+  const gitlab = input.host === "gitlab";
   const blocks = [
     RELEASE_PR_MARKER,
-    `Merging this PR releases **v${input.version}** (${input.bump}) from ${code(input.base)}: it builds and ships every auto target (${joinWords(input.autoTargets.map(code))}).`,
+    `Merging this ${PR} releases **v${input.version}** (${input.bump}) from ${code(input.base)}: it builds and ships every auto target (${joinWords(input.autoTargets.map(code))}).`,
     input.section.trimEnd(),
   ];
   if (input.manualTargets.length > 0) {
@@ -196,19 +200,21 @@ function renderReleasePrBody(input: {
       [
         "### Manual targets",
         "",
-        `Stamped with ${input.version} by this PR, but shipped on demand (a release workflow run with the \`target\` input, or \`launchset ship\`):`,
+        gitlab
+          ? `Stamped with ${input.version} by this MR, but shipped on demand (a release pipeline run with the \`LAUNCHSET_TARGET\` variable, or \`launchset ship\`):`
+          : `Stamped with ${input.version} by this PR, but shipped on demand (a release workflow run with the \`target\` input, or \`launchset ship\`):`,
         "",
         ...input.manualTargets.map((s) => `- ${describeManualTarget(s)}`),
       ].join("\n"),
     );
   }
   blocks.push(
-    `<sub>launchset rebuilds this PR from ${code(input.base)} on every push. Don't edit it: change the changesets in \`.launchset/\` instead.</sub>`,
+    `<sub>launchset rebuilds this ${PR} from ${code(input.base)} on every push. Don't edit it: change the changesets in \`.launchset/\` instead.</sub>`,
   );
   return `${blocks.join("\n\n")}\n`;
 }
 
 /** Comment posted when an open release PR is closed because nothing is pending anymore. */
-export function releasePrCloseComment(base: string): string {
-  return `Closing: no changesets are pending on ${code(base)} anymore, so there is nothing to release. launchset opens a new release PR when one is added.`;
+export function releasePrCloseComment(base: string, host?: ForgeHost): string {
+  return `Closing: no changesets are pending on ${code(base)} anymore, so there is nothing to release. launchset opens a new release ${forgeWords(host).prName} when one is added.`;
 }

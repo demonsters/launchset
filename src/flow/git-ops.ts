@@ -1,10 +1,11 @@
 /**
- * Git and GitHub operations the flow commands share: idempotent tag creation, rebuilding a
+ * Git and forge operations the flow commands share: idempotent tag creation, rebuilding a
  * branch and restoring the original checkout, fetching a remote branch, and creating or
  * updating a PR by its head branch.
  */
 
 import { errorMessage, LaunchsetError } from "../core/errors.ts";
+import { forgeHints } from "../core/forge-hints.ts";
 import type { Forge, PullRequest } from "../forge/types.ts";
 import {
   type Git,
@@ -221,11 +222,7 @@ export async function sameCommitContent(
   return left.tree === right.tree && left.parents.join(" ") === right.parents.join(" ");
 }
 
-const CHECKOUT_HINT =
-  // biome-ignore lint/suspicious/noTemplateCurlyInString: a GitHub Actions expression, not a JS template.
-  "Check out the plan's commit in this job: actions/checkout with ref: ${{ needs.launchset.outputs.release-sha }} (and fetch-depth: 0).";
-
-/** True when running in CI (GitHub Actions). */
+/** True when running in CI (GitHub Actions, GitLab CI). */
 export function inActions(context: FlowContext): boolean {
   return context.ci.inCi;
 }
@@ -245,7 +242,9 @@ export async function checkHeadAtPlan(
   if (head === plan.releaseSha) return undefined;
   const message = `${command} runs at ${head.slice(0, 7)}, but the plan builds ${plan.version} from ${plan.releaseSha.slice(0, 7)} (release-sha)`;
   if (inActions(context)) {
-    throw new LaunchsetError("wrong-checkout", message, { hint: CHECKOUT_HINT });
+    throw new LaunchsetError("wrong-checkout", message, {
+      hint: forgeHints(context.host).planCheckout,
+    });
   }
   return `${message}. In CI this is an error: build jobs must check out release-sha.`;
 }

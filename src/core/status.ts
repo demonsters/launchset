@@ -6,6 +6,7 @@
 
 import { isMaintenanceBranch } from "./branches.ts";
 import type { ResolvedConfig } from "./config/schema.ts";
+import { type ForgeHost, forgeWords } from "./forge-links.ts";
 import {
   type BotPrInfo,
   type ChangesetFile,
@@ -137,7 +138,9 @@ export function computeStatus(input: StatusInput): StatusData {
 }
 
 /** Plain-text status for the terminal (no colors). */
-export function renderStatus(data: StatusData): string {
+/** The status as text; `host` writes bot PRs as GitLab MRs (`!12`); default GitHub. */
+export function renderStatus(data: StatusData, host?: ForgeHost): string {
+  const words = forgeWords(host);
   const lines: string[] = [];
   lines.push(
     `Branch:        ${data.branch}${data.maintenance ? " (maintenance)" : ""}`,
@@ -163,8 +166,8 @@ export function renderStatus(data: StatusData): string {
     }
   }
   if (data.botPrs.length > 0) {
-    lines.push(`Bot PRs without changeset (${data.botPrs.length}):`);
-    for (const pr of data.botPrs) lines.push(`  #${pr.number}  ${pr.title}`);
+    lines.push(`Bot ${words.prName}s without changeset (${data.botPrs.length}):`);
+    for (const pr of data.botPrs) lines.push(`  ${words.prText(pr.number)}  ${pr.title}`);
   }
   if (data.invalid.length > 0) {
     lines.push("", `Invalid changesets (${data.invalid.length}):`);

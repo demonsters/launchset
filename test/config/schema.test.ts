@@ -35,7 +35,7 @@ describe("resolveConfig: defaults and normalization", () => {
         partial: "launchset/partial/{version}",
       },
       buildNumber: { strategy: "timestamp", epoch: "2020-01-01T00:00:00Z", offset: 0 },
-      check: { bots: ["dependabot[bot]", "renovate[bot]"] },
+      check: { bots: ["dependabot[bot]", "renovate[bot]", "renovate-bot"] },
       preview: {
         enabled: true,
         label: "launchset:preview",

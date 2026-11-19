@@ -94,6 +94,12 @@ export interface UpdateReleaseInput {
   makeLatest?: boolean;
 }
 
+/** Name and email for commits (`git commit` author and committer). */
+export interface CommitIdentity {
+  name: string;
+  email: string;
+}
+
 /** The existing release to update: GitHub keys releases by id, GitLab by tag. */
 export type ReleaseRef = Pick<Release, "id" | "tag">;
 
@@ -140,6 +146,13 @@ export interface Forge {
   prFiles(number: number): Promise<PrFile[]>;
   /** Jobs of a CI run's latest attempt. */
   listJobs(runId: number): Promise<Job[]>;
+
+  /**
+   * Who launchset's commits are made as, when the host needs its own (GitLab: the token's
+   * user from `GET /user`, with a `launchset@noreply.<host>` fallback). Absent on GitHub, which
+   * keeps the launchset[bot] identity. Never throws.
+   */
+  identity?(): Promise<CommitIdentity>;
 }
 
 /** The hidden marker of a sticky comment. */

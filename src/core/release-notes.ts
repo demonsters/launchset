@@ -4,6 +4,7 @@
  * superseded partial release. Pure.
  */
 
+import type { ForgeHost } from "./forge-links.ts";
 import { alert, code, joinWords } from "./plan-common.ts";
 
 /** The state of one manual target for one released version (spec 9.8). */
@@ -25,11 +26,13 @@ const BLOCK =
 
 export const MANUAL_TARGETS_HEADING = "### Manual targets";
 
-function renderEntry(entry: ManualTargetEntry, version?: string): string {
+function renderEntry(entry: ManualTargetEntry, version?: string, host?: ForgeHost): string {
   if (!entry.shipped) {
-    const how = version
-      ? ` (ship it with a release workflow run with target ${code(entry.target)} and version ${code(version)})`
-      : "";
+    const how = !version
+      ? ""
+      : host === "gitlab"
+        ? ` (ship it with a release pipeline run with ${code(`LAUNCHSET_TARGET=${entry.target}`)} and ${code(`LAUNCHSET_RELEASE_VERSION=${version}`)})`
+        : ` (ship it with a release workflow run with target ${code(entry.target)} and version ${code(version)})`;
     return `- ${code(entry.target)}: not shipped yet${how}`;
   }
   const date = entry.date !== null ? ` ${entry.date}` : "";
@@ -49,6 +52,7 @@ type StoredEntry =
 export function renderManualTargets(
   entries: readonly ManualTargetEntry[],
   version?: string,
+  host?: ForgeHost,
 ): string {
   if (entries.length === 0) return "";
   const data: Record<string, StoredEntry> = {};
@@ -61,7 +65,7 @@ export function renderManualTargets(
     `${START} ${JSON.stringify(data)} -->`,
     MANUAL_TARGETS_HEADING,
     "",
-    ...entries.map((e) => renderEntry(e, version)),
+    ...entries.map((e) => renderEntry(e, version, host)),
     END,
   ].join("\n");
 }
@@ -128,9 +132,10 @@ export function upsertManualTargets(
   body: string,
   entries: readonly ManualTargetEntry[],
   version?: string,
+  host?: ForgeHost,
 ): string {
   const normalized = body.replace(/\r\n/g, "\n");
-  const block = renderManualTargets(entries, version);
+  const block = renderManualTargets(entries, version, host);
   if (BLOCK.test(normalized)) {
     return normalized.replace(BLOCK, () => block).replace(/\s+$/, "");
   }
@@ -146,6 +151,8 @@ export interface ReleaseBodyInput {
   /** Changelog file name for the "no section" note. */
   changelogFile: string;
   manualTargets: readonly ManualTargetEntry[];
+  /** Code host, for how to ship a manual target; default `github`. */
+  host?: ForgeHost;
 }
 
 /** Body of a release's GitHub Release (spec 9.3): the changelog section, then the manual targets. */
@@ -154,7 +161,7 @@ export function renderReleaseBody(input: ReleaseBodyInput): string {
     input.section && input.section.trim() !== ""
       ? input.section.trim()
       : `_No section for ${input.version} in ${input.changelogFile}._`;
-  return upsertManualTargets(section, input.manualTargets, input.version);
+  return upsertManualTargets(section, input.manualTargets, input.version, input.host);
 }
 
 export interface PartialReleaseBodyInput {
@@ -167,6 +174,8 @@ export interface PartialReleaseBodyInput {
   missing: readonly string[];
   section: string | null;
   changelogFile: string;
+  /** Code host: GitLab gets a lowercase alert (see `alert`); default `github`. */
+  host?: ForgeHost;
 }
 
 /** Title of a superseded partial release (spec 9.6): `v1.4.0 (partial, superseded by v1.4.1)`. */
@@ -186,6 +195,7 @@ export function renderPartialReleaseBody(input: PartialReleaseBodyInput): string
     alert(
       "WARNING",
       `${input.tag} was never fully released: ${input.supersededBy} superseded it before every auto target shipped. It never gets a release tag.`,
+      input.host,
     ),
     "",
     `- Shipped: ${list(input.shipped)}`,

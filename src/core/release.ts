@@ -7,6 +7,8 @@
 import { isMaintenanceBranch } from "./branches.ts";
 import type { ResolvedConfig } from "./config/schema.ts";
 import { LaunchsetError } from "./errors.ts";
+import { forgeHints } from "./forge-hints.ts";
+import type { ForgeHost } from "./forge-links.ts";
 import {
   type BotPrInfo,
   buildTargetPlans,
@@ -98,6 +100,8 @@ export interface ReleaseInput {
   run?: RunInfo;
   /** `owner/repo`. */
   repository?: string;
+  /** Code host, for hints and notices; default `github`. */
+  host?: ForgeHost;
 }
 
 export interface ReleaseDecision {
@@ -154,7 +158,7 @@ function assertPlainRoot(version: string, file: string): void {
 /** What a release-channel plan is built from. */
 export type PlanInput = Pick<
   ReleaseInput,
-  "config" | "branch" | "tags" | "now" | "run" | "repository"
+  "config" | "branch" | "tags" | "now" | "run" | "repository" | "host"
 >;
 
 interface BasePlanFields {
@@ -213,6 +217,7 @@ function buildPlan(
     createdAt: plan.createdAt,
     markerTemplate: { tags: input.config.tags },
     ...(fields.buildNumber !== undefined ? { buildNumber: fields.buildNumber } : {}),
+    ...(input.host ? { host: input.host } : {}),
   });
   plan.buildNumber =
     fields.buildNumber !== undefined
@@ -221,6 +226,7 @@ function buildPlan(
           now: input.now,
           version: fields.version,
           ...(input.run ? { run: input.run } : {}),
+          ...(input.host ? { host: input.host } : {}),
         });
   return plan;
 }
@@ -316,7 +322,7 @@ export function planRelease(input: ReleaseInput): ReleaseDecision {
       throw new LaunchsetError(
         "no-release-commit",
         `can't find the release commit of ${version} on ${input.branch}: no marker tag for it and no first-parent commit that changed the root version`,
-        { hint: "Fetch the full history (actions/checkout with fetch-depth: 0) and try again." },
+        { hint: forgeHints(input.host).fullHistoryRetry },
       );
     }
     const missing = missingAutoTargets(index, config, version);
@@ -448,7 +454,9 @@ function planPublish(
   if (notLatest) {
     plan.distTag = distTag({ channel: "release", version, maintenance: true });
     notices.push(
-      `${version} is lower than the latest release ${latest}: it doesn't move latest (Docker latest/major tags, npm dist-tag, GitHub latest).`,
+      input.host === "gitlab"
+        ? `${version} is lower than the latest release ${latest}: it doesn't move latest (Docker latest/major tags, npm dist-tag). GitLab still lists its release as the latest one (it picks the newest by release date).`
+        : `${version} is lower than the latest release ${latest}: it doesn't move latest (Docker latest/major tags, npm dist-tag, GitHub latest).`,
     );
   }
   if (matrix.length === 0) {
@@ -557,7 +565,7 @@ export function buildShipPlan(
   const releaseSha = input.tags.shas.get(tag);
   if (!releaseSha) {
     throw new LaunchsetError("missing-tag-sha", `the commit of tag ${tag} is unknown`, {
-      hint: "Fetch the tags (actions/checkout with fetch-depth: 0) and try again.",
+      hint: forgeHints(input.host).tagsRetry,
     });
   }
   const maintenance = isMaintenanceBranch(input.config, input.branch);

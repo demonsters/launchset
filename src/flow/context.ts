@@ -7,13 +7,19 @@
 import { loadConfig } from "../config/load.ts";
 import type { ResolvedConfig } from "../core/config/schema.ts";
 import { LaunchsetError } from "../core/errors.ts";
+import { forgeHints } from "../core/forge-hints.ts";
 import { type ForgeHost, forgeLinks } from "../core/forge-links.ts";
 import type { RunInfo } from "../core/types.ts";
 import { createGitHub } from "../forge/github/index.ts";
 import { createGitLab } from "../forge/gitlab/index.ts";
 import type { Forge } from "../forge/types.ts";
-import { Git } from "../git/index.ts";
-import { type CiEnvironment, detectHost, readCiEnvironment } from "./ci/index.ts";
+import { Git, type GitIdentity } from "../git/index.ts";
+import {
+  type CiEnvironment,
+  detectHost,
+  readCiEnvironment,
+  serverUrlFromRemote,
+} from "./ci/index.ts";
 
 export interface Logger {
   info(message: string): void;
@@ -79,12 +85,37 @@ export async function createContext(options: ContextOptions): Promise<FlowContex
   const env = options.env ?? process.env;
   const log = options.log ?? silentLogger;
   const { config, file, root } = await loadConfig(options.cwd);
-  const detected = await detectHost(env, () => originUrl(root));
+  let remote: Promise<string | undefined> | undefined;
+  const origin = () => (remote ??= originUrl(root));
+  const detected = await detectHost(env, origin);
   const { host } = detected;
   const ci = await readCiEnvironment(host, env);
+  if (host === "gitlab" && !env.CI_SERVER_URL) {
+    // Outside GitLab CI (a local `launchset status`), a self-managed server is the remote's.
+    const url = await origin();
+    const fromRemote = url === undefined ? undefined : serverUrlFromRemote(url);
+    if (fromRemote) {
+      ci.serverUrl = fromRemote;
+      if (!env.CI_API_V4_URL) ci.apiUrl = `${fromRemote}/api/v4`;
+    }
+  }
   const { serverUrl } = ci;
   const token = options.token || ci.token || undefined;
-  const git = new Git({ cwd: root, ...(token ? { token } : {}), serverUrl, host });
+  // GitLab: launchset commits as the token's own user (push rules may reject unknown
+  // authors), looked up only when something is committed.
+  let commitForge: Forge | undefined;
+  const identity =
+    host === "gitlab"
+      ? async (): Promise<GitIdentity> =>
+          (await commitForge?.identity?.()) ?? gitlabFallbackIdentity(env, serverUrl)
+      : undefined;
+  const git = new Git({
+    cwd: root,
+    ...(token ? { token } : {}),
+    serverUrl,
+    host,
+    ...(identity ? { identity } : {}),
+  });
   let repository = options.repository || ci.repository || undefined;
   if (!repository) repository = (await git.repoFromRemote().catch(() => undefined)) ?? undefined;
   const client = (clientToken: string | undefined, kind?: "job") => {
@@ -96,6 +127,7 @@ export async function createContext(options: ContextOptions): Promise<FlowContex
         repository,
         ...(ci.apiUrl ? { apiUrl: ci.apiUrl } : {}),
         serverUrl,
+        ...(env.CI_SERVER_HOST ? { commitHost: env.CI_SERVER_HOST } : {}),
         log,
       });
     }
@@ -111,6 +143,7 @@ export async function createContext(options: ContextOptions): Promise<FlowContex
   // can do; its writes fail with a hint to set LAUNCHSET_TOKEN.
   const forge = client(token) ?? (token ? undefined : fallback());
   const fallbackForge = token && ci.fallbackToken !== token ? fallback() : undefined;
+  commitForge = forge;
   const context: FlowContext = {
     cwd: root,
     config,
@@ -136,14 +169,34 @@ export async function createContext(options: ContextOptions): Promise<FlowContex
   return context;
 }
 
+/**
+ * The identity of launchset's GitLab commits when `GET /user` can't tell:
+ * `launchset <launchset@noreply.<CI_SERVER_HOST or the server's host>>`.
+ */
+export function gitlabFallbackIdentity(
+  env: Record<string, string | undefined>,
+  serverUrl: string,
+): GitIdentity {
+  let host = env.CI_SERVER_HOST?.trim();
+  if (!host) {
+    try {
+      host = new URL(serverUrl).hostname;
+    } catch {
+      host = "gitlab.com";
+    }
+  }
+  return { name: "launchset", email: `launchset@noreply.${host}` };
+}
+
 /** The forge client, or a clear error saying a token is needed. */
 export function requireForge(context: FlowContext, what: string): Forge {
   if (context.forge) return context.forge;
-  throw new LaunchsetError("no-github-token", `${what} needs a GitHub token and the repository.`, {
-    hint: context.repository
-      ? "Pass --token or set GITHUB_TOKEN (in workflows: the GitHub App token)."
-      : "Pass --token and --repo owner/repo, or set GITHUB_TOKEN and GITHUB_REPOSITORY.",
-  });
+  const hints = forgeHints(context.host);
+  throw new LaunchsetError(
+    context.host === "gitlab" ? "no-gitlab-token" : "no-github-token",
+    `${what} ${hints.tokenNeeded}`,
+    { hint: hints.tokenHint(Boolean(context.repository)) },
+  );
 }
 
 /**

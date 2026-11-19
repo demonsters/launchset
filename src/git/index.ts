@@ -13,12 +13,16 @@
  * for `GITHUB_TOKEN`) followed by `http.<server>/.extraheader=AUTHORIZATION: basic …`, passed
  * through `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n` environment variables so
  * the token never appears in a process's argv. Nothing is written to the git config or the
- * remote URL.
+ * remote URL. The header authenticates the first request, so it also wins over credentials in
+ * the remote URL (a GitLab runner clones with `https://gitlab-ci-token:<job token>@…`). The
+ * basic-auth user is `x-access-token` on GitHub and `oauth2` on GitLab (any non-blank user
+ * works with a GitLab access token).
  */
 
 import { execFile } from "node:child_process";
 import { posix } from "node:path";
 import { EXPECTED_ERROR } from "../core/errors.ts";
+import { forgeHints, GITLAB_JOB_TOKEN_PUSH, gitPushHints } from "../core/forge-hints.ts";
 import { DEFAULT_SERVER_URLS, type ForgeHost } from "../core/forge-links.ts";
 
 /** Identity of commits launchset makes (release PR, changelog backport). */
@@ -43,8 +47,12 @@ export interface GitOptions {
   host?: ForgeHost;
   /** Remote name; default `origin`. */
   remote?: string;
-  /** Identity for commits made by launchset; default {@link LAUNCHSET_IDENTITY}. */
-  identity?: GitIdentity;
+  /**
+   * Identity for commits made by launchset; default {@link LAUNCHSET_IDENTITY}. A function is
+   * called once, at the first commit (so commands that never commit never resolve it, e.g. with
+   * an API call).
+   */
+  identity?: GitIdentity | (() => Promise<GitIdentity>);
 }
 
 export interface RunOptions {
@@ -215,9 +223,18 @@ export function normalizeServerUrl(
   return url.endsWith("/") ? url : `${url}/`;
 }
 
-/** The `AUTHORIZATION` header value git sends for an installation/App token. */
-export function basicAuthHeader(token: string): string {
-  return `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${token}`).toString("base64")}`;
+/** The basic-auth user git sends with the token: GitHub `x-access-token`, GitLab `oauth2`. */
+export const GIT_TOKEN_USERS: Readonly<Record<ForgeHost, string>> = {
+  github: "x-access-token",
+  gitlab: "oauth2",
+};
+
+/**
+ * The `AUTHORIZATION` header value git sends for a token: a GitHub installation/App token, or
+ * (with `host` `gitlab`) a GitLab access token.
+ */
+export function basicAuthHeader(token: string, host: ForgeHost = "github"): string {
+  return `AUTHORIZATION: basic ${Buffer.from(`${GIT_TOKEN_USERS[host]}:${token}`).toString("base64")}`;
 }
 
 /**
@@ -259,23 +276,46 @@ export const NO_HOOKS = process.platform === "win32" ? "NUL" : "/dev/null";
  * the empty-value reset and would send the checkout's (read-only) header first, so its
  * pre-push lock check fails with "must have push access". Like git, it uses only the most
  * specific matching key, and `<owner>/` matches both the push URL and the LFS URL
- * (`<owner>/<repo>.git/info/lfs`).
+ * (`<owner>/<repo>.git/info/lfs`). `owner` may be a nested namespace (`group/sub`, GitLab):
+ * each segment is encoded. `host` picks the basic-auth user ({@link GIT_TOKEN_USERS}).
  */
 export function authConfigEnv(
   token: string,
   serverUrl?: string,
   baseEnv: NodeJS.ProcessEnv = process.env,
   owner?: string,
+  host: ForgeHost = "github",
 ): Record<string, string> {
-  const scope = owner ? `${encodeURIComponent(owner)}/` : "";
-  const key = `http.${normalizeServerUrl(serverUrl)}${scope}.extraheader`;
+  const scope = owner ? `${owner.split("/").map(encodeURIComponent).join("/")}/` : "";
+  const key = `http.${normalizeServerUrl(serverUrl, host)}${scope}.extraheader`;
   return configEnv(
     [
       [key, ""],
-      [key, basicAuthHeader(token)],
+      [key, basicAuthHeader(token, host)],
     ],
     baseEnv,
   );
+}
+
+/**
+ * The `http.<url>` scope of a GitLab remote: its https/http URL without credentials, query and
+ * the project's own path segment, e.g. `https://gitlab.acme.dev:8443/group/sub/` for
+ * `https://gitlab-ci-token:…@gitlab.acme.dev:8443/group/sub/app.git`. Like `<owner>/` on
+ * GitHub it matches the push URL and the LFS URL (`…/app.git/info/lfs`), and it follows the
+ * remote even when the runner clones from another host name or a relative URL root than
+ * `CI_SERVER_URL`. Undefined for ssh and local remotes (the header doesn't apply to them).
+ */
+export function remoteAuthScope(url: string): string | undefined {
+  let parsed: URL;
+  try {
+    parsed = new URL(url.trim());
+  } catch {
+    return undefined;
+  }
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return undefined;
+  const segments = parsed.pathname.split("/").filter(Boolean);
+  if (segments.length < 2) return undefined;
+  return `${parsed.protocol}//${parsed.host}/${segments.slice(0, -1).join("/")}/`;
 }
 
 /** A literal pathspec for a repo-relative path. */
@@ -297,12 +337,15 @@ export function parseRepoFromRemote(
 ): string | undefined {
   const gitlab = host === "gitlab";
   const known = new Set([DEFAULT_SERVER_URLS[host].replace(/^https:\/\//, "")]);
+  /** A self-managed GitLab's relative URL root (`/gitlab/`), which isn't part of the path. */
+  let root = "/";
   if (serverUrl?.trim()) {
     try {
       const server = new URL(normalizeServerUrl(serverUrl, host));
       known.add(server.host.toLowerCase());
       // GitLab's ssh port differs from its web port, so its bare host name counts too.
       if (gitlab) known.add(server.hostname.toLowerCase());
+      if (gitlab) root = server.pathname.endsWith("/") ? server.pathname : `${server.pathname}/`;
     } catch {
       // An unparsable server URL only means we recognise the public host alone.
     }
@@ -326,6 +369,9 @@ export function parseRepoFromRemote(
   }
   if (!known.has(remoteHost.toLowerCase())) return undefined;
   if (gitlab) {
+    if (root !== "/" && `/${path.replace(/^\/+/, "")}`.startsWith(root)) {
+      path = `/${path.replace(/^\/+/, "")}`.slice(root.length);
+    }
     const match = /^\/?(.+?)(?:\.git)?\/*$/.exec(path);
     const segments = match?.[1]?.split("/") ?? [];
     return segments.length >= 2 && segments.every(Boolean) ? segments.join("/") : undefined;
@@ -347,39 +393,70 @@ function assertRefName(kind: string, name: string): void {
   }
 }
 
+/** What {@link classifyFailure} knows about the run, for host-specific hints. */
+export interface FailureContext {
+  /** Default GitHub. */
+  host?: ForgeHost;
+  /** A token was given for network commands (GitLab: else git used the clone URL's job token). */
+  hasToken?: boolean;
+}
+
+/** GitLab's wording for pushes a protected branch or tag blocks. */
+function gitlabProtected(s: string): boolean {
+  return (
+    s.includes("protected branch") ||
+    s.includes("protected tag") ||
+    s.includes("not allowed to create this tag") ||
+    s.includes("not allowed to create tag") ||
+    s.includes("not allowed to force push") ||
+    s.includes("not allowed to delete")
+  );
+}
+
 /** The reason and a hint for common git failures in CI. */
 function classifyFailure(
   args: string[],
   stderr: string,
+  context: FailureContext = {},
 ): { reason: GitFailureReason; hint?: string } {
   const s = stderr.toLowerCase();
-  if (s.includes("without `workflows` permission") || s.includes("without workflows permission")) {
-    return {
-      reason: "workflows",
-      hint: 'The GitHub App needs the "Workflows: write" repository permission to push commits that change .github/workflows (the release branch is rebuilt from the base branch).',
-    };
+  const host = context.host ?? "github";
+  const gitlab = host === "gitlab";
+  const push = gitPushHints(host);
+  const hints = forgeHints(host);
+  // On GitLab, a push without LAUNCHSET_TOKEN used the runner's job token from the clone URL.
+  const jobToken = gitlab && context.hasToken === false;
+  if (
+    !gitlab &&
+    (s.includes("without `workflows` permission") || s.includes("without workflows permission"))
+  ) {
+    return { reason: "workflows", hint: push.workflows };
   }
-  if (s.includes("gh006") || s.includes("protected branch") || s.includes("gh013")) {
-    return {
-      reason: "protected",
-      hint: "A branch protection rule or ruleset blocks this push. Allow the launchset GitHub App to bypass it, or exclude launchset/* branches and tags from the rule.",
-    };
+  if (
+    gitlab
+      ? gitlabProtected(s)
+      : s.includes("gh006") || s.includes("protected branch") || s.includes("gh013")
+  ) {
+    return { reason: "protected", hint: push.protected };
+  }
+  if (gitlab && s.includes("pre-receive hook declined")) {
+    return { reason: "protected", hint: push.declined };
   }
   if (
     s.includes("authentication failed") ||
     s.includes("could not read username") ||
-    s.includes("returned error: 401")
+    s.includes("returned error: 401") ||
+    (gitlab && s.includes("http basic: access denied"))
   ) {
-    return {
-      reason: "auth",
-      hint: "The token was rejected. Check that the GitHub App token is passed as `token` and hasn't expired (installation tokens last one hour).",
-    };
+    return { reason: "auth", hint: jobToken ? GITLAB_JOB_TOKEN_PUSH : push.auth };
   }
-  if (s.includes("returned error: 403") || s.includes("permission to") || s.includes("denied")) {
-    return {
-      reason: "forbidden",
-      hint: 'The token lacks access. The GitHub App needs "Contents: read & write" on this repository and must be installed on it.',
-    };
+  if (
+    s.includes("returned error: 403") ||
+    s.includes("permission to") ||
+    s.includes("denied") ||
+    (gitlab && (s.includes("not allowed to push") || s.includes("not allowed to upload")))
+  ) {
+    return { reason: "forbidden", hint: jobToken ? GITLAB_JOB_TOKEN_PUSH : push.forbidden };
   }
   if (
     s.includes("shallow") ||
@@ -388,16 +465,10 @@ function classifyFailure(
     s.includes("not a valid object name") ||
     s.includes("bad object")
   ) {
-    return {
-      reason: "missing-object",
-      hint: "The commit or ref isn't available locally. In GitHub Actions, check out with `fetch-depth: 0` so the full history and tags are present.",
-    };
+    return { reason: "missing-object", hint: hints.missingObject };
   }
   if (s.includes("not a git repository")) {
-    return {
-      reason: "other",
-      hint: "Run launchset inside a git checkout (actions/checkout in CI).",
-    };
+    return { reason: "other", hint: hints.notARepository };
   }
   if (args.includes("commit") && (s.includes("nothing to commit") || s.includes("nothing added"))) {
     return { reason: "other", hint: "There were no changes to commit." };
@@ -410,7 +481,8 @@ export class Git {
   readonly remote: string;
   readonly serverUrl: string;
   readonly host: ForgeHost;
-  readonly identity: GitIdentity;
+  readonly #identity: GitIdentity | (() => Promise<GitIdentity>);
+  #resolvedIdentity: Promise<GitIdentity> | undefined;
   readonly #token: string | undefined;
   readonly #secrets: string[];
   #prefix: Promise<string> | undefined;
@@ -421,15 +493,23 @@ export class Git {
     this.remote = options.remote ?? "origin";
     this.host = options.host ?? "github";
     this.serverUrl = normalizeServerUrl(options.serverUrl, this.host);
-    this.identity = options.identity ?? LAUNCHSET_IDENTITY;
+    this.#identity = options.identity ?? LAUNCHSET_IDENTITY;
     this.#token = options.token || undefined;
     this.#secrets = [];
     if (this.#token) {
       this.#secrets.push(
         this.#token,
-        basicAuthHeader(this.#token).slice("AUTHORIZATION: basic ".length),
+        basicAuthHeader(this.#token, this.host).slice("AUTHORIZATION: basic ".length),
       );
     }
+  }
+
+  /** The identity of launchset's commits (resolved once when given as a function). */
+  async identity(): Promise<GitIdentity> {
+    const identity = this.#identity;
+    if (typeof identity !== "function") return identity;
+    this.#resolvedIdentity ??= identity();
+    return this.#resolvedIdentity;
   }
 
   /** True when a token was given (network commands authenticate with it). */
@@ -447,18 +527,36 @@ export class Git {
 
   /** Run git and return everything; throws only when git can't be started. */
   async exec(args: string[], options: RunOptions = {}): Promise<RunResult> {
-    const owner =
-      options.auth && this.#token ? (await this.repoFromRemote())?.split("/")[0] : undefined;
-    const result = await this.#spawn(args, options, owner);
+    const scope = options.auth && this.#token ? await this.#authScope() : undefined;
+    const result = await this.#spawn(args, options, scope);
     return { ...result, stdout: result.stdout.toString("utf8") };
+  }
+
+  /**
+   * Where the auth header applies (see {@link authConfigEnv}): GitHub `<server>` and the
+   * remote's owner; GitLab the remote's own URL up to the project's namespace
+   * ({@link remoteAuthScope}), else `<server>` and the namespace of the parsed repository.
+   */
+  async #authScope(): Promise<{ serverUrl: string; owner?: string }> {
+    if (this.host === "gitlab") {
+      const url = await this.#tryRemoteUrl();
+      const scope = url === undefined ? undefined : remoteAuthScope(url);
+      if (scope) return { serverUrl: scope };
+      const namespace = (await this.repoFromRemote())?.split("/").slice(0, -1).join("/");
+      return namespace
+        ? { serverUrl: this.serverUrl, owner: namespace }
+        : { serverUrl: this.serverUrl };
+    }
+    const owner = (await this.repoFromRemote())?.split("/")[0];
+    return owner ? { serverUrl: this.serverUrl, owner } : { serverUrl: this.serverUrl };
   }
 
   /** Run git; stdout as bytes. Throws only when git can't be started. */
   #spawn(
     args: string[],
     options: RunOptions,
-    /** The remote's GitHub owner, which scopes the auth header (see {@link authConfigEnv}). */
-    owner?: string,
+    /** Where the auth header applies (see {@link authConfigEnv}); undefined: no auth. */
+    scope?: { serverUrl: string; owner?: string },
   ): Promise<{ stdout: Buffer; stderr: string; code: number }> {
     const env: NodeJS.ProcessEnv = {
       ...process.env,
@@ -470,8 +568,10 @@ export class Git {
     };
     // No hooks for launchset's own git work (see NO_HOOKS).
     Object.assign(env, configEnv([["core.hooksPath", NO_HOOKS]], env));
-    if (options.auth && this.#token)
-      Object.assign(env, authConfigEnv(this.#token, this.serverUrl, env, owner));
+    if (options.auth && this.#token) {
+      const { serverUrl, owner } = scope ?? { serverUrl: this.serverUrl };
+      Object.assign(env, authConfigEnv(this.#token, serverUrl, env, owner, this.host));
+    }
     const command = this.mask(`git ${args.join(" ")}`);
     return new Promise((resolve, reject) => {
       const child = execFile(
@@ -510,7 +610,10 @@ export class Git {
   error(args: string[], result: RunResult, hint?: string): GitError {
     const command = this.mask(`git ${args.join(" ")}`);
     const stderr = this.mask(result.stderr.trim() || result.stdout.trim());
-    const failure = classifyFailure(args, result.stderr || result.stdout);
+    const failure = classifyFailure(args, result.stderr || result.stdout, {
+      host: this.host,
+      hasToken: this.hasToken,
+    });
     const finalHint = hint ?? failure.hint;
     const message = `\`${command}\` failed (exit code ${result.code}) in ${this.cwd}${stderr ? `: ${stderr}` : "."}`;
     return new GitError(message, command, stderr, result.code, finalHint, failure.reason);
@@ -576,7 +679,7 @@ export class Git {
         `git rev-parse --verify ${ref}^{commit}`,
         "",
         1,
-        classifyFailure([], "unknown revision").hint,
+        classifyFailure([], "unknown revision", { host: this.host }).hint,
         "missing-object",
       );
     }
@@ -994,7 +1097,7 @@ export class Git {
   }
 
   async #commit(message: string): Promise<string> {
-    const { name, email } = this.identity;
+    const { name, email } = await this.identity();
     await this.run(
       ["-c", "commit.gpgsign=false", "commit", "--quiet", "--no-verify", "-m", message],
       {

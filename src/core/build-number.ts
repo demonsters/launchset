@@ -4,6 +4,8 @@
 
 import type { BuildNumberConfig, TargetType } from "./config/schema.ts";
 import { LaunchsetError } from "./errors.ts";
+import { forgeHints } from "./forge-hints.ts";
+import type { ForgeHost } from "./forge-links.ts";
 import { versionParts } from "./versions.ts";
 
 /** Google Play's highest allowed `versionCode` (spec 6.3). */
@@ -12,10 +14,12 @@ export const ANDROID_MAX_VERSION_CODE = 2_100_000_000;
 export interface BuildNumberContext {
   /** The current time (the plan step's clock). */
   now: Date | number;
-  /** `github.run_number`; required by `run-number`. */
+  /** The CI run number (`github.run_number`, GitLab `CI_PIPELINE_IID`); required by `run-number`. */
   runNumber?: number;
   /** `github.run_attempt` (1-based); used by `semver`, default 1. */
   runAttempt?: number;
+  /** Code host, for messages; default `github`. */
+  host?: ForgeHost;
   /** Version being built; required by `semver` (only its `X.Y.Z` part is used). */
   version?: string;
 }
@@ -59,13 +63,9 @@ export function computeBuildNumber(
     case "run-number": {
       const run = context.runNumber;
       if (run === undefined) {
-        throw new LaunchsetError(
-          "no-run-number",
-          'the "run-number" build-number strategy only works in GitHub Actions: there is no run number here',
-          {
-            hint: 'Run it in a workflow, or use the "timestamp" strategy for builds outside CI (for example `launchset ship`).',
-          },
-        );
+        throw new LaunchsetError("no-run-number", forgeHints(context.host).noRunNumber, {
+          hint: 'Run it in a workflow, or use the "timestamp" strategy for builds outside CI (for example `launchset ship`).',
+        });
       }
       if (!Number.isSafeInteger(run) || run < 1) {
         throw new LaunchsetError(

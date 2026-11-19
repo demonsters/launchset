@@ -28,6 +28,11 @@ export interface EventPr {
   action?: string;
   /** The label of a `labeled`/`unlabeled` event. */
   label?: string;
+  /**
+   * The preview job was started by hand (GitLab: the manual preview job of an MR pipeline sets
+   * `LAUNCHSET_PREVIEW_MANUAL=true`): build a preview without the preview label.
+   */
+  manual?: boolean;
 }
 
 /**

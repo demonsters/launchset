@@ -26,6 +26,11 @@ export interface ForgeWords {
   prName: string;
   /** `GitHub Release` or `GitLab release`. */
   releaseName: string;
+  /**
+   * What the release of a prerelease tag is: `GitHub pre-release`, or `GitLab release` (GitLab
+   * has no pre-release flag: it's a release whose version is a prerelease).
+   */
+  prereleaseName: string;
 }
 
 /** {@link ForgeWords} plus URLs into one repository. */
@@ -57,6 +62,7 @@ export function forgeWords(host: ForgeHost = "github"): ForgeWords {
       prRef: (n) => `refs/merge-requests/${n}/head`,
       prName: "MR",
       releaseName: "GitLab release",
+      prereleaseName: "GitLab release",
     };
   }
   return {
@@ -65,6 +71,7 @@ export function forgeWords(host: ForgeHost = "github"): ForgeWords {
     prRef: (n) => `refs/pull/${n}/head`,
     prName: "PR",
     releaseName: "GitHub Release",
+    prereleaseName: "GitHub pre-release",
   };
 }
 

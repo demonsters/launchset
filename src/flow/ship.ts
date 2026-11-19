@@ -5,6 +5,7 @@
  */
 
 import { LaunchsetError } from "../core/errors.ts";
+import { forgeHints } from "../core/forge-hints.ts";
 import { actionOutputs, envOutputs } from "../core/outputs.ts";
 import { unknownTarget } from "../core/plan-common.ts";
 import { planRelease } from "../core/release.ts";
@@ -53,7 +54,7 @@ export async function ship(
   if (target.buildNumber.strategy === "run-number" && context.run?.number === undefined) {
     throw new LaunchsetError(
       "run-number-outside-ci",
-      `${options.target} uses the run-number build-number strategy, which only works in CI (it needs github.run_number)`,
+      `${options.target} uses the run-number build-number strategy, which only works in CI (${forgeHints(context.host).runNumberOutsideCi})`,
       {
         hint: "Ship it from CI: start the release workflow with the target input (and version). Or give the target another buildNumber strategy.",
       },

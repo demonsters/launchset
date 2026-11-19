@@ -8,6 +8,7 @@ import { isMaintenanceBranch } from "./branches.ts";
 import { isChangesetPath } from "./changesets.ts";
 import type { ResolvedConfig } from "./config/schema.ts";
 import { LaunchsetError } from "./errors.ts";
+import { type ForgeHost, forgeWords } from "./forge-links.ts";
 import { docsPage } from "./links.ts";
 import {
   type ChangesetFile,
@@ -88,6 +89,8 @@ export interface CheckInput {
    * subdirectory (`working-directory`). Default `.launchset`.
    */
   changesetDir?: string;
+  /** Code host, for "PR" / "MR" in the comment and messages; default `github`. */
+  host?: ForgeHost;
 }
 
 export type CheckFailureCode =
@@ -150,6 +153,7 @@ function howToAdd(docsUrl: string, dir: string): string {
 /** Evaluate the PR check (spec 9.2). */
 export function evaluateCheck(input: CheckInput): CheckResult {
   const { config, pr } = input;
+  const PR = forgeWords(input.host).prName;
   const dir = input.changesetDir ?? ".launchset";
   const docsUrl = input.docsUrl ?? DEFAULT_DOCS_URL;
   const failures: CheckFailure[] = [];
@@ -197,7 +201,7 @@ export function evaluateCheck(input: CheckInput): CheckResult {
   if (reason === null) {
     failures.push({
       code: "no-changeset",
-      message: `this PR adds no changeset: every PR needs one in ${dir}/ (bump: none when it needs no release).${releasePrBranch ? ` The ${code(pr.headBranch)} branch counts as the release PR only when it comes from this repository, not a fork.` : ""}`,
+      message: `this ${PR} adds no changeset: every ${PR} needs one in ${dir}/ (bump: none when it needs no release).${releasePrBranch ? ` The ${code(pr.headBranch)} branch counts as the release ${PR} only when it comes from this repository, not a fork.` : ""}`,
     });
   }
 
@@ -236,6 +240,7 @@ export function evaluateCheck(input: CheckInput): CheckResult {
     paragraphs: [passLine(result, input)],
     failures: failures.map((f) => f.message),
     warnings,
+    ...(input.host ? { host: input.host } : {}),
   });
   return result;
 }
@@ -276,19 +281,21 @@ function assertRepoRelative(files: readonly ChangesetFile[], dir: string): void 
 }
 
 function passLine(result: CheckResult, input: CheckInput): string {
+  const PR = forgeWords(input.host).prName;
   switch (result.reason) {
     case "changeset":
-      return `This PR has ${plural(result.prChangesets.length, "changeset")}.`;
+      return `This ${PR} has ${plural(result.prChangesets.length, "changeset")}.`;
     case "release-pr":
-      return "This is the launchset release PR.";
+      return `This is the launchset release ${PR}.`;
     case "bot":
       return `${code(input.pr.author)} is a bot (check.bots): no changeset needed; the release lists it under Dependencies.`;
     default:
-      return "This PR has no changeset.";
+      return `This ${PR} has no changeset.`;
   }
 }
 
 function renderCheckComment(result: CheckResult, input: CheckInput, addHelp: string): string {
+  const PR = forgeWords(input.host).prName;
   const blocks: string[] = [];
   const next =
     result.bump !== null && result.nextVersion !== null
@@ -298,14 +305,14 @@ function renderCheckComment(result: CheckResult, input: CheckInput, addHelp: str
         : "";
   if (result.reason === "release-pr") {
     blocks.push(
-      "### launchset: release PR",
-      "This is the launchset release PR. Merging it releases every auto target.",
+      `### launchset: release ${PR}`,
+      `This is the launchset release ${PR}. Merging it releases every auto target.`,
     );
   } else if (result.prChangesets.length > 0) {
     const highest = releaseBump(result.prChangesets);
     blocks.push(
       `### launchset: ${plural(result.prChangesets.length, "changeset")} found`,
-      `This PR's bump: **${highest ?? "none"}**. ${next}`.trim(),
+      `This ${PR}'s bump: **${highest ?? "none"}**. ${next}`.trim(),
       result.prChangesets
         .map((c) =>
           c.bump === "none"
@@ -316,13 +323,13 @@ function renderCheckComment(result: CheckResult, input: CheckInput, addHelp: str
     );
   } else if (result.reason === "bot") {
     blocks.push(
-      "### launchset: bot PR",
-      `No changeset needed: PRs from ${code(input.pr.author)} get a generated patch entry under Dependencies in the next release.`,
+      `### launchset: bot ${PR}`,
+      `No changeset needed: ${PR}s from ${code(input.pr.author)} get a generated patch entry under Dependencies in the next release.`,
     );
   } else {
     blocks.push(
       "### launchset: no changeset",
-      "This PR has no changeset, so the check fails.",
+      `This ${PR} has no changeset, so the check fails.`,
       addHelp,
     );
   }

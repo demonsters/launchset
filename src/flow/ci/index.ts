@@ -34,6 +34,31 @@ export function remoteHost(url: string): string | undefined {
 }
 
 /**
+ * The web server of a git remote, for a GitLab detected from the remote outside CI:
+ * `https://host[:port]` for https/http remotes (http stays http), `https://host` for ssh and
+ * scp-like remotes (their port is the ssh port). Undefined for local paths and unparsable URLs.
+ */
+export function serverUrlFromRemote(url: string): string | undefined {
+  const trimmed = url.trim();
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) {
+    try {
+      const parsed = new URL(trimmed);
+      if (parsed.protocol === "https:" || parsed.protocol === "http:") {
+        return parsed.host ? `${parsed.protocol}//${parsed.host}` : undefined;
+      }
+      if (parsed.protocol === "ssh:" || parsed.protocol === "git:") {
+        return parsed.hostname ? `https://${parsed.hostname}` : undefined;
+      }
+      return undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  const host = remoteHost(trimmed);
+  return host ? `https://${host}` : undefined;
+}
+
+/**
  * The host from the environment alone: `LAUNCHSET_HOST` (`github` / `gitlab`, anything else
  * is an error), else `GITLAB_CI=true` → gitlab, else `GITHUB_ACTIONS=true` → github.
  */

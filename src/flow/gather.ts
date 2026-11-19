@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { CHANGESET_DIR, isChangesetPath } from "../core/changesets.ts";
 import { LaunchsetError } from "../core/errors.ts";
 import { finalizeCandidates, type UnfinishedVersion } from "../core/finalize.ts";
+import { forgeHints } from "../core/forge-hints.ts";
 import {
   type BotPrInfo,
   type ChangesetFile,
@@ -195,11 +196,9 @@ export async function resolveBranch(context: FlowContext, explicit?: string): Pr
   if (fromEnv && context.ci.event?.kind !== "pr") return fromEnv;
   const current = await context.git.currentBranch();
   if (current) return current;
-  throw new LaunchsetError(
-    "no-branch",
-    "can't tell which branch this is: HEAD is detached and GITHUB_REF isn't a branch",
-    { hint: "Check out the branch (`launchset plan` also takes --branch)." },
-  );
+  throw new LaunchsetError("no-branch", forgeHints(context.host).noBranch, {
+    hint: "Check out the branch (`launchset plan` also takes --branch).",
+  });
 }
 
 /** The branch name, or undefined on a detached HEAD outside Actions. */
@@ -511,6 +510,7 @@ export function releaseInputFor(
     now: context.now,
   };
   if (state.releaseCommit) input.releaseCommit = state.releaseCommit;
+  if (context.host !== "github") input.host = context.host;
   if (context.run) input.run = context.run;
   if (context.repository) input.repository = context.repository;
   return input;

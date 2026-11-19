@@ -111,7 +111,7 @@ export async function status(
         : `Error: no changeset added or changed compared with ${since}. Add one with: launchset add`,
     );
   }
-  const text = renderStatus(data);
+  const text = renderStatus(data, context.host);
   const lines = [
     ...text.replace(/\n$/, "").split("\n"),
     ...(extra.length > 0 ? ["", ...extra] : []),

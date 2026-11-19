@@ -116,6 +116,7 @@ export async function mark(
         now: context.now,
         ...(context.run ? { run: context.run } : {}),
         ...(context.repository ? { repository: context.repository } : {}),
+        ...(context.host !== "github" ? { host: context.host } : {}),
       },
       target.name,
       version,

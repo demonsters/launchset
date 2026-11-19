@@ -45,6 +45,8 @@ function mergeRequest(env: Env): EventPr {
   set("baseRef", env.CI_MERGE_REQUEST_TARGET_BRANCH_NAME);
   set("baseSha", env.CI_MERGE_REQUEST_TARGET_BRANCH_SHA);
   set("baseRepo", env.CI_MERGE_REQUEST_PROJECT_PATH);
+  // The templates' manual preview job (an MR without the preview label) sets this variable.
+  if (env.LAUNCHSET_PREVIEW_MANUAL === "true") pr.manual = true;
   return pr;
 }
 
