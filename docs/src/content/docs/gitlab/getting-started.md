@@ -135,6 +135,8 @@ On GitHub the same job is a matrix entry with `if: matrix.target == ...` guards.
 
 Preview jobs build an MR, a preview branch or a prerelease branch without releasing anything. See [Previews on GitLab](/gitlab/previews/).
 
+GitLab starts no pipeline when you add a label, so a labeled MR builds its preview on its next pipeline (a push, or **Run pipeline**). To start previews when the label is added, create the optional pipeline schedule for `launchset-preview-sweep` (`init` prints it as an optional step): [Start previews when the label is added](/gitlab/previews/#start-previews-when-the-label-is-added-preview-sweep).
+
 ## 4. The child pipeline
 
 GitLab fixes the jobs of a pipeline before any job runs, so one job can't switch another on by its output (GitHub does that with `if: needs.launchset.outputs.mode == 'publish'`). So `launchset release` **writes** a second pipeline, `launchset-child.yml`, with only the jobs the plan needs. The parent triggers it. When there is nothing to build, the child is a single job, `launchset-nothing-to-build`, that prints why.
@@ -192,6 +194,7 @@ Create the MR. The check job reports that the MR has no changeset. Add one with 
 2. Let the token's bot push to the protected branches and create tags (usually already true).
 3. Allow pipeline variables if you want to run manual targets or previews by hand.
 4. Add your build steps to `.gitlab/launchset-targets.yml`.
+5. Optional: the [preview sweep schedule](/gitlab/previews/#start-previews-when-the-label-is-added-preview-sweep), so previews start when the label is added.
 
 Then merge. The release job opens `Release v1.4.1`. Merge that, and the child pipeline builds every target.
 

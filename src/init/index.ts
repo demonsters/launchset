@@ -39,6 +39,7 @@ import { gitlabStages, hasWorkflowRules } from "./gitlab-scan.ts";
 import {
   type GitLabPlan,
   gitlabManualSteps,
+  gitlabSweepStep,
   planGitLab,
   writeGitLabRoot,
   writeTargetsFile,
@@ -583,6 +584,9 @@ async function writeAll(
     manualSteps.push(
       "init doesn't ask the stores for their build numbers. If a store already has higher ones, `launchset verify` stops the upload and says which offset to use: set it as buildNumber.offset in launchset.config.ts.",
     );
+  }
+  if (gitlab && resolved.preview.enabled && resolved.preview.rebuildOnPush) {
+    manualSteps.push(gitlabSweepStep(resolved));
   }
   for (const m of ctx.machinery) {
     const action = m.item.actions.length > 1 ? answers[m.item.id] : "keep";

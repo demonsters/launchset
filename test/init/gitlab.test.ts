@@ -587,6 +587,12 @@ describe("init --yes on GitLab", () => {
     expect(result.manualSteps[6]).toContain("on_new_commit: interruptible");
     expect(result.manualSteps.join("\n")).not.toContain("GitHub App");
     expect(result.manualSteps.join("\n")).not.toContain(".github/workflows");
+    const sweep = result.manualSteps.filter((step) => step.includes("LAUNCHSET_PREVIEW_SWEEP"));
+    expect(sweep).toHaveLength(1);
+    expect(sweep[0]).toMatch(/^Optional: start previews when the launchset:preview label is added/);
+    expect(sweep[0]).toContain("Build > Pipeline schedules > New schedule) for the branch main");
+    expect(sweep[0]).toContain("*/10 * * * *");
+    expect(sweep[0]).toContain('`- if: $LAUNCHSET_PREVIEW_SWEEP == "true"` and `when: never`');
     expect(result.changes.find((c) => c.path === ".gitlab/launchset.yml")?.summary).toBe(
       "launchset's GitLab CI jobs, in stage deploy, the last of stages: in .gitlab-ci.yml, which has no test",
     );

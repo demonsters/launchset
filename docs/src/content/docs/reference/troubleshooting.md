@@ -208,12 +208,21 @@ Your `.gitlab-ci.yml` has no `workflow: rules`. Add the rules `init` printed: MR
 
 ### No preview for my MR
 
-- The MR has the label, but nothing runs: GitLab starts no pipeline when a label is added. Push a commit or start a new pipeline. Without the label, play the manual job `launchset-preview-plan`.
+- The MR has the label, but nothing runs: GitLab starts no pipeline when a label is added. Push a commit or start a new pipeline, or set up the [preview sweep](/gitlab/previews/#start-previews-when-the-label-is-added-preview-sweep). Without the label, play the manual job `launchset-preview-plan`.
+- The preview sweep is set up, but nothing starts: open the schedule's last pipeline (Build → Pipeline schedules) and read the `launchset-preview-sweep` log, which says what it did for each labeled MR. Check that the schedule is active (it goes inactive when its owner leaves the project) and has the variable `LAUNCHSET_PREVIEW_SWEEP=true`. On GitLab.com Free a schedule runs at most once an hour.
 - **Fork MRs** never get a preview.
 - With `preview.rebuildOnPush: false` every MR has only the manual job.
 - `preview: false` switches previews off.
 
 See [Previews on GitLab](/gitlab/previews/).
+
+### The preview sweep fails
+
+- `preview.rebuildOnPush is false, so on GitLab every MR's preview is a manual job`: the sweep can't help with that setting. Set `rebuildOnPush: true`, or delete the schedule.
+- `preview-sweep starts MR pipelines, which needs LAUNCHSET_TOKEN`: the schedule's pipeline has no `LAUNCHSET_TOKEN`. If the variable is Protected, the schedule's target branch must be protected too (the default branch usually is).
+- `GitLab API POST …/merge_requests/<iid>/pipelines failed (403)`: the token needs the `api` scope and at least the Developer role; for a protected source branch its bot must be allowed to push or merge to it. The other MRs still got their pipelines.
+- `failed (400)` with a message such as `No stages / jobs for this pipeline`: GitLab couldn't create the MR pipeline. Check that `.gitlab-ci.yml` runs merge request pipelines (its `workflow: rules`) and is valid on the MR's branch.
+- `preview-sweep is for GitLab only`: on GitHub, adding the label starts the preview workflow by itself. There is nothing to schedule.
 
 ## Frequently asked questions
 

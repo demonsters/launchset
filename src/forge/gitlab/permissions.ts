@@ -16,7 +16,7 @@ export const REQUIRED_TOKEN_SCOPES: RequiredTokenScopes = {
   scopes: [
     {
       name: "api",
-      why: "Open, update and close the release MR; post the sticky check and preview notes; create and update releases; read merge requests, commits and pipeline jobs.",
+      why: "Open, update and close the release MR; post the sticky check and preview notes; create and update releases; read merge requests, commits and pipeline jobs; start MR pipelines (the optional preview sweep).",
     },
     {
       name: "write_repository",

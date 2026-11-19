@@ -39,8 +39,18 @@ export function apiMessage(data: unknown, fallback: string): string {
   return parts.length ? [...new Set(parts)].join(": ").slice(0, 500) : fallback;
 }
 
-function hintFor(status: number | undefined, message: string, info: CallInfo): string {
+/** Hints of one call by HTTP status, in place of the general ones (not for `CI_JOB_TOKEN`). */
+export type StatusHints = Partial<Record<number, string>>;
+
+function hintFor(
+  status: number | undefined,
+  message: string,
+  info: CallInfo,
+  hints: StatusHints = {},
+): string {
   const job = info.tokenKind === "job";
+  const own = status === undefined || job ? undefined : hints[status];
+  if (own) return own;
   switch (status) {
     case undefined:
       return `Could not reach the GitLab API at ${info.apiUrl}. Check the network and CI_API_V4_URL.`;
@@ -71,15 +81,17 @@ function hintFor(status: number | undefined, message: string, info: CallInfo): s
 
 /**
  * The error for a failed call. `status` is undefined when no response arrived; `data` is the
- * parsed response body. Secrets are removed with `mask` everywhere.
+ * parsed response body. Secrets are removed with `mask` everywhere. `hints` replace the general
+ * hint for a status (a call that needs a particular role, say).
  */
 export function toGitLabError(
   failure: { status?: number; data?: unknown; cause?: unknown; networkMessage?: string },
   info: CallInfo,
   mask: (s: string) => string,
+  hints?: StatusHints,
 ): GitLabError {
   const text = apiMessage(failure.data, failure.networkMessage ?? "no details");
-  const hint = hintFor(failure.status, text, info);
+  const hint = hintFor(failure.status, text, info, hints);
   const message = mask(
     `GitLab API ${info.endpoint} failed${failure.status ? ` (${failure.status})` : ""}: ${text}`,
   );

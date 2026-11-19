@@ -1,8 +1,10 @@
 import { HttpResponse, http } from "msw";
 import { describe, expect, it } from "vitest";
+import { createGitHub } from "../../../src/forge/github/index.ts";
 import {
   createGitLab,
   GitLabError,
+  isGitLabForge,
   REQUIRED_TOKEN_SCOPES,
 } from "../../../src/forge/gitlab/index.ts";
 import { stickyMarker } from "../../../src/forge/types.ts";
@@ -578,6 +580,180 @@ describe("jobs", () => {
       conclusion: "success",
       url: `${WEB}/-/jobs/1`,
     });
+  });
+});
+
+describe("the preview sweep calls", () => {
+  const pipeline = (id: number, extra: Record<string, unknown> = {}) => ({
+    id,
+    iid: id,
+    project_id: 42,
+    sha: `sha${id}`,
+    ref: "refs/merge-requests/1/head",
+    status: "success",
+    source: "merge_request_event",
+    created_at: "2026-11-01T10:00:00Z",
+    updated_at: "2026-11-01T10:05:00Z",
+    web_url: `${WEB}/-/pipelines/${id}`,
+    ...extra,
+  });
+
+  it("is told apart from other forges", () => {
+    expect(isGitLabForge(gl())).toBe(true);
+    expect(isGitLabForge(createGitHub({ token: "t", repository: "a/b" }))).toBe(false);
+    expect(isGitLabForge(undefined)).toBe(false);
+  });
+
+  it("lists open MRs with the label over every page, flagging fork MRs", async () => {
+    const queries: URLSearchParams[] = [];
+    server.use(
+      http.get(`${PROJECT}/merge_requests`, ({ request }) => {
+        const query = new URL(request.url).searchParams;
+        queries.push(query);
+        const page = Number(query.get("page") ?? "1");
+        const labeled = (iid: number, extra: Record<string, unknown> = {}) => ({
+          ...rawMr(iid, { state: "opened" }),
+          labels: ["bug", "launchset:preview"],
+          created_at: "2026-10-01T00:00:00Z",
+          ...extra,
+        });
+        return HttpResponse.json(
+          page === 1
+            ? [labeled(1), labeled(2, { source_project_id: 77 })]
+            : [
+                labeled(3, { labels: [{ name: "launchset:preview" }] }),
+                // GitLab's filter is case-insensitive for some names: only the exact one counts.
+                labeled(4, { labels: ["Launchset:Preview"] }),
+              ],
+          { headers: pageHeaders(page, 2) },
+        );
+      }),
+    );
+    const mrs = await gl().openMergeRequestsWithLabel("launchset:preview");
+    expect(queries[0]?.get("state")).toBe("opened");
+    expect(queries[0]?.get("labels")).toBe("launchset:preview");
+    expect(queries[0]?.get("per_page")).toBe("100");
+    expect(queries.map((q) => q.get("page"))).toEqual([null, "2"]);
+    expect(mrs.map((mr) => [mr.number, mr.fork, mr.headSha])).toEqual([
+      [1, false, "head1"],
+      [2, true, "head2"],
+      [3, false, "head3"],
+    ]);
+    expect(mrs[0]).toMatchObject({
+      state: "open",
+      head: "branch-1",
+      labels: ["bug", "launchset:preview"],
+      createdAt: "2026-10-01T00:00:00Z",
+      url: `${WEB}/-/merge_requests/1`,
+    });
+  });
+
+  it("finds when the label was last added from the label events", async () => {
+    const event = (action: string, name: string | null, at: string) => ({
+      id: 1,
+      action,
+      created_at: at,
+      resource_type: "MergeRequest",
+      label: name === null ? null : { id: 3, name },
+    });
+    server.use(
+      http.get(`${PROJECT}/merge_requests/1/resource_label_events`, () =>
+        HttpResponse.json([
+          event("add", "launchset:preview", "2026-11-01T09:00:00Z"),
+          event("remove", "launchset:preview", "2026-11-01T10:00:00Z"),
+          event("add", "launchset:preview", "2026-11-01T11:00:00Z"),
+          event("add", "bug", "2026-11-01T12:00:00Z"),
+          event("add", null, "2026-11-01T13:00:00Z"),
+        ]),
+      ),
+      http.get(`${PROJECT}/merge_requests/2/resource_label_events`, () =>
+        HttpResponse.json([event("add", "bug", "2026-11-01T12:00:00Z")]),
+      ),
+    );
+    expect(await gl().labelAddedAt(1, "launchset:preview")).toBe("2026-11-01T11:00:00Z");
+    expect(await gl().labelAddedAt(2, "launchset:preview")).toBeNull();
+  });
+
+  it("lists an MR's pipelines and reads its head pipeline", async () => {
+    server.use(
+      http.get(`${PROJECT}/merge_requests/1/pipelines`, () =>
+        HttpResponse.json([
+          pipeline(8, { ref: "refs/merge-requests/1/merge" }),
+          pipeline(7, { source: undefined, created_at: undefined }),
+        ]),
+      ),
+      http.get(`${PROJECT}/merge_requests/1`, () =>
+        HttpResponse.json({ ...rawMr(1), head_pipeline: pipeline(8) }),
+      ),
+      http.get(`${PROJECT}/merge_requests/2`, () =>
+        HttpResponse.json({ ...rawMr(2), head_pipeline: null }),
+      ),
+    );
+    expect(await gl().mergeRequestPipelines(1)).toEqual([
+      {
+        id: 8,
+        sha: "sha8",
+        ref: "refs/merge-requests/1/merge",
+        status: "success",
+        source: "merge_request_event",
+        createdAt: "2026-11-01T10:00:00Z",
+        url: `${WEB}/-/pipelines/8`,
+      },
+      {
+        id: 7,
+        sha: "sha7",
+        ref: "refs/merge-requests/1/head",
+        status: "success",
+        createdAt: "",
+        url: `${WEB}/-/pipelines/7`,
+      },
+    ]);
+    expect((await gl().headPipeline(1))?.id).toBe(8);
+    expect(await gl().headPipeline(2)).toBeNull();
+  });
+
+  it("starts an MR pipeline, with a role hint when it isn't allowed", async () => {
+    const posts: string[] = [];
+    server.use(
+      http.post(`${PROJECT}/merge_requests/1/pipelines`, ({ request }) => {
+        posts.push(request.headers.get("private-token") ?? "");
+        return HttpResponse.json(pipeline(9, { status: "created" }), { status: 201 });
+      }),
+      http.post(`${PROJECT}/merge_requests/2/pipelines`, () =>
+        HttpResponse.json({ message: "403 Forbidden" }, { status: 403 }),
+      ),
+      http.post(`${PROJECT}/merge_requests/3/pipelines`, () =>
+        HttpResponse.json(
+          { message: { base: ["No stages / jobs for this pipeline."] } },
+          { status: 400 },
+        ),
+      ),
+    );
+    expect(await gl().createMergeRequestPipeline(1)).toMatchObject({
+      id: 9,
+      status: "created",
+      url: `${WEB}/-/pipelines/9`,
+    });
+    expect(posts).toEqual([TOKEN]);
+    const denied = await gl()
+      .createMergeRequestPipeline(2)
+      .catch((e: unknown) => e);
+    expect(denied).toBeInstanceOf(GitLabError);
+    expect((denied as GitLabError).message).toBe(
+      "GitLab API POST /projects/acme%2Fsub%2Fapp/merge_requests/2/pipelines failed (403): 403 Forbidden",
+    );
+    expect((denied as GitLabError).hint).toContain("at least the Developer role");
+    expect((denied as GitLabError).hint).toContain("source branch is protected");
+    const invalid = await gl()
+      .createMergeRequestPipeline(3)
+      .catch((e: unknown) => e);
+    expect((invalid as GitLabError).message).toContain("No stages / jobs for this pipeline.");
+    expect((invalid as GitLabError).hint).toContain("no job runs in merge request pipelines");
+    // A job token keeps its own hint.
+    const job = await gl({ tokenKind: "job" })
+      .createMergeRequestPipeline(2)
+      .catch((e: unknown) => e);
+    expect((job as GitLabError).hint).toContain("CI_JOB_TOKEN can't do this");
   });
 });
 

@@ -100,7 +100,7 @@ On a `release/X.Y.x` branch (a hotfix line; the pattern is `maintenanceBranches`
 
 ## Previews
 
-To get a test build of a PR (TestFlight, Play internal track, preview Docker tags), add the label `launchset:preview` to the PR (or whatever `preview.label` says in `launchset.config.*`). Previews have no side effects. PRs from forks don't get one. On GitLab, adding a label starts no pipeline: push a commit or start a new pipeline, or play the manual job `launchset-preview-plan` in the MR pipeline.
+To get a test build of a PR (TestFlight, Play internal track, preview Docker tags), add the label `launchset:preview` to the PR (or whatever `preview.label` says in `launchset.config.*`). Previews have no side effects. PRs from forks don't get one. On GitLab, adding a label starts no pipeline: push a commit or start a new pipeline, or play the manual job `launchset-preview-plan` in the MR pipeline. If the project has the preview sweep schedule, the pipeline starts by itself within a few minutes (up to an hour on GitLab.com Free).
 
 ## Check the state
 
@@ -121,6 +121,7 @@ If the repo has a `.gitlab-ci.yml` and no `.github/workflows/launchset-*.yml`, i
 - **Never hand-edit** the release MR, tags that start with `v` or `launchset/`, version numbers or `CHANGELOG.md`, as on GitHub.
 - **Tokens.** The CI/CD variable `LAUNCHSET_TOKEN` (a project or group access token) is created by a human. Never ask for, read or print its value.
 - **Manual targets.** Ship one with Run pipeline on the base branch and the variable `LAUNCHSET_TARGET` (optionally `LAUNCHSET_RELEASE_VERSION`), not with the GitHub workflow input. Never ship one unasked.
+- **Preview sweep.** Optional: a pipeline schedule with the variable `LAUNCHSET_PREVIEW_SWEEP=true` runs `launchset-preview-sweep`, which starts an MR pipeline for MRs that just got the preview label. A human creates the schedule (Build > Pipeline schedules). `npx @demonsters/launchset preview-sweep --dry-run` shows what it would do. When you add a job without `rules` to `.gitlab-ci.yml` in such a project, start its rules with `- if: $LAUNCHSET_PREVIEW_SWEEP == "true"` / `when: never` (then `- if: $CI_PIPELINE_SOURCE != "merge_request_event"`), or it runs on every schedule run.
 - **Debugging.** The plan job logs the child pipeline (collapsed section) and keeps `launchset-child.yml` as an artifact. `npx @demonsters/launchset plan --gitlab -` prints the child pipeline for the plan locally.
 
 ## If something looks wrong

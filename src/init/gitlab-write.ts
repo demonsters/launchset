@@ -269,3 +269,8 @@ export function gitlabManualSteps(config: ResolvedConfig, targets: readonly stri
     `Add your build and upload steps for ${targets.join(", ")} to ${GITLAB_FILES.targets}.`,
   ];
 }
+
+/** The optional preview sweep schedule (previews enabled, `rebuildOnPush` true). */
+export function gitlabSweepStep(config: ResolvedConfig): string {
+  return `Optional: start previews when the ${config.preview.label} label is added (GitLab starts no pipeline for a label). Create a pipeline schedule (Build > Pipeline schedules > New schedule) for the branch ${config.baseBranch} with the variable LAUNCHSET_PREVIEW_SWEEP=true and the interval */10 * * * * (GitLab.com Free runs a schedule at most once an hour, paid tiers every 5 minutes; self-managed every 10 minutes by default). Its job launchset-preview-sweep starts an MR pipeline for MRs that just got the label. Jobs without rules also run in that pipeline: to keep one out, start its rules with \`- if: $LAUNCHSET_PREVIEW_SWEEP == "true"\` and \`when: never\`.`;
+}

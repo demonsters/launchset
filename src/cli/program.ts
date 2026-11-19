@@ -23,6 +23,7 @@ import {
   version,
 } from "../flow/index.ts";
 import { type PreviewPlanData, previewComment, previewPlan } from "../flow/preview.ts";
+import { DEFAULT_SWEEP_MAX, previewSweep } from "../flow/preview-sweep.ts";
 import { Git } from "../git/index.ts";
 import { INIT_FLAGS, parseDecide } from "../init/flags.ts";
 import { packageVersion } from "../init/package-files.ts";
@@ -611,6 +612,34 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
       const context = await makeContext(io, opts);
       const result = await previewComment(context, { plan });
       return emitCi(io, cliLogger(io), "preview-comment", result, context, opts);
+    },
+  );
+
+  // preview-sweep ------------------------------------------------------------------------
+  command<{ dryRun?: boolean; max?: number }>(
+    "preview-sweep",
+    "GitLab: start an MR pipeline for MRs that just got the preview label (run it on a schedule).",
+    (cmd) => {
+      withGlobals(cmd, { json: true, ci: true });
+      cmd.option("--dry-run", "report the MRs that need a pipeline, start none");
+      cmd.option(
+        "--max <n>",
+        `pipelines to start at most, oldest label first (default: ${DEFAULT_SWEEP_MAX})`,
+        positiveInt,
+      );
+      return examples(
+        cmd,
+        "launchset preview-sweep --dry-run",
+        "launchset preview-sweep --max 5 --json",
+      );
+    },
+    async (opts) => {
+      const context = await makeContext(io, opts);
+      const result = await previewSweep(context, {
+        dryRun: Boolean(opts.dryRun),
+        ...(opts.max !== undefined ? { max: opts.max } : {}),
+      });
+      return emitCi(io, cliLogger(io), "preview-sweep", result, context, opts);
     },
   );
 

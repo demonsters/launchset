@@ -17,6 +17,7 @@ Parent pipeline, in `.gitlab/launchset.yml`:
 | `launchset-preview-plan` | MR pipelines (automatic with the label, else manual), preview and prerelease branch pushes, Run pipeline with `LAUNCHSET_PREVIEW=true` | Plans a preview or prerelease. |
 | `launchset-preview` | Same conditions | Trigger job for the preview child pipeline. |
 | `launchset-preview-comment` | Same conditions, `when: always` | The sticky MR note, or the prerelease GitLab release. |
+| `launchset-preview-sweep` | Only scheduled pipelines with `LAUNCHSET_PREVIEW_SWEEP=true` (a [schedule you create](/gitlab/previews/#start-previews-when-the-label-is-added-preview-sweep)) | `launchset preview-sweep`: starts an MR pipeline for open MRs that just got the preview label. `GIT_DEPTH: "1"`, `interruptible`. No other launchset job runs in that pipeline. |
 
 Hidden templates: `.launchset-cli` (the `node:24` image, `GIT_DEPTH: "0"`, the install lines) and `.launchset-release-rules`. Jobs run in one stage (see [the stage](/gitlab/getting-started/#the-stage)).
 
@@ -46,6 +47,12 @@ Set on **Build → Pipelines → Run pipeline** or through the API. They need [p
 | `LAUNCHSET_TARGET=<names>` | With `LAUNCHSET_PREVIEW=true` | The targets to preview (comma-separated, or `all`). |
 
 `LAUNCHSET_PREVIEW_MANUAL=true` is set by the manual preview job in MR pipelines. You don't set it yourself.
+
+## Schedule variables
+
+| Variable | Where | Effect |
+| --- | --- | --- |
+| `LAUNCHSET_PREVIEW_SWEEP=true` | A pipeline schedule (Build → Pipeline schedules) on the default branch | Runs only `launchset-preview-sweep`. Your jobs without `rules` run there too unless you exclude them: see [Keep your own jobs out of the schedule](/gitlab/previews/#keep-your-own-jobs-out-of-the-schedule). |
 
 ## The `--ci` files
 
@@ -78,13 +85,18 @@ See also [CLI reference](/reference/cli/).
 | `LAUNCHSET_HOST` | `github` or `gitlab`. Overrides detection. |
 | `LAUNCHSET_TARGET`, `LAUNCHSET_RELEASE_VERSION`, `LAUNCHSET_FORCE` | The inputs of a manual run (above). |
 | `LAUNCHSET_PREVIEW`, `LAUNCHSET_PREVIEW_MANUAL` | Preview runs (above). |
+| `LAUNCHSET_PREVIEW_SWEEP` | The preview sweep schedule (above). Read by the job's rules only. |
 | `LAUNCHSET_PLAN` | The plan JSON, for `--plan`. |
 | `LAUNCHSET_DEBUG` | `1` prints stack traces. |
 | `CI_*` | Predefined variables: `CI_PIPELINE_SOURCE`, `CI_COMMIT_BRANCH`, `CI_COMMIT_SHA`, `CI_COMMIT_TAG`, `CI_PROJECT_PATH`, `CI_SERVER_URL`, `CI_API_V4_URL`, `CI_PIPELINE_ID`, `CI_PIPELINE_IID`, `CI_JOB_NAME`, `CI_MERGE_REQUEST_*`. |
 
 Host detection: `LAUNCHSET_HOST`, else `GITLAB_CI=true` means GitLab, else `GITHUB_ACTIONS=true` means GitHub, else the host of the `origin` remote (a name with `gitlab` in it means GitLab), else GitHub. An invalid `LAUNCHSET_HOST` is an error.
 
-Pipeline events: `merge_request_event` is a check or preview of an MR; `push` is a branch push; `web`, `api` (and `trigger`, `pipeline`, `chat`) count as a manual run with the inputs above; `parent_pipeline` is a child pipeline and takes the MR of its parent.
+Pipeline events: `merge_request_event` is a check or preview of an MR (also the MR pipelines the preview sweep starts); `push` is a branch push; `web`, `api` (and `trigger`, `pipeline`, `chat`) count as a manual run with the inputs above; `parent_pipeline` is a child pipeline and takes the MR of its parent; `schedule` runs only the preview sweep.
+
+## The `preview-sweep` command
+
+`launchset preview-sweep [--dry-run] [--max <n>]` is GitLab only. It lists the open MRs with `preview.label`, finds when the label was last added to each (its label events), and starts an MR pipeline unless one of the MR's pipelines for its head commit was created at or after that time. At most `--max` (10) per run, oldest label first; fork MRs and the release MR are skipped. It reports every MR (`--json`: `mergeRequests[]` with `outcome` `created`, `would-create`, `skipped` or `failed`) and exits `1` when a pipeline couldn't be started. It needs `LAUNCHSET_TOKEN` and refuses when `preview.rebuildOnPush` is false. API calls: `GET /projects/:id/merge_requests?state=opened&labels=…`, `GET …/merge_requests/:iid/resource_label_events`, `GET …/merge_requests/:iid/pipelines`, `GET …/merge_requests/:iid` (the head pipeline, only after a merged results pipeline) and `POST …/merge_requests/:iid/pipelines`. See [the CLI reference](/reference/cli/#launchset-preview-sweep).
 
 ## Differences from GitHub
 
@@ -96,7 +108,7 @@ Pipeline events: `merge_request_event` is a check or preview of an MR; `push` is
 | Token | A GitHub App | An access token in `LAUNCHSET_TOKEN` |
 | MR words | PR, `#N` | MR, `!N`, links to `/-/merge_requests/N` |
 | Run link | `/actions/runs/N` | `/-/pipelines/N` |
-| Preview by label | Starts when the label is added | Automatic on every pipeline of a labeled MR; otherwise a manual job. No label events. |
+| Preview by label | Starts when the label is added | Automatic on every pipeline of a labeled MR; otherwise a manual job. No label events: the optional preview sweep schedule starts a pipeline a few minutes after the label is added. |
 | Markdown alerts in notes | `> [!NOTE]` | `> [!note]` (lowercase, what GitLab documents; rendered since 17.10) |
 | Releases | A pre-release flag, `make_latest` | No prerelease flag, no "latest" flag. "Latest" is the release with the newest `released_at`. A hotfix release of a lower version therefore becomes the "latest" one. |
 | `semver` build numbers | Use the run attempt | Always attempt 1: GitLab has no attempt counter. A retried plan job computes the same number, which is what a retry should upload. |

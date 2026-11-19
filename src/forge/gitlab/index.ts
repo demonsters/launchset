@@ -18,9 +18,9 @@ import type {
   StickyCommentResult,
 } from "../types.ts";
 import { stickyMarker } from "../types.ts";
-import { type CallInfo, GitLabError, toGitLabError } from "./errors.ts";
+import { type CallInfo, GitLabError, type StatusHints, toGitLabError } from "./errors.ts";
 
-export { GitLabError } from "./errors.ts";
+export { GitLabError, type StatusHints } from "./errors.ts";
 export { REQUIRED_TOKEN_SCOPES } from "./permissions.ts";
 
 export interface GitLabOptions {
@@ -47,6 +47,9 @@ export interface GitLabOptions {
 
 type RawMr = {
   iid: number;
+  created_at?: string;
+  /** Label names (without `with_labels_details`), or label objects (with it). */
+  labels?: (string | { name?: string })[];
   title: string;
   description?: string | null;
   state: string;
@@ -78,6 +81,86 @@ type RawRelease = {
 };
 
 type RawJob = { id: number; name: string; status: string; web_url?: string };
+
+type RawPipeline = {
+  id: number;
+  sha?: string | null;
+  ref?: string | null;
+  status?: string | null;
+  source?: string | null;
+  created_at?: string | null;
+  web_url?: string | null;
+};
+
+type RawLabelEvent = {
+  action?: string;
+  created_at?: string;
+  /** Null for a label that was deleted since. */
+  label?: { name?: string } | null;
+};
+
+/** An open merge request from {@link GitLabForge.openMergeRequestsWithLabel}. */
+export interface LabeledMergeRequest extends PullRequest {
+  /** Its label names. */
+  labels: string[];
+  /** From a fork (`source_project_id` isn't `target_project_id`). */
+  fork: boolean;
+  /** ISO time the MR was created. */
+  createdAt: string;
+}
+
+/** A pipeline of a merge request (`GET /merge_requests/:iid/pipelines`). */
+export interface MergeRequestPipeline {
+  id: number;
+  /** The commit it ran: the MR head, or in a merged results pipeline the merge commit. */
+  sha: string;
+  /** `refs/merge-requests/<iid>/head` (detached), `…/merge` (merged results), or a branch. */
+  ref: string;
+  status: string;
+  /** `merge_request_event`, `push`, …; absent when GitLab leaves it out. */
+  source?: string;
+  /** ISO time it was created; empty when GitLab leaves it out. */
+  createdAt: string;
+  url: string;
+}
+
+/** The brand of {@link GitLabForge}, for {@link isGitLabForge}. */
+export const GITLAB_FORGE: unique symbol = Symbol.for("launchset.gitlab-forge");
+
+/**
+ * The GitLab client: a {@link Forge} plus what only GitLab needs (the preview sweep). `Forge`
+ * itself stays host-neutral; flows get this with {@link isGitLabForge}.
+ */
+export interface GitLabForge extends Forge {
+  readonly [GITLAB_FORGE]: true;
+  /** Open merge requests that have `label` (paginated), fork MRs included (`fork: true`). */
+  openMergeRequestsWithLabel(label: string): Promise<LabeledMergeRequest[]>;
+  /** When `label` was last added to MR `iid` (ISO time, from its label events), or null. */
+  labelAddedAt(iid: number, label: string): Promise<string | null>;
+  /** Every pipeline of MR `iid` (paginated), newest first as GitLab lists them. */
+  mergeRequestPipelines(iid: number): Promise<MergeRequestPipeline[]>;
+  /**
+   * The MR's head pipeline: GitLab's latest pipeline for the MR's head commit, merged results
+   * pipelines included (their `sha` is the merge commit). Null when it has none.
+   */
+  headPipeline(iid: number): Promise<MergeRequestPipeline | null>;
+  /**
+   * Start a merge request pipeline for MR `iid` (detached, or merged results when the project
+   * has them on). Needs the Developer role.
+   */
+  createMergeRequestPipeline(iid: number): Promise<MergeRequestPipeline>;
+}
+
+/** True when `forge` is the GitLab client (so the GitLab-only calls exist). */
+export function isGitLabForge(forge: Forge | undefined): forge is GitLabForge {
+  return (forge as Partial<GitLabForge> | undefined)?.[GITLAB_FORGE] === true;
+}
+
+/** Hints for starting an MR pipeline. */
+const CREATE_PIPELINE_HINTS: StatusHints = {
+  400: "GitLab couldn't create the pipeline (see its message): for example a .gitlab-ci.yml error, or no job runs in merge request pipelines.",
+  403: "Starting a merge request pipeline needs a token with the `api` scope and at least the Developer role; when the MR's source branch is protected, the token's user must also be allowed to push or merge to it.",
+};
 
 type RawBridge = {
   /** The pipeline the bridge job belongs to. */
@@ -163,9 +246,29 @@ const BOT_USERNAME = /^(project|group)_\d+_bot(_|$)/;
 type RequestOptions = {
   query?: Record<string, string | number | undefined>;
   body?: unknown;
+  /** Hints by status for this call, in place of the general ones. */
+  hints?: StatusHints;
 };
 
-export function createGitLab(options: GitLabOptions): Forge {
+function toPipeline(raw: RawPipeline): MergeRequestPipeline {
+  const pipeline: MergeRequestPipeline = {
+    id: raw.id,
+    sha: raw.sha ?? "",
+    ref: raw.ref ?? "",
+    status: raw.status ?? "",
+    createdAt: raw.created_at ?? "",
+    url: raw.web_url ?? "",
+  };
+  if (raw.source) pipeline.source = raw.source;
+  return pipeline;
+}
+
+const labelNames = (raw: RawMr): string[] =>
+  (raw.labels ?? [])
+    .map((label) => (typeof label === "string" ? label : (label?.name ?? "")))
+    .filter((name) => name !== "");
+
+export function createGitLab(options: GitLabOptions): GitLabForge {
   const repository = options.repository?.trim().replace(/^\/+|\/+$/g, "") ?? "";
   if (!repository) {
     throw new GitLabError(
@@ -212,6 +315,7 @@ export function createGitLab(options: GitLabOptions): Forge {
     url: string,
     endpoint: string,
     body?: unknown,
+    hints?: StatusHints,
   ): Promise<{ data: unknown; headers: Headers }> {
     const info: CallInfo = { endpoint, repository, apiUrl, tokenKind };
     let response: Response;
@@ -223,7 +327,7 @@ export function createGitLab(options: GitLabOptions): Forge {
       });
     } catch (error) {
       const networkMessage = error instanceof Error ? error.message : String(error);
-      throw toGitLabError({ cause: error, networkMessage }, info, mask);
+      throw toGitLabError({ cause: error, networkMessage }, info, mask, hints);
     }
     const text = await response.text().catch(() => "");
     let data: unknown = text;
@@ -237,6 +341,7 @@ export function createGitLab(options: GitLabOptions): Forge {
         { status: response.status, data, networkMessage: response.statusText },
         info,
         mask,
+        hints,
       );
     }
     return { data, headers: response.headers };
@@ -248,6 +353,7 @@ export function createGitLab(options: GitLabOptions): Forge {
       `${apiUrl}${path}${queryString(opts.query)}`,
       `${method} ${path}`,
       opts.body,
+      opts.hints,
     );
     return data as T;
   }
@@ -370,6 +476,7 @@ export function createGitLab(options: GitLabOptions): Forge {
     }));
 
   return {
+    [GITLAB_FORGE]: true,
     repository,
 
     // The token's own user (`GET /user`): a project or group access token's bot commits as
@@ -521,6 +628,54 @@ export function createGitLab(options: GitLabOptions): Forge {
         jobs.push(...(await jobsOf(child.id)));
       }
       return jobs;
+    },
+
+    async openMergeRequestsWithLabel(label) {
+      const mrs = await all<RawMr>(`${project}/merge_requests`, {
+        state: "opened",
+        labels: label,
+      });
+      // The filter is GitLab's; the exact name is checked here too.
+      return mrs
+        .filter((mr) => mr.state === "opened" && labelNames(mr).includes(label))
+        .map((mr) => ({
+          ...toPr(mr),
+          labels: labelNames(mr),
+          fork:
+            mr.source_project_id !== undefined &&
+            mr.target_project_id !== undefined &&
+            mr.source_project_id !== mr.target_project_id,
+          createdAt: mr.created_at ?? "",
+        }));
+    },
+
+    async labelAddedAt(iid, label) {
+      const events = await all<RawLabelEvent>(`${mrPath(iid)}/resource_label_events`);
+      let latest: string | null = null;
+      for (const event of events) {
+        if (event.action !== "add" || event.label?.name !== label || !event.created_at) continue;
+        if (latest === null || Date.parse(event.created_at) > Date.parse(latest)) {
+          latest = event.created_at;
+        }
+      }
+      return latest;
+    },
+
+    async mergeRequestPipelines(iid) {
+      return (await all<RawPipeline>(`${mrPath(iid)}/pipelines`)).map(toPipeline);
+    },
+
+    async headPipeline(iid) {
+      const mr = await request<RawMr & { head_pipeline?: RawPipeline | null }>("GET", mrPath(iid));
+      return mr.head_pipeline ? toPipeline(mr.head_pipeline) : null;
+    },
+
+    async createMergeRequestPipeline(iid) {
+      return toPipeline(
+        await request<RawPipeline>("POST", `${mrPath(iid)}/pipelines`, {
+          hints: CREATE_PIPELINE_HINTS,
+        }),
+      );
     },
   };
 }

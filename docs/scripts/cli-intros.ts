@@ -13,7 +13,7 @@ export const COMMON_FLAGS_NOTE = [
   "- `--cwd <dir>` sets the repo root. Without it, launchset uses the nearest parent folder that has a `launchset.config.*` file. `init` has no config yet, so it defaults to the git repository root (CI configuration only runs from there: GitHub workflows, `.gitlab-ci.yml`) and says so when that isn't the folder you ran it in.",
   "- GitHub-facing commands take a token from `--token`, then `LAUNCHSET_TOKEN`, then `GITHUB_TOKEN`, and the repository from `--repo`, then `GITHUB_REPOSITORY`, then the `origin` remote.",
   "- `--plan` takes the plan JSON itself, `@file.json`, or reads `LAUNCHSET_PLAN`.",
-  "- `--ci` (default: on when `GITLAB_CI=true`; `--no-ci` turns it off) is accepted by every command that produces outputs: `release`, `plan`, `preview-plan`, `preview-comment`, `stamp`, `verify`, `mark`, `finalize`, `check`, `ship` and `status`. See CI output files below.",
+  "- `--ci` (default: on when `GITLAB_CI=true`; `--no-ci` turns it off) is accepted by every command that produces outputs: `release`, `plan`, `preview-plan`, `preview-comment`, `preview-sweep`, `stamp`, `verify`, `mark`, `finalize`, `check`, `ship` and `status`. See CI output files below.",
   "- Colors are only used in a terminal, and never when `NO_COLOR` is set. `LAUNCHSET_DEBUG=1` prints stack traces.",
 ].join("\n");
 
@@ -50,6 +50,8 @@ export const CLI_INTROS: Record<string, string> = {
     "Plans a preview build and, on a prerelease branch, reserves the prerelease tag by pushing it. `plan --preview` is the dry run. `--target` lists the targets of a manual run (comma separated, or `all`). The plan is skipped (with a reason) when there is nothing to preview.",
   "preview-comment":
     "Posts the preview results: the sticky PR comment, or the prerelease notes on a prerelease branch. Pass the plan from `preview-plan`. An empty or missing plan means the preview was skipped, and nothing is posted.",
+  "preview-sweep":
+    "GitLab only. Starts a merge request pipeline for each open MR that got the preview label since its last MR pipeline for the head commit, so its preview builds without a push (GitLab starts no pipeline when a label is added). Runs in a pipeline schedule with `LAUNCHSET_PREVIEW_SWEEP=true`; see [Previews on GitLab](/gitlab/previews/#start-previews-when-the-label-is-added-preview-sweep). Starts at most `--max` pipelines (default 10), oldest label first, skips fork MRs and the release MR, and reports every MR. `--dry-run` only reports. Exits `1` when a pipeline couldn't be started (the others are still started). Needs `LAUNCHSET_TOKEN`, and refuses when `preview.rebuildOnPush` is false.",
   stamp:
     "Writes the version and build number into one target's files in the current checkout. Nothing is committed. In CI the action runs this for you. By hand, give it a plan or `--version`.",
   verify:

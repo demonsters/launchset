@@ -167,12 +167,18 @@ function renderJobsFile(input: GitLabTemplateInput, stage: string, cliSpec: stri
           preview_mr_help: config.preview.rebuildOnPush
             ? [
                 `#   - automatically, when the MR has the ${config.preview.label} label (add it, then push or`,
-                "#     run a new pipeline);",
+                "#     run a new pipeline, or let the preview sweep below start one);",
                 "#   - otherwise as the manual job launchset-preview-plan: run it to build a preview.",
               ].join("\n")
             : [
                 "#   - as the manual job launchset-preview-plan: run it to build a preview",
                 "#     (preview.rebuildOnPush is false, so the label doesn't start it either).",
+              ].join("\n"),
+          preview_sweep_help: config.preview.rebuildOnPush
+            ? ""
+            : [
+                "# preview.rebuildOnPush is false, so a labeled MR's preview is a manual job too: the",
+                "# sweep refuses to run (a pipeline it started wouldn't build the preview).",
               ].join("\n"),
           preview_plan_rules: previewRules(config, "plan"),
           preview_trigger_rules: previewRules(config, "trigger"),
@@ -196,6 +202,8 @@ function renderJobsFile(input: GitLabTemplateInput, stage: string, cliSpec: stri
             "#   launchset-preview          runs it: one preview-<target> job per target (stamp -> YOUR",
             "#                              build and upload steps, to internal channels)",
             "#   launchset-preview-comment  one sticky MR note with the result per target",
+            "#   launchset-preview-sweep    opt-in, in a pipeline schedule with LAUNCHSET_PREVIEW_SWEEP=true:",
+            "#                              starts an MR pipeline for MRs that just got the preview label",
           ].join("\n")
         : "",
       preview_manual_help: preview
@@ -360,6 +368,19 @@ function renderTargetsFile(input: GitLabTemplateInput): string {
 // ---------------------------------------------------------------------------
 // .gitlab-ci.yml
 
+/** The fresh `.gitlab-ci.yml`'s note on the preview sweep schedule and the user's jobs. */
+const SWEEP_NOTE = [
+  "#",
+  "# The preview sweep (optional, see .gitlab/launchset.yml) runs in a pipeline schedule with the",
+  "# variable LAUNCHSET_PREVIEW_SWEEP=true, every few minutes. A scheduled pipeline runs every job",
+  "# whose rules allow it, and a job without `rules` runs in every pipeline except MR pipelines:",
+  "# scheduled ones too. To keep a job out of the sweep schedule, start its rules with",
+  '#   - if: $LAUNCHSET_PREVIEW_SWEEP == "true"',
+  "#     when: never",
+  '# (for a job without rules, follow it with `- if: $CI_PIPELINE_SOURCE != "merge_request_event"`',
+  "# to keep where it runs now).",
+].join("\n");
+
 /**
  * A fresh `.gitlab-ci.yml` for a project without one: workflow rules that switch between branch
  * and merge request pipelines, and the include of `.gitlab/launchset.yml`.
@@ -382,7 +403,11 @@ export function renderGitLabCiRoot(config: ResolvedConfig): RenderedFile {
     path: GITLAB_FILES.root,
     content: fillTemplate(
       template("gitlab-ci.yml"),
-      { always_branch_rules: always, include: GITLAB_INCLUDE_SNIPPET.trimEnd() },
+      {
+        always_branch_rules: always,
+        include: GITLAB_INCLUDE_SNIPPET.trimEnd(),
+        sweep_note: config.preview.enabled && config.preview.rebuildOnPush ? SWEEP_NOTE : "",
+      },
       "gitlab-ci.yml",
     ),
   };

@@ -31,6 +31,15 @@ export { type MarkData, type MarkOptions, mark } from "./mark.ts";
 export { outputsFor } from "./outputs.ts";
 export * from "./preview.ts";
 export {
+  DEFAULT_SWEEP_MAX,
+  type PreviewSweepData,
+  type PreviewSweepOptions,
+  previewSweep,
+  type SweepEntry,
+  type SweepOutcome,
+  type SweepSkipCode,
+} from "./preview-sweep.ts";
+export {
   type ReleaseData,
   type ReleaseOptions,
   type ReleasePrResult,

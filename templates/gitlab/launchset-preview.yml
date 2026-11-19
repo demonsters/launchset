@@ -52,3 +52,21 @@ launchset-preview-comment:
     # One sticky MR note with the result per target (on a prerelease branch: the GitLab
     # release). A skipped preview writes no plan.json: then there is nothing to report.
     - launchset preview-comment --plan @plan.json --ci
+
+# Opt-in: start a preview when the label is added, without a push or a click. GitLab starts no
+# pipeline for a label, so a pipeline schedule runs this job (Build > Pipeline schedules: the
+# default branch, the variable LAUNCHSET_PREVIEW_SWEEP=true, for example every 10 minutes). It
+# starts an MR pipeline for each open MR whose label was added after its last MR pipeline for
+# the head commit: at most 10 per run, oldest label first. Without that schedule it never runs.
+@@preview_sweep_help@@
+launchset-preview-sweep:
+  extends: .launchset-cli
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule" && $LAUNCHSET_PREVIEW_SWEEP == "true"
+  variables:
+    # It reads only the config and the API: no history needed.
+    GIT_DEPTH: "1"
+  # The next scheduled run does the same work.
+  interruptible: true
+  script:
+    - launchset preview-sweep

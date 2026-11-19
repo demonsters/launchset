@@ -126,6 +126,8 @@ export default defineConfig({
         (s) => s.includes("LAUNCHSET_APP_ID") && s.includes("LAUNCHSET_APP_PRIVATE_KEY"),
       ),
     ).toBe(true);
+    // The preview sweep is GitLab's: GitHub reacts to the label itself.
+    expect(result.manualSteps.join("\n")).not.toContain("LAUNCHSET_PREVIEW_SWEEP");
     // The human-readable report lists every change.
     for (const c of result.changes) expect(out.logs.some((l) => l.includes(c.path))).toBe(true);
   });

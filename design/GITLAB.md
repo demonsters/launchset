@@ -265,7 +265,14 @@ Renderers, written by `init` (phase 5): `renderGitLabCi()` in `src/templates/git
 1. **Previews by label.** A `when: manual` preview job in every MR pipeline (it builds without
    the label, `LAUNCHSET_PREVIEW_MANUAL=true`); with the label the job runs automatically on every
    pipeline of the MR (adding the label needs a push or a new pipeline). `rebuildOnPush: false`
-   makes the labeled job manual too.
+   makes the labeled job manual too. Optional **preview sweep**: a pipeline schedule with
+   `LAUNCHSET_PREVIEW_SWEEP=true` runs `launchset preview-sweep` (job `launchset-preview-sweep`),
+   which starts an MR pipeline (`POST /merge_requests/:iid/pipelines`) for each open labeled MR
+   whose label was added (resource label events) after its last MR pipeline for the head commit;
+   at most 10 per run, oldest label first, never fork or release MRs. It refuses with
+   `rebuildOnPush: false`: that API takes no variables and the pipeline looks like any MR
+   pipeline (source `merge_request_event`, user the token's bot), so the template can't build
+   for it and stay manual for pushes.
 2. **Release "latest" and pre-releases.** Accepted and documented: GitLab's "latest" release is
    the newest `released_at`, so a hotfix release of a lower version becomes "latest". finalize
    creates superseded partial releases before the version's own release, so the real one is
@@ -334,6 +341,12 @@ Still needs a real GitLab instance:
 - The images: `docker:29` + `docker:29-dind` with buildx and `apk add nodejs-current`,
   `cimg/android:*-node` as a non-root user with the npm prefix, Node on the hosted macOS images.
 - With `strategy: mirror`, how a failed child job shows in the MR widget.
+- The preview sweep: that an API-created MR pipeline has `CI_PIPELINE_SOURCE=merge_request_event`
+  and `CI_MERGE_REQUEST_LABELS` (so the labeled rule builds), that the MR pipelines listing has
+  `created_at` and a `refs/merge-requests/<iid>/…` ref per pipeline (the docs' example shows only
+  id, sha, ref, status), that a label given at MR creation has a label event, and the permission
+  of `POST /merge_requests/:iid/pipelines` (not documented on the endpoint; Developer assumed from
+  "Run CI/CD pipeline").
 
 ## Estimate
 

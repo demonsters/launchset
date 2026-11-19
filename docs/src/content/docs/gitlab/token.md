@@ -24,7 +24,7 @@ A project or group access token has no such limit. launchset reads it from the C
 
 | Scope | Why launchset needs it |
 | --- | --- |
-| `api` | Open, update and close the release MR; post the sticky check and preview notes; create and update releases; read merge requests, commits and pipeline jobs. |
+| `api` | Open, update and close the release MR; post the sticky check and preview notes; create and update releases; read merge requests, commits and pipeline jobs; start MR pipelines (the optional [preview sweep](/gitlab/previews/#start-previews-when-the-label-is-added-preview-sweep)). |
 | `write_repository` | Push the release branch, marker, release, partial and prerelease tags with git. |
 
 6. Click **Create project access token** and copy the value. GitLab shows it once.
@@ -50,7 +50,7 @@ A fork MR's pipeline runs in the fork, without your project's variables, so laun
 
 ## Why Maintainer
 
-Developer is enough for the API. The reason for Maintainer is git: by default, only Maintainers may push to protected branches and create protected tags, and launchset pushes the base branch's release branch, marker tags, release tags, partial tags and prerelease tags. See [Protected branches and tags](#protected-branches-and-tags).
+Developer is enough for the API, including starting MR pipelines for the optional [preview sweep](/gitlab/previews/#start-previews-when-the-label-is-added-preview-sweep) (the `api` scope covers it). The reason for Maintainer is git: by default, only Maintainers may push to protected branches and create protected tags, and launchset pushes the base branch's release branch, marker tags, release tags, partial tags and prerelease tags. See [Protected branches and tags](#protected-branches-and-tags).
 
 ## `NPM_TOKEN`
 

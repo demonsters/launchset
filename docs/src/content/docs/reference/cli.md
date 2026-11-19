@@ -61,6 +61,8 @@ Commands:
                                   --preview` is the dry run.
   preview-comment [options]       Post the preview results (a sticky comment, or the prerelease
                                   notes).
+  preview-sweep [options]         GitLab: start an MR pipeline for MRs that just got the preview
+                                  label (run it on a schedule).
   stamp [options]                 Write the version and build number into one target's files (never
                                   committed).
   verify [options]                Check the stores and registries: is this version and build number
@@ -88,7 +90,7 @@ Rules that hold for every command:
 - `--cwd <dir>` sets the repo root. Without it, launchset uses the nearest parent folder that has a `launchset.config.*` file. `init` has no config yet, so it defaults to the git repository root (CI configuration only runs from there: GitHub workflows, `.gitlab-ci.yml`) and says so when that isn't the folder you ran it in.
 - GitHub-facing commands take a token from `--token`, then `LAUNCHSET_TOKEN`, then `GITHUB_TOKEN`, and the repository from `--repo`, then `GITHUB_REPOSITORY`, then the `origin` remote.
 - `--plan` takes the plan JSON itself, `@file.json`, or reads `LAUNCHSET_PLAN`.
-- `--ci` (default: on when `GITLAB_CI=true`; `--no-ci` turns it off) is accepted by every command that produces outputs: `release`, `plan`, `preview-plan`, `preview-comment`, `stamp`, `verify`, `mark`, `finalize`, `check`, `ship` and `status`. See CI output files below.
+- `--ci` (default: on when `GITLAB_CI=true`; `--no-ci` turns it off) is accepted by every command that produces outputs: `release`, `plan`, `preview-plan`, `preview-comment`, `preview-sweep`, `stamp`, `verify`, `mark`, `finalize`, `check`, `ship` and `status`. See CI output files below.
 - Colors are only used in a terminal, and never when `NO_COLOR` is set. `LAUNCHSET_DEBUG=1` prints stack traces.
 
 ### CI output files (`--ci`)
@@ -356,6 +358,33 @@ Example:
 
 In --ci mode also writes plan.json, launchset.env and launchset.sh (see docs).
 Variables: LAUNCHSET_COMMENT_URL, LAUNCHSET_RELEASE_URL
+```
+
+### launchset preview-sweep
+
+GitLab only. Starts a merge request pipeline for each open MR that got the preview label since its last MR pipeline for the head commit, so its preview builds without a push (GitLab starts no pipeline when a label is added). Runs in a pipeline schedule with `LAUNCHSET_PREVIEW_SWEEP=true`; see [Previews on GitLab](/gitlab/previews/#start-previews-when-the-label-is-added-preview-sweep). Starts at most `--max` pipelines (default 10), oldest label first, skips fork MRs and the release MR, and reports every MR. `--dry-run` only reports. Exits `1` when a pipeline couldn't be started (the others are still started). Needs `LAUNCHSET_TOKEN`, and refuses when `preview.rebuildOnPush` is false.
+
+```text
+Usage: launchset preview-sweep [options]
+
+GitLab: start an MR pipeline for MRs that just got the preview label (run it on a schedule).
+
+Options:
+  --cwd <dir>      run in this directory (default: the nearest folder with a launchset config)
+  --json           print JSON on stdout (logs go to stderr)
+  --ci             write plan.json, launchset.env and launchset.sh (default: on when $GITLAB_CI is
+                   true)
+  --no-ci          don't write the CI output files
+  --token <token>  token (default: $LAUNCHSET_TOKEN, then $GITHUB_TOKEN / $GITLAB_TOKEN)
+  --repo <path>    repository path (owner/repo, or group/sub/project on GitLab; default: from the
+                   origin remote)
+  --dry-run        report the MRs that need a pipeline, start none
+  --max <n>        pipelines to start at most, oldest label first (default: 10)
+  -h, --help       display help for command
+
+Example:
+  $ launchset preview-sweep --dry-run
+  $ launchset preview-sweep --max 5 --json
 ```
 
 ### launchset stamp

@@ -14,6 +14,7 @@ const COMMANDS = [
   "release",
   "preview-plan",
   "preview-comment",
+  "preview-sweep",
   "stamp",
   "verify",
   "mark",

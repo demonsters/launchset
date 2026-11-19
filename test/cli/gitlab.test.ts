@@ -10,7 +10,9 @@ import { GitLabReference, parseGitLabYaml } from "../../src/templates/gitlab-yam
 import {
   FakeGitLab,
   type GitLabProject,
+  gitlabEnv,
   mrEnv,
+  NOW,
   pushEnv,
   runnerCheckout,
   setupGitLabProject,
@@ -163,6 +165,49 @@ describe("preview-plan --ci and preview-comment on GitLab", () => {
     expect(doc["preview-web"]?.needs).toEqual([
       { pipeline: "$PARENT_PIPELINE_ID", job: "launchset-preview-plan" },
     ]);
+  });
+});
+
+describe("preview-sweep on GitLab", () => {
+  const schedule = gitlabEnv({
+    CI_PIPELINE_SOURCE: "schedule",
+    CI_COMMIT_BRANCH: "main",
+    LAUNCHSET_PREVIEW_SWEEP: "true",
+  });
+  const labeled = (gitlab: FakeGitLab, iid: number) => {
+    gitlab.addMr({ iid, source: `f${iid}`, sha: "a".repeat(40), labels: ["launchset:preview"] });
+    gitlab.labelEvent(iid, "launchset:preview", new Date(NOW.getTime() - 60_000));
+  };
+
+  it("--dry-run --json reports the MRs and starts nothing", async () => {
+    const p = await project();
+    const gitlab = new FakeGitLab();
+    labeled(gitlab, 1);
+    const r = await cli(["preview-sweep", "--dry-run", "--json", "--no-ci"], {
+      cwd: p.repo.dir,
+      env: schedule,
+    });
+    expect(r.code).toBe(0);
+    const data = JSON.parse(r.stdout) as { created: number; mergeRequests: { outcome: string }[] };
+    expect(data.created).toBe(1);
+    expect(data.mergeRequests.map((e) => e.outcome)).toEqual(["would-create"]);
+    expect(gitlab.callsTo("POST", "")).toEqual([]);
+  });
+
+  it("starts the pipelines, and exits 1 when one couldn't be started", async () => {
+    const p = await project();
+    const gitlab = new FakeGitLab();
+    labeled(gitlab, 1);
+    labeled(gitlab, 2);
+    gitlab.failNext("POST", "/merge_requests/1/pipelines", 403);
+    const r = await cli(["preview-sweep", "--max", "5"], { cwd: p.repo.dir, env: schedule });
+    expect(r.code).toBe(1);
+    expect(r.stdout).toContain("MR !1: failed: GitLab API POST");
+    expect(r.stdout).toMatch(/MR !2: started pipeline \d+: /);
+    expect(gitlab.pipelines.map((pl) => pl.mr)).toEqual([2]);
+    expect(
+      (await cli(["preview-sweep", "--max", "0"], { cwd: p.repo.dir, env: schedule })).code,
+    ).toBe(2);
   });
 });
 

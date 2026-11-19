@@ -304,7 +304,30 @@ export interface FakeMr {
   source_project_id: number;
   target_project_id: number;
   labels: string[];
+  created_at: string;
   web_url: string;
+}
+
+/** A pipeline of an MR (`GET/POST /merge_requests/:iid/pipelines`). */
+export interface FakePipeline {
+  id: number;
+  mr: number;
+  sha: string;
+  ref: string;
+  status: string;
+  source: string;
+  created_at: string;
+  web_url: string;
+  /** The MR head it ran (a merged results pipeline's `sha` is the merge commit). */
+  headSha: string;
+}
+
+/** A label event of an MR (`GET /merge_requests/:iid/resource_label_events`). */
+export interface FakeLabelEvent {
+  id: number;
+  action: "add" | "remove";
+  created_at: string;
+  label: { id: number; name: string } | null;
 }
 
 export interface FakeNote {
@@ -348,6 +371,22 @@ function jobTokenMay(method: string, path: string): boolean {
   );
 }
 
+/** A pipeline as the API shows it. */
+function pipelineJson(p: FakePipeline) {
+  return {
+    id: p.id,
+    iid: p.id - 1000,
+    project_id: PROJECT_ID,
+    sha: p.sha,
+    ref: p.ref,
+    status: p.status,
+    source: p.source,
+    created_at: p.created_at,
+    updated_at: p.created_at,
+    web_url: p.web_url,
+  };
+}
+
 /** A small in-memory GitLab: MRs, notes, releases, pipelines with child pipelines, `/user`. */
 export class FakeGitLab {
   mrs: FakeMr[] = [];
@@ -357,6 +396,12 @@ export class FakeGitLab {
   jobs = new Map<number, FakeJob[]>();
   /** Pipeline id → child pipeline ids (trigger jobs). */
   children = new Map<number, number[]>();
+  /** MR pipelines (the preview sweep). */
+  pipelines: FakePipeline[] = [];
+  /** MR iid → its label events. */
+  labelEvents = new Map<number, FakeLabelEvent[]>();
+  /** The server's time for what it creates (pipelines). */
+  clock: Date = NOW;
   calls: GlCall[] = [];
   /** `GET /user` fails with this status (a token that may not read it). */
   userStatus: number | undefined;
@@ -374,7 +419,16 @@ export class FakeGitLab {
   }
 
   /** An open MR, e.g. a feature MR whose pipeline runs. */
-  addMr(input: { iid: number; source: string; sha?: string; author?: string; labels?: string[] }) {
+  addMr(input: {
+    iid: number;
+    source: string;
+    sha?: string;
+    author?: string;
+    labels?: string[];
+    createdAt?: string;
+    /** A fork MR's source project. */
+    sourceProjectId?: number;
+  }) {
     const mr: FakeMr = {
       iid: input.iid,
       title: `MR ${input.iid}`,
@@ -388,13 +442,61 @@ export class FakeGitLab {
       author: { id: 5, username: input.author ?? "someone" },
       source_branch: input.source,
       target_branch: "main",
-      source_project_id: PROJECT_ID,
+      source_project_id: input.sourceProjectId ?? PROJECT_ID,
       target_project_id: PROJECT_ID,
       labels: input.labels ?? [],
+      created_at: input.createdAt ?? NOW.toISOString(),
       web_url: `${WEB}/-/merge_requests/${input.iid}`,
     };
     this.mrs.push(mr);
     return mr;
+  }
+
+  /** A label event on MR `iid`: `label` was added (or removed) at `at`. */
+  labelEvent(iid: number, label: string, at: Date | string, action: "add" | "remove" = "add") {
+    const events = this.labelEvents.get(iid) ?? [];
+    events.push({
+      id: ++this.#id,
+      action,
+      created_at: typeof at === "string" ? at : at.toISOString(),
+      label: { id: 1, name: label },
+    });
+    this.labelEvents.set(iid, events);
+  }
+
+  /**
+   * A pipeline of MR `iid` created at `at`: for the MR head (`sha`, default the MR's head) with
+   * ref `refs/merge-requests/<iid>/head`, or as given (`merged: true`: a merged results pipeline,
+   * whose sha is a merge commit; `ref`: e.g. a branch pipeline).
+   */
+  addPipeline(
+    iid: number,
+    at: Date | string,
+    options: { sha?: string; merged?: boolean; ref?: string; source?: string } = {},
+  ): FakePipeline {
+    const mr = this.mrs.find((m) => m.iid === iid);
+    const head = options.sha ?? mr?.sha ?? "0".repeat(40);
+    const id = ++this.#id;
+    const pipeline: FakePipeline = {
+      id,
+      mr: iid,
+      sha: options.merged ? `merge${id}`.padEnd(40, "0") : head,
+      ref: options.ref ?? `refs/merge-requests/${iid}/${options.merged ? "merge" : "head"}`,
+      status: "success",
+      source: options.source ?? "merge_request_event",
+      created_at: typeof at === "string" ? at : at.toISOString(),
+      web_url: `${WEB}/-/pipelines/${id}`,
+      headSha: head,
+    };
+    this.pipelines.push(pipeline);
+    return pipeline;
+  }
+
+  /** GitLab's head pipeline of an MR: its newest pipeline for the MR's head commit. */
+  headPipelineOf(mr: FakeMr): FakePipeline | undefined {
+    return this.pipelines
+      .filter((p) => p.mr === mr.iid && p.headSha === mr.sha)
+      .sort((a, b) => b.id - a.id)[0];
   }
 
   openMrs(): FakeMr[] {
@@ -477,6 +579,11 @@ export class FakeGitLab {
         if (source) list = list.filter((m) => m.source_branch === source);
         const target = q.get("target_branch");
         if (target) list = list.filter((m) => m.target_branch === target);
+        const labels = q.get("labels");
+        if (labels) {
+          const wanted = labels.split(",");
+          list = list.filter((m) => wanted.every((label) => m.labels.includes(label)));
+        }
         list.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
         return HttpResponse.json(list);
       }),
@@ -503,8 +610,46 @@ export class FakeGitLab {
         const r = await record(request);
         if (r instanceof Response) return r;
         const mr = mrByIid(params.iid);
-        return mr ? HttpResponse.json(mr) : notFound();
+        if (!mr) return notFound();
+        const head = this.headPipelineOf(mr);
+        return HttpResponse.json({ ...mr, head_pipeline: head ? pipelineJson(head) : null });
       }),
+      http.get(`${PROJECT}/merge_requests/:iid/pipelines`, async ({ request, params }) => {
+        const r = await record(request);
+        if (r instanceof Response) return r;
+        if (!mrByIid(params.iid)) return notFound();
+        return HttpResponse.json(
+          this.pipelines
+            .filter((p) => p.mr === Number(params.iid))
+            .sort((a, b) => b.id - a.id)
+            .map(pipelineJson),
+        );
+      }),
+      http.post(`${PROJECT}/merge_requests/:iid/pipelines`, async ({ request, params }) => {
+        const r = await record(request);
+        if (r instanceof Response) return r;
+        const mr = mrByIid(params.iid);
+        if (!mr) return notFound();
+        const created = this.addPipeline(mr.iid, this.clock);
+        created.status = "created";
+        return HttpResponse.json(pipelineJson(created), { status: 201 });
+      }),
+      http.get(
+        `${PROJECT}/merge_requests/:iid/resource_label_events`,
+        async ({ request, params }) => {
+          const r = await record(request);
+          if (r instanceof Response) return r;
+          if (!mrByIid(params.iid)) return notFound();
+          return HttpResponse.json(
+            (this.labelEvents.get(Number(params.iid)) ?? []).map((e) => ({
+              ...e,
+              user: { id: 5, username: "someone" },
+              resource_type: "MergeRequest",
+              resource_id: 1000 + Number(params.iid),
+            })),
+          );
+        },
+      ),
       http.put(`${PROJECT}/merge_requests/:iid`, async ({ request, params }) => {
         const r = await record(request);
         if (r instanceof Response) return r;

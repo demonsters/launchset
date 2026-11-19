@@ -231,6 +231,7 @@ describe("renderGitLabCi", () => {
       "launchset-preview-plan",
       "launchset-preview",
       "launchset-preview-comment",
+      "launchset-preview-sweep",
     ]);
     expect(job(doc, "launchset-release").rules).toBeInstanceOf(GitLabReference);
     expect((job(doc, "launchset-build").rules as GitLabReference).path).toEqual([
@@ -380,6 +381,56 @@ describe("renderGitLabCi", () => {
     expect(commentJob.script).toEqual(["launchset preview-comment --plan @plan.json --ci"]);
   });
 
+  it("preview sweep: only in a schedule with LAUNCHSET_PREVIEW_SWEEP=true, shallow, interruptible", () => {
+    const sweep = job(rendered.jobs.doc, "launchset-preview-sweep");
+    expect(sweep.extends).toBe(".launchset-cli");
+    expect(sweep.variables).toEqual({ GIT_DEPTH: "1" });
+    expect(sweep.interruptible).toBe(true);
+    expect(sweep.script).toEqual(["launchset preview-sweep"]);
+    const rules = rulesOf(rendered.jobs.doc, "launchset-preview-sweep");
+    const schedule = { CI_PIPELINE_SOURCE: "schedule", CI_COMMIT_BRANCH: "main" };
+    expect(when(rules, { ...schedule, LAUNCHSET_PREVIEW_SWEEP: "true" })).toBe("on_success");
+    expect(when(rules, schedule)).toBe("never");
+    expect(when(rules, { ...schedule, LAUNCHSET_PREVIEW_SWEEP: "false" })).toBe("never");
+    for (const source of ["push", "web", "api", "merge_request_event"]) {
+      expect(
+        when(rules, {
+          CI_PIPELINE_SOURCE: source,
+          CI_COMMIT_BRANCH: "main",
+          LAUNCHSET_PREVIEW_SWEEP: "true",
+        }),
+      ).toBe("never");
+    }
+    expect(when(rules, mr("main", { CI_MERGE_REQUEST_LABELS: "launchset:preview" }))).toBe("never");
+    expect(when(rules, push("develop"))).toBe("never");
+  });
+
+  it("no other launchset job runs in the sweep schedule's pipeline", () => {
+    const doc = rendered.jobs.doc;
+    const visible = Object.keys(doc).filter((name) => !name.startsWith("."));
+    const pipeline = (branch: string): Vars => ({
+      CI_PIPELINE_SOURCE: "schedule",
+      CI_COMMIT_BRANCH: branch,
+      CI_COMMIT_REF_NAME: branch,
+      LAUNCHSET_PREVIEW_SWEEP: "true",
+    });
+    // The base branch, a maintenance branch, a preview and a prerelease branch as the target.
+    for (const branch of ["main", "release/1.4.x", "develop", "feature/x", "next/2.0"]) {
+      const running = visible.filter(
+        (name) => when(rulesOf(doc, name), pipeline(branch)) !== "never",
+      );
+      expect([branch, running]).toEqual([branch, ["launchset-preview-sweep"]]);
+    }
+    // The fresh .gitlab-ci.yml lets the scheduled pipeline run, and says how to keep jobs out.
+    const root = parseGitLabYaml(renderGitLabCiRoot(sampleConfig).content) as {
+      workflow: { rules: Rule[] };
+    };
+    expect(when(root.workflow.rules, pipeline("main"))).toBe("on_success");
+    const text = renderGitLabCiRoot(sampleConfig).content;
+    expect(text).toContain('#   - if: $LAUNCHSET_PREVIEW_SWEEP == "true"\n#     when: never');
+    expect(text).toContain("a job without `rules` runs in every pipeline except MR pipelines");
+  });
+
   it("rebuildOnPush false: every MR gets the manual job, labeled or not", () => {
     const config = resolveConfig({
       ...sampleInput,
@@ -393,6 +444,10 @@ describe("renderGitLabCi", () => {
     expect(when(rules, mr("main"))).toBe("manual");
     expect(jobs.text).not.toContain("CI_MERGE_REQUEST_LABELS =~");
     expect(jobs.text).toContain("preview.rebuildOnPush is false");
+    // The sweep job stays (the command explains why it refuses); the root file says nothing.
+    expect(jobs.text).toContain("sweep refuses to run");
+    expect(jobs.doc["launchset-preview-sweep"]).toBeDefined();
+    expect(renderGitLabCiRoot(config).content).not.toContain("LAUNCHSET_PREVIEW_SWEEP");
   });
 
   it("previews off: no preview jobs", () => {
@@ -402,6 +457,9 @@ describe("renderGitLabCi", () => {
     expect(jobs.text).not.toContain("launchset-preview");
     expect(jobs.text).not.toContain("LAUNCHSET_PREVIEW=true, on any branch");
     expect(root.text).not.toContain("Preview and prerelease branches");
+    expect(jobs.doc["launchset-preview-sweep"]).toBeUndefined();
+    expect(jobs.text).not.toContain("LAUNCHSET_PREVIEW_SWEEP");
+    expect(root.text).not.toContain("LAUNCHSET_PREVIEW_SWEEP");
   });
 
   it("puts every job in the given stage", () => {
