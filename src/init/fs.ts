@@ -1,5 +1,6 @@
 /** Small file helpers for init. Paths given to callers are repo-relative POSIX. */
 
+import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { glob } from "tinyglobby";
@@ -75,7 +76,34 @@ export function normalizeRel(path: string): string {
 }
 
 /**
- * Glob relative to `root` (sorted), never descending into {@link IGNORED_DIRS}. With `base`,
+ * The paths (relative to `root`) git ignores: matched by `.gitignore` and not tracked. Empty
+ * outside a git repository or without git. Paths needn't exist.
+ */
+export function gitIgnored(root: string, paths: readonly string[]): Promise<Set<string>> {
+  if (paths.length === 0) return Promise.resolve(new Set());
+  return new Promise((done) => {
+    const child = execFile(
+      "git",
+      ["check-ignore", "--stdin", "-z"],
+      { cwd: root, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
+      // Exit 1 means nothing is ignored, 128 not a repository: both leave stdout empty.
+      (_error, stdout) =>
+        done(
+          new Set(
+            String(stdout ?? "")
+              .split("\0")
+              .filter(Boolean),
+          ),
+        ),
+    );
+    child.stdin?.on("error", () => {});
+    child.stdin?.end(`${paths.join("\0")}\0`);
+  });
+}
+
+/**
+ * Glob relative to `root` (sorted), never descending into {@link IGNORED_DIRS} and leaving out
+ * what git ignores (a gitignored `out/` copy of the app is no target). With `base`,
  * patterns and `deep` are relative to that directory; results stay relative to `root`.
  */
 export async function globRel(
@@ -95,7 +123,9 @@ export async function globRel(
     expandDirectories: false,
     ...(options.deep === undefined ? {} : { deep: options.deep }),
   });
-  return found.map((p) => joinRel(base, p.replace(/\/+$/, ""))).sort();
+  const paths = found.map((p) => joinRel(base, p.replace(/\/+$/, "")));
+  const ignored = await gitIgnored(root, paths);
+  return paths.filter((p) => !ignored.has(p)).sort();
 }
 
 /** The text's lines with their start offsets (line endings excluded from `text`). */

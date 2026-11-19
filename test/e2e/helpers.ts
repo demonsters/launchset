@@ -116,6 +116,8 @@ export class Job {
       GITHUB_RUN_NUMBER: String(this.run),
       GITHUB_RUN_ATTEMPT: "1",
       GITHUB_WORKSPACE: this.dir,
+      // Registry verify reads the Docker config: an empty one, never the developer's.
+      DOCKER_CONFIG: join(this.world.scratch, "docker"),
     };
     if (!options.noToken) env.GITHUB_TOKEN = TOKEN;
     const branch = this.repo.git("branch", "--show-current");
@@ -273,7 +275,7 @@ export class World {
     this.github = new FakeGitHub(remote);
     this.scratch = tempDir("scratch");
     this.project = projectFor(repo, remote);
-    server.use(this.jobsHandler());
+    server.use(this.jobsHandler(), this.registryHandler());
   }
 
   newRun(): number {
@@ -543,6 +545,18 @@ export class World {
           html_url: `https://github.com/${SLUG}/actions/runs/${params.id}/job/${Number(params.id) * 100 + i}`,
         })),
       });
+    });
+  }
+
+  /** Images on ghcr.io, as `repository:tag` (registry verify). Empty: nothing is pushed yet. */
+  readonly pushedImages = new Set<string>();
+
+  /** `HEAD /v2/<repository>/manifests/<tag>` on ghcr.io, anonymously (public images). */
+  registryHandler() {
+    return http.head("https://ghcr.io/v2/*", ({ request }) => {
+      const match = /^\/v2\/(.+)\/manifests\/([^/]+)$/.exec(new URL(request.url).pathname);
+      const ref = match ? `${match[1]}:${decodeURIComponent(match[2] as string)}` : "";
+      return new HttpResponse(null, { status: this.pushedImages.has(ref) ? 200 : 404 });
     });
   }
 

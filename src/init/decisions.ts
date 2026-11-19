@@ -10,13 +10,14 @@
  * | `target.<name>`            | `auto` `manual` `none`         | auto when a workflow builds it; manual for native projects no workflow builds |
  * | `docker.<name>.image`      | an image name                  | read from the existing workflow; else a guess (ask) |
  * | `docker.<name>.tags`       | `default` or a comma list      | the tags the existing workflow pushes (`v{version}` keeps the v) |
+ * | `docker.<name>.verify`     | `yes` `no`                     | yes: `verify: ["registry"]`, so a re-run skips an image that's already pushed |
  * | `machinery.<path>#<n>`     | `remove` `disable` `keep`      | disable (keep when no minimal edit exists)          |
  * | `image.<path>`             | `stamp` `leave`                | leave (deploy manifests are never aligned unasked)  |
  * | `file.<path>`              | `keep` `overwrite`             | keep (an existing generated file is never overwritten unasked) |
  * | `baseline`                 | `yes` `no`                     | yes only when a tag in another format marks the version as released |
  * | `offset`                   | an integer >= 0                | enough to stay above the highest build number found |
  * | `skill`                    | `yes` `no`                     | yes                                                 |
- * | `hook`                     | `yes` `no` (only with a hook setup) | no                                             |
+ * | `hook`                     | `yes` `no` (only with a hook setup whose file git doesn't ignore) | no               |
  */
 
 import semver from "semver";
@@ -303,10 +304,15 @@ export function decisionSpecs(ctx: DetectContext): Spec[] {
           value: "default",
           label: "default: {version}, {major}.{minor}, {major}, latest",
         });
-        const vPrefix = d.tags.some((x) => x.format === "v{version}");
-        if (!found && vPrefix) {
+        // Images tagged `v1.5.0` today (or, with no workflow showing the tags, `v1.5.0` git
+        // tags): offer the default list with the `v` kept.
+        const vFull = "v{version}, v{major}.{minor}, v{major}, latest";
+        const vPrefix = found
+          ? found.some((x) => x.startsWith("v{"))
+          : d.tags.some((x) => x.format === "v{version}");
+        if (vPrefix && found?.join(", ") !== vFull) {
           options.push({
-            value: "v{version}, v{major}.{minor}, v{major}, latest",
+            value: vFull,
             label: "v-prefixed: v{version}, v{major}.{minor}, v{major}, latest",
           });
         }
@@ -329,6 +335,19 @@ export function decisionSpecs(ctx: DetectContext): Spec[] {
         };
       },
       validate: (value) => tagListError(value),
+    });
+    specs.push({
+      id: `docker.${t.name}.verify`,
+      build: () => ({
+        id: `docker.${t.name}.verify`,
+        question: `Check the registry before building ${t.name} (verify: ["registry"])? When the release tag is already pushed, a re-run skips the build instead of pushing it again.`,
+        options: YES_NO,
+        default: "yes",
+        evidence: [],
+        ask: false,
+        onlyIf: on,
+      }),
+      validate: oneOf,
     });
   }
 

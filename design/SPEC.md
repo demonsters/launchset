@@ -229,7 +229,7 @@ Rules:
 - **Maintenance branches**: templates that contain neither `{version}` nor `{minor}` are dropped (that removes `latest` and major-only tags). This applies to custom lists too. A hotfix must never move `latest` or `{major}` while a newer line exists.
 - **0.x versions**: templates that contain neither `{version}` nor `{minor}`, other than the literal `latest`, are skipped while the major version is 0. A moving `:0` tag means nothing.
 - Validation: the `release` list must contain at least one template with `{version}` (used by `verify`, 7.4). `preview` and `prerelease` lists can't contain `latest` or a template that renders to a plain `X.Y.Z`.
-- Existing images often use a `v` prefix (`app:v1.5.0`). Keep it with `tags: ["v{version}", …]`; `init` reads the current tags from existing workflows (11.1).
+- Existing images often use a `v` prefix (`app:v1.5.0`). Keep it with `tags: ["v{version}", …]`; `init` reads the current tags from existing workflows (11.1), following variables set from the git ref (`RELEASE_VERSION=${GITHUB_REF#refs/*/}` via `$GITHUB_ENV`) to keep the `v`.
 
 - Outputs for the job: full image refs (`image:tag`, one per line and as JSON), plus `version`, `build-number`, `channel`, and OCI label values (`org.opencontainers.image.version`, `.revision`, `.created`) so the workflow can pass them to `docker/build-push-action`.
 
@@ -569,8 +569,8 @@ The GitHub-facing commands work from the CLI too when given `GITHUB_TOKEN`/`--to
    - **iOS**: `*.xcodeproj`, `Info.plist`, `.xcconfig` (only if it contains `MARKETING_VERSION`/`CURRENT_PROJECT_VERSION`). Choose `xcodeproj` when plists use `$(MARKETING_VERSION)`.
    - **Capacitor**: `capacitor.config.*`; prefer the `capacitor` alias.
    - **Expo**: `app.json` with an `expo` key. For `app.config.*`, print the advice from 6.5.
-   - **Search scope**: the repo root, workspace packages (`workspaces`, `pnpm-workspace.yaml`) and `**/Dockerfile*`, excluding `node_modules`.
-   - **Dockerfiles**: suggest docker targets. Read the image name, `file`/`context` and the current tag pattern (e.g. a `v` prefix) from existing `docker/build-push-action` / `docker/metadata-action` steps or `docker push` lines, and only ask when nothing is found.
+   - **Search scope**: the repo root, workspace packages (`workspaces`, `pnpm-workspace.yaml`) and `**/Dockerfile*`, excluding `node_modules` and anything git ignores (a gitignored `out/` copy of the apps is not a target).
+   - **Dockerfiles**: suggest docker targets. Read the image name, `file`/`context` and the current tag pattern (e.g. a `v` prefix) from existing `docker/build-push-action` / `docker/metadata-action` steps or `docker build` / `docker push` lines, and only ask when nothing is found. Docker targets get `verify: ["registry"]` by default (the generated workflow logs in before `verify`, 7.4).
    - **Existing release machinery** that would conflict with launchset (step 4):
      - workflows (`.github/workflows/*`, `.gitlab-ci.yml`) triggered by `push.tags` patterns that match the release tag (`v*`, `v*.*.*`, `*.*.*`, …);
      - `changesets/action`, and `changeset version|status|publish|tag` in workflows or `package.json` scripts;
@@ -595,7 +595,7 @@ The GitHub-facing commands work from the CLI too when given `GITHUB_TOKEN`/`--to
    - `--baseline` forces it.
 6. **Convert** existing `.changeset/*.md` (4.2). `launchset init --convert-only` runs only this step, e.g. on a Changesets pre-mode branch (9.9).
 7. **Agent skill**: offer to install `.claude/skills/launchset/SKILL.md` and add a short launchset section to `AGENTS.md` (create it if missing) for non-Claude agents.
-8. Print the manual steps that remain: GitHub App + secrets, store credential secrets. Offer to add `launchset check --push` to an existing pre-push hook setup (simple-git-hooks, husky, lefthook) for repos that push straight to the base branch.
+8. Print the manual steps that remain: GitHub App + secrets, store credential secrets. Offer to add `launchset check --push` to an existing pre-push hook setup (simple-git-hooks, husky, lefthook) for repos that push straight to the base branch. husky counts when it's a dependency or `.husky/` has hooks (not just husky's generated `_` folder). Never offer a hook file that git ignores: it could never be committed.
 
 `--yes` accepts all defaults; every question has a flag.
 
@@ -688,7 +688,7 @@ Keep `core/` free of I/O so it can be tested with plain inputs.
 - **Plan/state**: every mode (`publish`, `ship`, `release-pr`, `none`), markers present/missing, release-sha detection (merge commit, squash, rebase, a release PR merged while behind the base branch, a local merge; retry via marker and via first-parent search), superseding, `workflow_dispatch` retry. Manual targets: left out of the publish matrix, not needed for `v{version}`, ignored by superseding; `ship` of the latest and an older version, refusal to go backwards, already-marked version.
 - **GitHub**: mocked HTTP (msw): release PR create/update/close, sticky comments, tags, releases, bot-PR detection, changelog backport PR.
 - **Verify**: mocked Play, App Store Connect, OCI registry and npm registry responses incl. "already published", "store is ahead", npm 404 and npm auth errors; registry verify uses the rendered verify tag (`v{version}` templates).
-- **init detection**: fixture repos with tag-triggered workflows, a Changesets pipeline, a version-sync script, a `v`-prefixed `docker/build-push-action`, mismatched versions where the root is lower (no lowering by default), and an unreleased root version (no baseline by default).
+- **init detection**: fixture repos with tag-triggered workflows, a Changesets pipeline, a version-sync script, a `v`-prefixed `docker/build-push-action`, mismatched versions where the root is lower (no lowering by default), and an unreleased root version (no baseline by default); `docker build` run steps with `${{ secrets.X }}` build args after the context and image tags from the git ref through `$GITHUB_ENV` (context `.`, `v{version}` tags, registry verify), with gitignored leftovers (husky's generated `.husky/_`, an `out/` copy of the apps) that must not become a hook setup or targets.
 - **End to end**: real temporary git repos with a local bare remote, running the CLI through a full lifecycle: init → add → version → plan → stamp → mark → finalize; a hotfix line; a superseded partial release; a preview; a manual target shipped by hand two releases later (`ship` → `mark --version`); a prerelease branch with two concurrent pushes (tag reservation retry) and its merge into main; `init --detect --json` followed by `init --yes --decide …` on fixture repos.
 - **launchset's own CI**: lint, typecheck, tests, action bundle builds and a smoke test that runs the local action (`uses: ./action`), docs build.
 

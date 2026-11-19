@@ -292,6 +292,8 @@ export function parseWorkflow(path: string, text: string): Workflow | { error: s
 
 export interface ExpressionContext {
   env: Record<string, string>;
+  /** Step outputs written to `$GITHUB_OUTPUT` by earlier steps, by `<step id>.<name>`. */
+  outputs?: Record<string, string>;
   /** `owner/repo`. */
   github?: string;
 }
@@ -305,6 +307,11 @@ export function resolveExpressions(value: string, ctx: ExpressionContext, depth 
       const env = /^env\.([A-Za-z_][A-Za-z0-9_]*)$/.exec(expr);
       if (env) {
         const v = ctx.env[env[1] as string];
+        return v === undefined ? match : resolveExpressions(v, ctx, depth + 1);
+      }
+      const output = /^steps\.([A-Za-z0-9_-]+)\.outputs\.([A-Za-z0-9_-]+)$/.exec(expr);
+      if (output) {
+        const v = ctx.outputs?.[`${output[1]}.${output[2]}`];
         return v === undefined ? match : resolveExpressions(v, ctx, depth + 1);
       }
       if (expr === "github.repository" && ctx.github) return ctx.github;
@@ -379,8 +386,23 @@ export function splitImageRef(ref: string): { image: string; tag?: string } {
 /**
  * The release tag template for a tag as written in a workflow (`v${{ env.VERSION }}` →
  * `v{version}`), or `null` when it isn't a release tag (`staging`, a branch name).
+ *
+ * With `ctx`, variables are first replaced by what they're set to, so
+ * `${{ env.RELEASE_VERSION }}` set from `${GITHUB_REF#refs/*\/}` is the pushed tag
+ * (`v{version}` under `v*` tags), not a bare `{version}`.
  */
-export function tagTemplate(raw: string, tagPrefix: string | null): string | null {
+export function tagTemplate(
+  raw: string,
+  tagPrefix: string | null,
+  ctx?: ExpressionContext,
+): string | null {
+  if (ctx) {
+    const resolved = resolveExpressions(raw, ctx);
+    if (resolved !== raw) {
+      const template = tagTemplate(resolved, tagPrefix);
+      if (template) return template;
+    }
+  }
   const t = raw.trim().replace(/^["']|["']$/g, "");
   if (t === "latest") return "latest";
   let unknown = false;
@@ -400,7 +422,8 @@ export function tagTemplate(raw: string, tagPrefix: string | null): string | nul
           unknown = true;
           return match;
         }
-        return /refs\/tags\/v/.test(mods ?? "") ? "{version}" : `${tagPrefix}{version}`;
+        // `${GITHUB_REF#refs/tags/v}`, `${GITHUB_REF_NAME#v}`: the `v` is stripped.
+        return /^##?(?:.*\/)?v$/.test(mods ?? "") ? "{version}" : `${tagPrefix}{version}`;
       }
       if (/version|tag/i.test(name)) return "{version}";
       unknown = true;
@@ -580,8 +603,14 @@ export function isBlock(node: Scalar): boolean {
   return node.type === "BLOCK_LITERAL" || node.type === "BLOCK_FOLDED";
 }
 
-function tokens(command: string): string[] {
-  return (command.match(/"[^"]*"|'[^']*'|\S+/g) ?? []).map((t) => t.replace(/^["']|["']$/g, ""));
+/**
+ * Shell words of a command. A `${{ … }}` expression is part of the word it's in, even with
+ * spaces inside: `--build-arg X=${{ secrets.X }} .` is three words, not five.
+ */
+export function tokens(command: string): string[] {
+  return (command.match(/(?:"[^"]*"|'[^']*'|\$\{\{.*?\}\}|\S)+/g) ?? []).map((t) =>
+    t.replace(/^["']|["']$/g, ""),
+  );
 }
 
 function parseDockerCommands(command: string): {
@@ -630,6 +659,22 @@ function parseDockerCommands(command: string): {
   return result;
 }
 
+/** `echo "NAME=value" >> $GITHUB_ENV` (or `$GITHUB_OUTPUT`): the variable it sets. */
+export function githubFileWrite(
+  command: string,
+): { file: "GITHUB_ENV" | "GITHUB_OUTPUT"; name: string; value: string } | undefined {
+  const m =
+    /^echo\s+(?:"([A-Za-z_][\w-]*)=([^"]*)"|'([A-Za-z_][\w-]*)=([^']*)'|([A-Za-z_][\w-]*)=(\S*))\s*>>\s*["']?\$\{?(GITHUB_ENV|GITHUB_OUTPUT)\}?["']?\s*$/.exec(
+      command.trim(),
+    );
+  if (!m) return undefined;
+  return {
+    file: m[7] as "GITHUB_ENV" | "GITHUB_OUTPUT",
+    name: (m[1] ?? m[3] ?? m[5]) as string,
+    value: (m[2] ?? m[4] ?? m[6]) as string,
+  };
+}
+
 function listEntries(value: string): string[] {
   return value
     .split(/[\n,]/)
@@ -646,11 +691,22 @@ export function dockerBuilds(
   const builds: DockerBuild[] = [];
   const text = workflow.text;
   for (const job of workflow.jobs) {
+    // What earlier steps of the job wrote to `$GITHUB_ENV` and `$GITHUB_OUTPUT`.
+    const written: Record<string, string> = {};
+    const outputs: Record<string, string> = {};
     for (const step of job.steps) {
       const ctx: ExpressionContext = {
-        env: { ...workflow.env, ...job.env, ...step.env },
+        env: { ...workflow.env, ...job.env, ...written, ...step.env },
+        outputs,
         ...(options.github ? { github: options.github } : {}),
       };
+      if (step.run) {
+        for (const command of runCommands(step.run, text)) {
+          const set = githubFileWrite(command.command);
+          if (set?.file === "GITHUB_ENV") written[set.name] = set.value;
+          else if (set && step.id) outputs[`${step.id}.${set.name}`] = set.value;
+        }
+      }
       const uses = step.uses?.replace(/@.*/, "");
       if (uses === "docker/build-push-action") {
         const tagsRef = step.with.get("tags");
@@ -671,7 +727,7 @@ export function dockerBuilds(
           if (hasExpression(resolved)) unresolved.push(image);
           else if (!images.includes(resolved)) images.push(resolved);
           if (tag !== undefined) {
-            const template = tagTemplate(tag, options.tagPrefix);
+            const template = tagTemplate(tag, options.tagPrefix, ctx);
             if (template && !tags.includes(template)) tags.push(template);
             if (template === "latest" && tagsRef) {
               latest.push({
@@ -749,7 +805,7 @@ function runDockerBuild(
       if (hasExpression(resolved)) unresolved.push(image);
       else if (!images.includes(resolved)) images.push(resolved);
       if (tag === undefined) continue;
-      const template = tagTemplate(tag, tagPrefix);
+      const template = tagTemplate(tag, tagPrefix, ctx);
       if (template && !tags.includes(template)) tags.push(template);
       if (template !== "latest") continue;
       const isPushRef = pushRefs.includes(ref);

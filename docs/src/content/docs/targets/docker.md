@@ -85,11 +85,11 @@ Many existing setups tag images `v1.5.0`. Keep that:
 tags: ["v{version}", "v{major}.{minor}", "v{major}", "latest"],
 ```
 
-`launchset init` reads the current tags from your workflows and proposes this.
+`launchset init` reads the current tags from your workflows and keeps them, `v` included: a workflow that pushes `:v1.5.0` gets `tags: ["v{version}"]`. It offers this full list as an option, since adding the moving tags changes what you push.
 
 ## Verify
 
-`verify: ["registry"]` checks whether the **verify tag** already exists. That is the first release template containing `{version}`, rendered: `image:1.5.0` by default, `image:v1.5.0` with the list above. If it exists, `already-published` is `true` and your steps skip the build.
+`verify: ["registry"]` checks whether the **verify tag** already exists. `launchset init` sets it for every docker target (decision `docker.<name>.verify`). That is the first release template containing `{version}`, rendered: `image:1.5.0` by default, `image:v1.5.0` with the list above. If it exists, `already-published` is `true` and your steps skip the build.
 
 It uses the registry HTTP API. ghcr.io, Docker Hub and generic registries work. Credentials, in this order:
 

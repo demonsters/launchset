@@ -53,7 +53,7 @@ launchset: 3 commits since v1.4.0 and no pending changeset: they won't be releas
 
 It never blocks the push: the exit code is `0`. It also warns about changesets that are invalid.
 
-`launchset init` can add the line for you when it finds a hook setup. It supports **husky** (`.husky/pre-push`), **simple-git-hooks** and **lefthook**. It never installs a hook tool on its own. Use `--hook` or answer the `hook` decision with `yes`.
+`launchset init` can add the line for you when it finds a hook setup. It supports **husky** (`.husky/pre-push`, when husky is a dependency or `.husky/` has hooks), **simple-git-hooks** and **lefthook**. It never installs a hook tool on its own, and never writes a hook file that git ignores. Use `--hook` or answer the `hook` decision with `yes`.
 
 For simple-git-hooks run `npx simple-git-hooks` afterwards, to install the updated hook.
 

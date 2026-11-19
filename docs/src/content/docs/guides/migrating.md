@@ -58,14 +58,15 @@ Every question `init` asks is a **decision** with a stable id. Answer it with `-
 | `tags.release` | A template with `{version}`. | `v{version}`. | Existing tags use another format (`{version}` without the `v`): keep it. |
 | `target.<name>` | `auto`, `manual`, `none`. | `auto` when a workflow already builds it, `manual` for native projects that no workflow builds, `none` for the generic `web` target when other targets already ship the repo. | An Android or iOS project defaults to `manual`. Explain what that means. |
 | `docker.<name>.image` | An image name without a tag. | Read from the existing workflow. Otherwise a guess, like `ghcr.io/<owner>/<repo>`. | Nothing in the workflows names the image. |
-| `docker.<name>.tags` | `default`, or a comma-separated list of tag templates. | The tags the existing workflow pushes, otherwise `default`. | Existing images have a `v` prefix: use `v{version}, v{major}.{minor}, v{major}, latest`. |
+| `docker.<name>.tags` | `default`, or a comma-separated list of tag templates. | The tags the existing workflow pushes, otherwise `default`. A tag taken from the pushed git tag keeps its `v` (`v{version}`), also through a variable like `RELEASE_VERSION=${GITHUB_REF#refs/*/}`. | Existing images have a `v` prefix and should also get the moving tags: `v{version}, v{major}.{minor}, v{major}, latest` (an option). |
+| `docker.<name>.verify` | `yes`, `no`. | `yes`: `verify: ["registry"]`, so a re-run skips an image whose release tag is already pushed. | The registry has no HTTP API launchset can reach from CI. |
 | `machinery.<path>#<n>` | `remove`, `disable`, `keep`. | `disable` (`keep` when no minimal edit exists). | Always, when the default is `keep`. Otherwise show the list. |
 | `image.<path>` | `stamp`, `leave`. | `leave`. | Always. A deploy manifest that pins the image may be deploy state. |
 | `file.<path>` | `keep`, `overwrite`. | `keep`. One decision per file that init would write but that already exists: `.launchset/README.md` and the `launchset-*.yml` workflows. | Rarely. `keep` leaves an edited file alone. `overwrite` replaces it with the newly generated one. |
 | `baseline` | `yes`, `no`. | `yes` only when an existing tag in another format already marks the version as released. | Always, when the answer matters. See [baseline](#baseline-tag). |
 | `offset` | An integer `>= 0`. | Enough to stay above the highest build number found. | When it is above 0. |
 | `skill` | `yes`, `no`. | `yes`. | Rarely. |
-| `hook` | `yes`, `no`. | `no`. Only exists when a hook setup is found that doesn't run `launchset check --push` yet. | Optional. |
+| `hook` | `yes`, `no`. | `no`. Only exists when a hook setup is found that doesn't run `launchset check --push` yet: husky as a dependency or with hooks in `.husky/`, simple-git-hooks or lefthook. A hook file git ignores doesn't count. | Optional. |
 
 The machinery id is `machinery.<file path>#<n>`, where `n` counts the items in that file from 1. A path that starts with a dot gives two dots: `machinery..github/workflows/release.yml#1`. Copy ids from the JSON, don't type them.
 
