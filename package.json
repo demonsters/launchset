@@ -1,6 +1,6 @@
 {
   "name": "@demonsters/launchset",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Changesets-style releases for lock-step monorepos: one version, many targets (Docker, Android, iOS, web).",
   "type": "module",
   "license": "UNLICENSED",

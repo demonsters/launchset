@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.1 (2026-11-18)
+
+### Patch changes
+- `verify` no longer tries to read private npm packages with an npm trusted-publishing token. npm only accepts those tokens for publishing, so the check failed with HTTP 400 "OIDC publish authorize: Invalid token". A private package needs a read token in `LAUNCHSET_NPM_TOKEN` or `NODE_AUTH_TOKEN`; the docs explain how to publish with trusted publishing and no npm secret. ([#7](https://github.com/demonsters/launchset/pull/7), @rene-demonsters)
+
 ## 1.0.0 (2026-11-18)
 
 ### Major changes
