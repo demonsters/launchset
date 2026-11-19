@@ -1,0 +1,14 @@
+
+launchset-finalize:
+  extends: .launchset_cli
+  # Also when a build failed: finalize then records a partial release and reports which targets
+  # are missing. Creates the release tag and the GitLab release once every auto target shipped.
+  when: always
+  interruptible: false
+  needs:
+    - pipeline: $PARENT_PIPELINE_ID
+      job: @@plan_job@@
+    @@build_needs@@
+  script:
+    @@checkout@@
+    - launchset finalize --plan @plan.json --ci

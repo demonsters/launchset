@@ -3,7 +3,8 @@
  * flags, decides whether it may ask questions, builds the flow context and prints results.
  */
 
-import { readFileSync, realpathSync } from "node:fs";
+import { realpathSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { Command, CommanderError, InvalidArgumentError, Option } from "commander";
 import { DOCS_URL } from "../core/links.ts";
@@ -21,12 +22,19 @@ import {
   verify,
   version,
 } from "../flow/index.ts";
-import { previewComment, previewPlan } from "../flow/preview.ts";
+import { type PreviewPlanData, previewComment, previewPlan } from "../flow/preview.ts";
 import { Git } from "../git/index.ts";
 import { INIT_FLAGS, parseDecide } from "../init/flags.ts";
-import { packageFile } from "../init/package-files.ts";
+import { packageVersion } from "../init/package-files.ts";
 import type { InitOptions } from "../init/types.ts";
-import { emitCi, finishCi } from "./ci-output.ts";
+import { DEFAULT_CHILD_FILE } from "../templates/gitlab-child.ts";
+import {
+  type ChildPipelineRequest,
+  childPipelineFor,
+  emitCi,
+  finishCi,
+  writeChildPipeline,
+} from "./ci-output.ts";
 import { exitCodeFor, reportError, UsageError } from "./errors.ts";
 import { type CliIo, processIo } from "./io.ts";
 import { cliLogger, emit, type GlobalOpts, makeContext, readPlanInput, toJson } from "./run.ts";
@@ -38,17 +46,6 @@ export interface RunState {
 
 /** Exit code for wrong usage (unknown command or option, missing argument). */
 const EXIT_USAGE = 2;
-
-function packageVersion(): string {
-  try {
-    const pkg = JSON.parse(readFileSync(packageFile("package.json"), "utf8")) as {
-      version?: string;
-    };
-    return pkg.version ?? "unknown";
-  } catch {
-    return "unknown";
-  }
-}
 
 function collect(value: string, previous: string[] = []): string[] {
   return [...previous, value];
@@ -62,6 +59,15 @@ function positiveInt(value: string): number {
 }
 
 const CHANNELS: readonly Channel[] = ["release", "prerelease", "preview"];
+
+/** The child pipeline request of a preview plan (a skip has no plan, only its reason). */
+function childRequest(data: PreviewPlanData): ChildPipelineRequest {
+  return {
+    plan: data.outcome === "plan" ? data.plan : undefined,
+    kind: "preview",
+    ...(data.skip ? { reason: data.skip.reason } : {}),
+  };
+}
 
 type Handler<O> = (opts: O & GlobalOpts, args: string[]) => Promise<number>;
 
@@ -200,6 +206,27 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
         state.exitCode = exitCodeFor(error);
       }
     });
+  }
+
+  /**
+   * `plan --gitlab [file]`: write the child pipeline for the plan to `file` (default
+   * launchset-child.yml), or with `-` print it on stdout (returned: it replaces the plan JSON).
+   */
+  async function planChild(
+    context: Awaited<ReturnType<typeof makeContext>>,
+    gitlab: boolean | string | undefined,
+    request: ChildPipelineRequest,
+  ): Promise<string | undefined> {
+    if (gitlab === undefined || gitlab === false) return undefined;
+    const content = await childPipelineFor(io, context, request);
+    if (gitlab === "-") {
+      io.stdout(content);
+      return content;
+    }
+    const file = resolve(io.cwd, gitlab === true ? DEFAULT_CHILD_FILE : gitlab);
+    await writeFile(file, content, "utf8");
+    io.stderr(`wrote the child pipeline to ${file}\n`);
+    return undefined;
   }
 
   // init ---------------------------------------------------------------------------------
@@ -380,6 +407,7 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
     branch?: string;
     fetch?: boolean;
     runNumber?: number;
+    gitlab?: boolean | string;
   }>(
     "plan",
     "Print the release plan (mode, matrix, version, build number) as JSON. Writes nothing.",
@@ -406,7 +434,16 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
         ).argParser(positiveInt),
       );
       cmd.option("--no-fetch", "don't fetch tags first");
-      examples(cmd, "launchset plan > plan.json", "launchset plan --preview");
+      cmd.option(
+        "--gitlab [file]",
+        "also write the GitLab child pipeline for the plan (default: launchset-child.yml; -: print it on stdout instead of the plan)",
+      );
+      examples(
+        cmd,
+        "launchset plan > plan.json",
+        "launchset plan --preview",
+        "launchset plan --gitlab -",
+      );
       return ciHelp(
         cmd,
         "LAUNCHSET_MODE, LAUNCHSET_MATRIX, LAUNCHSET_VERSION, LAUNCHSET_BUILD_NUMBER, LAUNCHSET_CHANNEL, LAUNCHSET_RELEASE_SHA, ...",
@@ -426,13 +463,16 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
           ...(opts.target === undefined ? {} : { targets: [opts.target] }),
         });
         const { skip } = result.data;
-        io.stdout(
-          toJson(
-            result.data.outcome === "skip" && skip
-              ? { skipped: skip.code, reason: skip.reason }
-              : result.data.plan,
-          ),
-        );
+        const child = await planChild(context, opts.gitlab, childRequest(result.data));
+        if (child === undefined) {
+          io.stdout(
+            toJson(
+              result.data.outcome === "skip" && skip
+                ? { skipped: skip.code, reason: skip.reason }
+                : result.data.plan,
+            ),
+          );
+        }
         io.stderr(`${result.lines.join("\n")}\n`);
         await finishCi(io, cliLogger(io), "preview-plan", result, context, {
           ...opts,
@@ -448,7 +488,11 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
         ...(opts.force ? { force: true } : {}),
         ...(opts.branch ? { branch: opts.branch } : {}),
       });
-      io.stdout(toJson(result.data.plan));
+      const child = await planChild(context, opts.gitlab, {
+        plan: result.data.plan,
+        kind: "release",
+      });
+      if (child === undefined) io.stdout(toJson(result.data.plan));
       const notes = result.lines.filter((l) => /^(warning|note):/.test(l));
       if (notes.length > 0) io.stderr(`${notes.join("\n")}\n`);
       await finishCi(io, cliLogger(io), "release", result, context, {
@@ -494,7 +538,11 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
         ...(opts.force ? { force: true } : {}),
         ...(opts.branch ? { branch: opts.branch } : {}),
       });
-      return emitCi(io, cliLogger(io), "release", result, context, opts);
+      const code = await emitCi(io, cliLogger(io), "release", result, context, opts);
+      if (result.ok) {
+        await writeChildPipeline(io, context, { plan: result.data.plan, kind: "release" }, opts);
+      }
+      return code;
     },
   );
 
@@ -520,7 +568,11 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
         fetch: opts.fetch !== false,
         ...(given && opts.target !== undefined ? { targets: [opts.target] } : {}),
       });
-      return emitCi(io, cliLogger(io), "preview-plan", result, context, opts);
+      const code = await emitCi(io, cliLogger(io), "preview-plan", result, context, opts);
+      if (result.ok) {
+        await writeChildPipeline(io, context, childRequest(result.data), opts);
+      }
+      return code;
     },
   );
 
@@ -532,14 +584,17 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
       withGlobals(cmd, { json: true, ci: true });
       cmd.option(
         "--plan <json|@file>",
-        "the preview plan (default: $LAUNCHSET_PLAN; empty: nothing to report)",
+        "the preview plan (default: $LAUNCHSET_PLAN; empty or a missing @file: nothing to report)",
       );
       examples(cmd, "launchset preview-comment --plan @plan.json");
       return ciHelp(cmd, "LAUNCHSET_COMMENT_URL, LAUNCHSET_RELEASE_URL");
     },
     async (opts) => {
-      // Empty when the preview was skipped: the flow reports "nothing to report".
-      const plan = (await readPlanInput(io, opts.plan)) ?? "";
+      // Empty when the preview was skipped (also: no plan file, as a skipped preview job on
+      // GitLab writes none): the flow reports "nothing to report".
+      const plan =
+        (await readPlanInput(io, opts.plan, true, { missingFile: "none", log: cliLogger(io) })) ??
+        "";
       const context = await makeContext(io, opts);
       const result = await previewComment(context, { plan });
       return emitCi(io, cliLogger(io), "preview-comment", result, context, opts);

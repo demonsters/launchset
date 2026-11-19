@@ -1,0 +1,10 @@
+
+# A child pipeline needs at least one job.
+launchset-nothing-to-build:
+  image: busybox:1
+  stage: test
+  interruptible: true
+  variables:
+    GIT_STRATEGY: none
+  script:
+    - @@echo@@

@@ -139,6 +139,8 @@ export async function gitServer(root: string): Promise<GitServer> {
         }
         res.end(all.subarray(split + 4));
       });
+      // http-backend may exit before it read the request body (EPIPE): its response counts.
+      cgi.stdin.on("error", () => {});
       cgi.stdin.end(body);
     });
   });

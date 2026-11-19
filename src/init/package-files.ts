@@ -66,3 +66,15 @@ export function readPackageFile(...segments: string[]): string {
     );
   }
 }
+
+/** The launchset package's version (from its package.json), or `unknown`. */
+export function packageVersion(): string {
+  try {
+    const pkg = JSON.parse(readFileSync(packageFile("package.json"), "utf8")) as {
+      version?: string;
+    };
+    return pkg.version ?? "unknown";
+  } catch {
+    return "unknown";
+  }
+}

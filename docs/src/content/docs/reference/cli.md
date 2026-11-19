@@ -245,11 +245,14 @@ Options:
   --branch <name>      plan for this branch (default: the current branch)
   --run-number <n>     with --preview: the workflow run number (default: $GITHUB_RUN_NUMBER)
   --no-fetch           don't fetch tags first
+  --gitlab [file]      also write the GitLab child pipeline for the plan (default:
+                       launchset-child.yml; -: print it on stdout instead of the plan)
   -h, --help           display help for command
 
 Example:
   $ launchset plan > plan.json
   $ launchset plan --preview
+  $ launchset plan --gitlab -
 
 
 In --ci mode also writes plan.json, launchset.env and launchset.sh (see docs).
@@ -339,7 +342,8 @@ Options:
   --token <token>      token (default: $LAUNCHSET_TOKEN, then $GITHUB_TOKEN / $GITLAB_TOKEN)
   --repo <path>        repository path (owner/repo, or group/sub/project on GitLab; default: from
                        the origin remote)
-  --plan <json|@file>  the preview plan (default: $LAUNCHSET_PLAN; empty: nothing to report)
+  --plan <json|@file>  the preview plan (default: $LAUNCHSET_PLAN; empty or a missing @file: nothing
+                       to report)
   -h, --help           display help for command
 
 Example:

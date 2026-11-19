@@ -7,9 +7,17 @@
 
 import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
+import type { Plan } from "../core/types.ts";
 import type { FlowContext, FlowResult, Logger } from "../flow/index.ts";
 import { outputsFor } from "../flow/index.ts";
+import {
+  checkTargetsFile,
+  DEFAULT_CHILD_FILE,
+  DEFAULT_TARGETS_FILE,
+  PLAN_JOBS,
+  renderChildPipeline,
+} from "../templates/gitlab-child.ts";
 import type { CliIo } from "./io.ts";
 import { emit, type GlobalOpts } from "./run.ts";
 
@@ -200,4 +208,71 @@ export async function emitCi(
   const code = emit(io, result, { json: opts.json });
   await finishCi(io, log, command, result, context, opts);
   return code;
+}
+
+// ---------------------------------------------------------------------------
+// The GitLab child pipeline
+
+export interface ChildPipelineRequest {
+  plan: Plan | undefined;
+  kind: "release" | "preview";
+  /** Why nothing is built (a skipped preview). */
+  reason?: string;
+}
+
+/**
+ * The child pipeline for a plan, after checking `.gitlab/launchset-targets.yml` (at the git
+ * top level: `include: local` paths are relative to the repository root). The plan job is the
+ * job running this (`CI_JOB_NAME`); `LAUNCHSET_CLI` is passed on to the child's jobs.
+ */
+export async function childPipelineFor(
+  io: CliIo,
+  context: FlowContext,
+  request: ChildPipelineRequest,
+): Promise<string> {
+  const root = await context.git.topLevel().catch(() => context.cwd);
+  const { plan } = request;
+  const builds = plan && plan.mode !== "release-pr" && plan.mode !== "none" ? plan.matrix : [];
+  const targetsPath = join(root, DEFAULT_TARGETS_FILE);
+  const text = existsSync(targetsPath) ? await readFile(targetsPath, "utf8") : undefined;
+  for (const warning of checkTargetsFile(text, builds)) context.log.warn(warning);
+  const currentSha = context.ci.sha ?? (await context.git.headSha().catch(() => undefined));
+  return renderChildPipeline({
+    plan,
+    kind: request.kind,
+    planJob: io.env.CI_JOB_NAME?.trim() || PLAN_JOBS[request.kind],
+    ...(currentSha ? { currentSha } : {}),
+    ...(io.env.LAUNCHSET_CLI?.trim() ? { cliSpec: io.env.LAUNCHSET_CLI.trim() } : {}),
+    ...(request.reason ? { reason: request.reason } : {}),
+  });
+}
+
+/** Print the child pipeline to the job log (a collapsed section in GitLab CI). */
+function printChild(io: CliIo, file: string, content: string): void {
+  if (io.env.GITLAB_CI === "true") {
+    const time = Math.floor((io.now ?? new Date()).getTime() / 1000);
+    io.stderr(
+      `\u001b[0Ksection_start:${time}:launchset_child[collapsed=true]\r\u001b[0KChild pipeline ${file}\n${content}\u001b[0Ksection_end:${time}:launchset_child\r\u001b[0K\n`,
+    );
+    return;
+  }
+  io.stderr(`Child pipeline ${file}:\n${content}`);
+}
+
+/**
+ * `--ci` on GitLab: write the child pipeline (`LAUNCHSET_CHILD_PIPELINE`, default
+ * launchset-child.yml) for `release` and `preview-plan`, always (with nothing to build it has
+ * one job saying why), and print it to the log.
+ */
+export async function writeChildPipeline(
+  io: CliIo,
+  context: FlowContext,
+  request: ChildPipelineRequest,
+  opts: { ci?: boolean | undefined },
+): Promise<void> {
+  if (!ciEnabled(io, opts) || context.host !== "gitlab") return;
+  const content = await childPipelineFor(io, context, request);
+  const name = io.env.LAUNCHSET_CHILD_PIPELINE?.trim() || DEFAULT_CHILD_FILE;
+  await writeFile(resolve(io.cwd, name), content, "utf8");
+  printChild(io, name, content);
 }

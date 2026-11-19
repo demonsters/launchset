@@ -76,17 +76,23 @@ export async function makeContext(
 
 /**
  * The plan JSON text: `--plan '<json>'`, `--plan @file.json`, else `LAUNCHSET_PLAN` (unless
- * `useEnv` is false, e.g. explicit `--version` flags were given).
+ * `useEnv` is false, e.g. explicit `--version` flags were given). With `missingFile: "none"`, a
+ * `@file` that doesn't exist means "no plan" (`preview-comment`: a skipped preview writes none).
  */
 export async function readPlanInput(
   io: CliIo,
   value: string | undefined,
   useEnv = true,
+  options: { missingFile?: "error" | "none"; log?: Logger } = {},
 ): Promise<string | undefined> {
   const raw = value ?? (useEnv ? io.env.LAUNCHSET_PLAN : undefined);
   if (raw === undefined || raw.trim() === "") return undefined;
   if (!raw.startsWith("@")) return raw;
   const file = resolve(io.cwd, raw.slice(1));
+  if (options.missingFile === "none" && !existsSync(file)) {
+    options.log?.info(`No plan file ${file}: no plan to report (the preview was skipped).`);
+    return undefined;
+  }
   try {
     return await readFile(file, "utf8");
   } catch (error) {

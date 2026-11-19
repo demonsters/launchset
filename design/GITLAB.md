@@ -1,6 +1,6 @@
 # GitLab support: plan
 
-Status: in progress (phases 1–3 done). Last updated 2026-11-19.
+Status: in progress (phases 1–4 done). Last updated 2026-11-19.
 
 launchset runs on GitHub only today. This plan covers what it takes to also run on GitLab
 (gitlab.com and self-managed), in an order that keeps the GitHub path safe at every step.
@@ -144,52 +144,99 @@ Each phase is its own PR and leaves GitHub behaviour unchanged (the existing tes
   Maintainer (needed for protected branches and tags), protected-branch "allowed to push".
 - Docs: `gitlab-token.md`, the counterpart of `github-app.md`.
 
-### Phase 4: GitLab CI templates
+### Phase 4: GitLab CI templates (done)
 
-- A CI/CD component (or `include:` templates) for the three pipelines: check, preview, release.
-- `concurrency` → `resource_group` (check that a waiting release-commit pipeline is never dropped,
-  which the GitHub template relies on).
-- The child pipeline (decisions 2 and 3). The parent pipeline:
+Renderers, not yet written by `init` (phase 5): `renderGitLabCi()` in `src/templates/gitlab.ts`
+(templates in `templates/gitlab/`) and `renderChildPipeline()` in `src/templates/gitlab-child.ts`.
+
+- No CI/CD component for now (open decision 4): `init` will write plain YAML files, like the GitHub
+  workflows. Each launchset job installs the CLI with npm
+  (`npm install --global "$LAUNCHSET_CLI"`, default `@demonsters/launchset@<the version that
+  rendered the file>`; `NPM_TOKEN` for the private package; skipped when `launchset` is on the
+  PATH). The bundle targets Node 24, so every job that runs launchset needs Node 24+ and npm.
+- `.gitlab/launchset.yml` (launchset's jobs, included by `.gitlab-ci.yml`): `launchset-check` (MR
+  pipelines into the base, maintenance and prerelease branches), `launchset-release` +
+  `launchset-build` (trigger) on pushes and `web` / `api` pipelines of the base and maintenance
+  branches, `launchset-preview-plan` + `launchset-preview` (trigger) +
+  `launchset-preview-comment`. No top-level `workflow:` (it would override the project's).
+- `.gitlab/launchset-targets.yml` (the user's file): one hidden `.launchset-<target>` job per
+  target with image, services, tags, variables, before_script and the build steps (GitLab
+  versions of the GitHub snippets). No `rules` in them: a child whose jobs are all ruled out
+  fails to start.
+- A fresh `.gitlab-ci.yml` for projects without one: the documented `workflow: rules:` that
+  switch between branch and MR pipelines (preview and prerelease branches always get branch
+  pipelines), `workflow: auto_cancel: on_new_commit: interruptible`, and the include.
+- `concurrency` → `resource_group: launchset-release-$CI_COMMIT_REF_SLUG` on the release job.
+  GitLab never drops a job waiting for a resource group (GitHub keeps only one waiting run per
+  group), so the release-commit pipeline always gets its run. Ordering isn't guaranteed (default
+  process mode `unordered`); the release flow already handles out-of-order runs (only the run for
+  the branch tip updates the release MR, lease pushes).
+- The child pipeline (decisions 2 and 3). The parent:
 
   ```yaml
-  launchset:
-    script: [launchset release --ci]          # writes plan.json, launchset.env, child.yml
+  launchset-release:
+    extends: .launchset-cli                    # node:24, GIT_DEPTH 0, installs the CLI
+    script: [launchset release --ci]           # plan.json, launchset.env, launchset-child.yml
+    resource_group: launchset-release-$CI_COMMIT_REF_SLUG
+    interruptible: false
     artifacts:
+      paths: [plan.json, launchset-child.yml]
       reports: { dotenv: launchset.env }
-      paths: [plan.json, child.yml]
-  build:
-    needs: [launchset]
+      expire_in: 30 days
+  launchset-build:
+    needs: [launchset-release]
+    variables: { PARENT_PIPELINE_ID: $CI_PIPELINE_ID }
     trigger:
-      include: [{ artifact: child.yml, job: launchset }]
-      strategy: depend                         # the MR shows the child's result
+      include: [{ artifact: launchset-child.yml, job: launchset-release }]
+      strategy: mirror                         # GitLab 18.2; the MR shows the child's result
   ```
 
-  The generated `child.yml`, for a plan with only `web`:
+  The generated child for a plan with only `web` (abridged):
 
   ```yaml
-  include: [{ local: .gitlab/launchset-targets.yml }]
+  include: [{ local: .gitlab/launchset-targets.yml }]      # a literal path
   build-web:
     extends: .launchset-web
-    needs: [{ pipeline: $PARENT_PIPELINE_ID, job: launchset }]   # gets plan.json
+    needs: [{ pipeline: $PARENT_PIPELINE_ID, job: launchset-release }]   # gets plan.json
+    interruptible: false
     script:
-      - launchset stamp --target web --plan @plan.json
-      - launchset verify --target web --plan @plan.json
+      - cd "$CI_PROJECT_DIR"
+      - (install lines)
+      - launchset stamp --target web --plan @plan.json --ci
+      - . ./launchset.sh
+      - launchset verify --target web --plan @plan.json --ci
+      - . ./launchset.sh
+      - if [ "${LAUNCHSET_ALREADY_PUBLISHED:-}" = "true" ]; then launchset mark --target web --plan @plan.json --ci; exit $?; fi
       - !reference [.launchset-web, script]
-      - launchset mark --target web --plan @plan.json
-  finalize:
-    needs: [build-web]
+      - cd "$CI_PROJECT_DIR"
+      - launchset mark --target web --plan @plan.json --ci
+  launchset-finalize:
+    extends: .launchset_cli
     when: always                               # records partial releases
-    script: [launchset finalize --plan @plan.json]
+    needs: [{ pipeline: $PARENT_PIPELINE_ID, job: launchset-release }, { job: build-web, artifacts: false }]
+    script: [launchset finalize --plan @plan.json --ci]
   ```
 
-  When the plan has nothing to build, no build jobs run (how exactly: see "To verify").
-- Debuggability: `launchset` prints `child.yml` to the job log and keeps it as an artifact;
-  `launchset plan --gitlab` writes it locally.
-- Manual targets and previews: the same child pipeline from a different plan. Manual targets
-  start from a `web` pipeline with `TARGET` / `VERSION` / `FORCE` inputs.
-- The snippets (`docker`, `android`, `ios`, `custom`, `custom-npm`, `docker-login`): GitLab
-  versions; Docker login uses `CI_REGISTRY` / `CI_REGISTRY_USER` / `CI_REGISTRY_PASSWORD` by default.
-- Previews: see "Open decisions".
+  Every launchset line is its own script item: GitLab runs them with `set -e`, which ignores a
+  failure on the left of `&&`. When the plan's release-sha isn't the pipeline's commit (a retry
+  of an unfinished release, a merged results pipeline), every child job first runs
+  `git checkout --quiet --detach <release-sha>` with `GIT_DEPTH: "0"`; otherwise build jobs keep
+  the project's clone depth. Nothing to build (release-pr, none, a skipped preview): the child is
+  a single `launchset-nothing-to-build` job (busybox, `GIT_STRATEGY: none`) that echoes why.
+  Before writing the child, launchset checks that the targets file defines `.launchset-<target>`
+  with a `script` (or `extends`) for every target it builds.
+- Debuggability: in `--ci` mode on GitLab, `release` and `preview-plan` always write
+  `launchset-child.yml` (`LAUNCHSET_CHILD_PIPELINE`), print it to the job log (a collapsed
+  section) and keep it as an artifact; `launchset plan --gitlab [file|-]` writes it locally.
+- Manual targets and previews: the same child pipeline from a different plan. Run pipeline with
+  `LAUNCHSET_TARGET` / `LAUNCHSET_RELEASE_VERSION` / `LAUNCHSET_FORCE` ships a manual target;
+  `LAUNCHSET_PREVIEW=true` (+ `LAUNCHSET_TARGET`) builds a preview of any branch.
+- Previews in MR pipelines: the plan job runs automatically when the MR has `preview.label`
+  (`CI_MERGE_REQUEST_LABELS`), and is a manual job (`allow_failure: true`,
+  `LAUNCHSET_PREVIEW_MANUAL=true`) otherwise; with `rebuildOnPush: false` every MR gets the manual
+  job. Never for fork MRs. Pushes to `preview.branches` build automatically.
+- `preview-comment --plan @plan.json` treats a missing file as "no plan" (a skipped preview
+  writes none).
 
 ### Phase 5: `init`, docs, skills
 
@@ -205,44 +252,80 @@ Each phase is its own PR and leaves GitHub behaviour unchanged (the existing tes
 - Docs: a GitLab page per area (getting started, token, previews, recipes); keep GitHub the
   default in examples. Update both agent skills (`launchset`, `launchset-adopt`).
 
-## Open decisions
+## Decided (formerly open decisions)
 
-1. **Previews by label.** Adding a label to an MR doesn't start a pipeline on GitLab, so
-   `preview.label` (`labeled` events, `core/preview.ts`) can't work as on GitHub. Options: a
-   `when: manual` preview job on every MR pipeline; the label only applies on the next push; or a
-   webhook (out of scope). Proposal: manual job, and the label (if set) makes it run automatically
-   on push.
-2. **Release "latest" and pre-releases.** GitLab releases have no `prerelease` and no
-   `make_latest`; the latest release is the one with the newest `released_at`. A release of a
-   lower version (hotfix on a maintenance branch) would become "latest". Options: set
-   `released_at` to the original release's time for lower versions; or accept it and document.
-   Prerelease releases: create them with "Pre-release" in the name, or skip them on GitLab.
-3. **`semver` build numbers.** They use `run_attempt`, which GitLab doesn't have. Retrying a GitLab
-   job keeps `CI_PIPELINE_IID`, so the build number would repeat. Options: use `CI_JOB_ID` (unique,
-   large), or reject `semver` on GitLab.
-4. **Distribution.** A GitLab CI/CD component needs a public GitLab project (like the public
-   `launchset-action` repo for GitHub), or users install the npm package in the job (private
-   package: needs an npm token).
-5. **Self-managed versions.** Pick a minimum GitLab version (CI/CD components, `spec:inputs` and
-   markdown alert blocks need a recent one).
+1. **Previews by label.** A `when: manual` preview job in every MR pipeline (it builds without
+   the label, `LAUNCHSET_PREVIEW_MANUAL=true`); with the label the job runs automatically on every
+   pipeline of the MR (adding the label needs a push or a new pipeline). `rebuildOnPush: false`
+   makes the labeled job manual too.
+2. **Release "latest" and pre-releases.** Accepted and documented: GitLab's "latest" release is
+   the newest `released_at`, so a hotfix release of a lower version becomes "latest". finalize
+   creates superseded partial releases before the version's own release, so the real one is
+   created last.
+3. **`semver` build numbers.** Kept: GitLab has no attempt counter, so the attempt is always 1
+   (`core/build-number.ts` defaults a missing attempt to 1). A retried plan job computes the same
+   build number again, which is what a retry of the same release should upload. (`semver` is
+   rejected with previews enabled, on both hosts.)
+4. **Distribution.** No CI/CD component for now: jobs install the npm package (`LAUNCHSET_CLI`,
+   pinned to the version that rendered the files; `NPM_TOKEN` for the private package). A
+   component needs a public GitLab project; it can come later from the same templates.
+5. **Self-managed versions.** Minimum GitLab 18.2 (`trigger:strategy: mirror`; markdown alerts
+   need 17.10; `workflow:auto_cancel` is older).
 
-## To verify before building
+## To verify
 
-- The dotenv report limits on gitlab.com and the default on self-managed.
-- Whether `CI_JOB_TOKEN` can push (there is a newer project setting for it) and read MRs, notes,
-  releases and pipeline jobs; if so it could replace the access token for some commands.
-- That MR notes posted by a project access token have `author.bot === true`.
-- Markdown alert blocks (`> [!NOTE]`) render in GitLab MR notes and release bodies.
-- `resource_group` ordering and cancellation behaviour against the release flow's needs.
-- A generated child pipeline can `include:` a local file from the repo and use `!reference` on
-  its jobs.
-- Child jobs get the parent's `plan.json` through `needs: pipeline: $PARENT_PIPELINE_ID`.
-- How to skip the trigger job when there is no `child.yml` (`rules` can't see artifacts):
-  probably always write a `child.yml`, with a single no-op job when there is nothing to build.
-- With `strategy: depend`, a failed or manual child job shows correctly on the parent pipeline
-  and in the MR.
+Settled from the docs (docs.gitlab.com, November 2026):
+
+- Dotenv report limits: 5 KB and 20 variables by default on self-managed (instance settings,
+  17.1+); on GitLab.com 50 / 100 / 150 variables (Free / Premium / Ultimate). The plan doesn't go
+  through dotenv (plan.json artifacts); `--ci` warns when launchset.env exceeds the defaults.
+- `CI_JOB_TOKEN`: may push when the project allows it ("Allow Git push requests to the
+  repository", 18.4, off by default), but those pushes never start pipelines, so it can't push the
+  release branch. It may read MRs and notes and use the Releases API, but not post notes, create
+  MRs or list pipeline jobs. `LAUNCHSET_TOKEN` stays required for writes.
+- Markdown alerts render since 17.10, documented in lowercase (`> [!note]`), which launchset
+  writes on GitLab.
+- `resource_group`: waiting jobs are kept (never dropped); default process mode `unordered`
+  (changeable only through the API). Auto-cancel ("conservative" default) can cancel a pipeline
+  whose `interruptible: false` jobs haven't started yet: hence
+  `workflow: auto_cancel: on_new_commit: interruptible` in the generated `.gitlab-ci.yml`, and the
+  recovery (Run pipeline without variables) in the comments.
+- A generated child can't use variables in `include` (documented): the child has a literal path.
+  Child pipelines run at the parent's project, ref and commit.
+- `needs: pipeline: $PARENT_PIPELINE_ID, job:` fetches artifacts from a parent job that
+  succeeded; `PARENT_PIPELINE_ID` is passed by the trigger job's `variables` (forwarded by
+  default).
+- No trigger job skipping: a child always gets a `launchset-child.yml`, with one visible job when
+  there is nothing to build (a config without visible jobs, or with every job ruled out, fails).
+- `strategy: mirror` (18.2) gives the trigger job exactly the child's status; optional manual jobs
+  don't block it.
+- `after_script` runs in a separate shell, whatever `script` did, and before the artifacts
+  upload; so an `exit 0` in `script` (the already-published case) ends the job as a success (the
+  docs don't spell out `exit`; that part is plain shell).
+- Variable-to-variable comparisons (`$A != $B`) are allowed in `rules: if:` (the fork check).
+  Regex patterns are RE2 between `/`; `@` must be written `\x40`.
+- Pipeline variables can be restricted by role: "Minimum role to use pipeline variables"
+  (default Maintainer on self-managed, `no_one_allowed` for new projects in new namespaces on
+  GitLab.com).
+
+Still needs a real GitLab instance:
+
+- `include: local` + `extends` + `!reference [.launchset-<target>, script]` inside an
+  artifact-generated child (expected to work: includes merge before `!reference`).
+- Whether `launchset-release`'s dotenv variables reach child jobs through `needs: pipeline:`
+  (harmless either way: launchset.sh is sourced after `stamp`).
+- That a job `needs`-ing an optional manual job (the MR preview plan job) is skipped until the
+  manual job runs, then runs (GitLab's 13.12 behaviour), also for the `when: always` comment job.
+- `author.bot` on notes isn't documented (the MR API has it since 19.5); launchset also matches
+  the `project_<id>_bot_` username. Check a note posted by a project access token.
+- `GET /user` with a project access token (expected: the bot user).
+- `$CI_PIPELINE_ID` in a trigger job's `variables` (the docs' own example; marked job-only in the
+  variables table).
+- The images: `docker:29` + `docker:29-dind` with buildx and `apk add nodejs-current`,
+  `cimg/android:*-node` as a non-root user with the npm prefix, Node on the hosted macOS images.
+- With `strategy: mirror`, how a failed child job shows in the MR widget.
 
 ## Estimate
 
-Phases 1–3: a few days of focused work. Phases 4–5 are larger: phase 4 needs a trial on a real
-GitLab project to settle the "To verify" list.
+Phases 1–4: done. Phase 5 is larger; before it ships, a trial on a real GitLab project settles
+the "Still needs a real GitLab instance" list.

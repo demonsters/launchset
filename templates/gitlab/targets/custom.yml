@@ -1,0 +1,12 @@
+
+# --- @@target@@ (custom): your build and publish steps ---
+.launchset-@@target@@:
+  image: node:24
+  script:
+    # Remove this line once you've added the build and publish steps below: it stops the release
+    # from marking @@target@@ as shipped while nothing builds it.
+    - echo "No build steps for @@target@@ yet. Add them to .gitlab/launchset-targets.yml and remove this line."; exit 1
+    # `stamp` wrote the version into this target's `files`, if it has any. Example, for an npm
+    # package (and add `verify: ["npm"]` to the target to skip it when the version exists):
+    # - npm config set "//registry.npmjs.org/:_authToken" "$NPM_TOKEN"
+    # - npm publish --tag "$LAUNCHSET_DIST_TAG"

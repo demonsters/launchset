@@ -8,6 +8,7 @@
       "!action/dist",
       "!test/fixtures",
       "!templates/workflows",
+      "!templates/gitlab",
       "!docs/.astro",
       "!docs/dist",
       "!**/*.md"

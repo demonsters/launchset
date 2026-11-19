@@ -1,0 +1,25 @@
+
+# --- @@target@@ (android): example steps, uncomment and adapt ---
+.launchset-@@target@@:
+  # An image with the Android SDK, Java and Node (CircleCI's Android image, the `-node` variant
+  # has the current Node LTS). Any image with the SDK, Java and Node 24 or later works: change
+  # the tag to pin another release (https://hub.docker.com/r/cimg/android/tags).
+  image: cimg/android:@@android_image_tag@@
+  @@verify_variables@@
+  before_script:
+    # The image runs as a non-root user: global npm packages (launchset) go to the home folder.
+    - export NPM_CONFIG_PREFIX="$HOME/.npm-global" PATH="$HOME/.npm-global/bin:$PATH"
+  script:
+    # Remove this line once you've added the build and upload steps below: it stops the release
+    # from marking @@target@@ as shipped while nothing builds it.
+    - echo "No build steps for @@target@@ yet. Add them to .gitlab/launchset-targets.yml and remove this line."; exit 1
+    # `stamp` already wrote versionName and versionCode into the Gradle files. LAUNCHSET_CHANNEL
+    # picks the Google Play track: release -> production, prerelease -> beta, preview -> internal.
+    # Signing secrets (ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS,
+    # ANDROID_KEY_PASSWORD) are CI/CD variables your Gradle config reads.
+    #
+    # - cd @@android_dir@@
+    # - ./gradlew bundleRelease
+    # - case "$LAUNCHSET_CHANNEL" in release) PLAY_TRACK=production ;; prerelease) PLAY_TRACK=beta ;; *) PLAY_TRACK=internal ;; esac
+    # - export SUPPLY_JSON_KEY_DATA="$LAUNCHSET_PLAY_SERVICE_ACCOUNT_JSON"
+    # - bundle exec fastlane supply --aab app/build/outputs/bundle/release/app-release.aab --track "$PLAY_TRACK" --package_name "@@package_name@@"

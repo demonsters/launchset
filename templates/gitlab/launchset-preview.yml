@@ -1,0 +1,54 @@
+
+# Preview builds: test builds from an MR, a preview branch or a prerelease branch. Nothing is
+# committed, no changesets are consumed and no marker or release tags are created. (Prerelease
+# branches also get a git tag and a GitLab release.)
+#
+# Adding a label to an MR doesn't start a pipeline on GitLab. In MR pipelines the preview
+# therefore runs:
+@@preview_mr_help@@
+# Fork MRs never get a preview: their pipelines have no access to this project's variables.
+# The plan, trigger and comment jobs share these conditions; only `when` differs.
+
+launchset-preview-plan:
+  extends: .launchset-cli
+  rules:
+    @@preview_plan_rules@@
+  # A newer push replaces the preview. Prerelease builds are never cancelled once they started
+  # (the child pipeline's jobs are not interruptible then).
+  interruptible: true
+  script:
+    # Decides the version, build number and targets (and reserves the tag on a prerelease
+    # branch). Writes plan.json (not when the preview is skipped) and launchset-child.yml.
+    - launchset preview-plan --ci
+  artifacts:
+    paths:
+      - plan.json
+      - launchset-child.yml
+    expire_in: 30 days
+
+launchset-preview:
+  stage: @@stage@@
+  needs: [launchset-preview-plan]
+  rules:
+    @@preview_trigger_rules@@
+  variables:
+    PARENT_PIPELINE_ID: $CI_PIPELINE_ID
+  trigger:
+    include:
+      - artifact: launchset-child.yml
+        job: launchset-preview-plan
+    strategy: mirror
+
+launchset-preview-comment:
+  extends: .launchset-cli
+  needs:
+    - job: launchset-preview-plan
+    - job: launchset-preview
+      artifacts: false
+  # `when: always`: also when a build failed, so the note shows which target failed.
+  rules:
+    @@preview_comment_rules@@
+  script:
+    # One sticky MR note with the result per target (on a prerelease branch: the GitLab
+    # release). A skipped preview writes no plan.json: then there is nothing to report.
+    - launchset preview-comment --plan @plan.json --ci

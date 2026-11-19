@@ -1,0 +1,14 @@
+
+@@job@@:
+  extends: @@extends@@
+  stage: test
+  needs:
+    # plan.json from the plan job of the parent pipeline.
+    - pipeline: $PARENT_PIPELINE_ID
+      job: @@plan_job@@
+  interruptible: @@interruptible@@
+  variables:
+    LAUNCHSET_CLI: @@cli_spec@@
+    @@git_depth@@
+  script:
+    @@script@@
