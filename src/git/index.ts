@@ -215,6 +215,34 @@ export function basicAuthHeader(token: string): string {
 }
 
 /**
+ * `GIT_CONFIG_*` variables that add `entries` after the ones already in `baseEnv` (git reads
+ * them last, so they win over the repo's config). Nothing is written to `.git/config`.
+ */
+export function configEnv(
+  entries: readonly (readonly [key: string, value: string])[],
+  baseEnv: NodeJS.ProcessEnv = process.env,
+): Record<string, string> {
+  const existing = Number.parseInt(baseEnv.GIT_CONFIG_COUNT ?? "0", 10);
+  const start = Number.isInteger(existing) && existing > 0 ? existing : 0;
+  const env: Record<string, string> = { GIT_CONFIG_COUNT: String(start + entries.length) };
+  entries.forEach(([key, value], i) => {
+    env[`GIT_CONFIG_KEY_${start + i}`] = key;
+    env[`GIT_CONFIG_VALUE_${start + i}`] = value;
+  });
+  return env;
+}
+
+/**
+ * Where launchset points `core.hooksPath`: a path that holds no hooks. launchset runs git in
+ * the team's checkout, where hooks installed by husky, simple-git-hooks, lefthook or git-lfs
+ * (often by an install step earlier in the same CI job) would run on launchset's pushes,
+ * commits and checkouts: tests or lint in a pre-push hook, `npx launchset check --push`
+ * failing on npm auth, git-lfs checking locks with the wrong token. None of them has work to
+ * do for launchset's commits, tags and branches (they never add LFS objects).
+ */
+export const NO_HOOKS = process.platform === "win32" ? "NUL" : "/dev/null";
+
+/**
  * Environment variables that make git authenticate to `serverUrl` with `token`: first an
  * empty `http.<url>.extraheader` (resets the multi-valued list, dropping the header that
  * actions/checkout persisted), then the token's header. Entries already configured through
@@ -235,15 +263,13 @@ export function authConfigEnv(
 ): Record<string, string> {
   const scope = owner ? `${encodeURIComponent(owner)}/` : "";
   const key = `http.${normalizeServerUrl(serverUrl)}${scope}.extraheader`;
-  const existing = Number.parseInt(baseEnv.GIT_CONFIG_COUNT ?? "0", 10);
-  const start = Number.isInteger(existing) && existing > 0 ? existing : 0;
-  return {
-    GIT_CONFIG_COUNT: String(start + 2),
-    [`GIT_CONFIG_KEY_${start}`]: key,
-    [`GIT_CONFIG_VALUE_${start}`]: "",
-    [`GIT_CONFIG_KEY_${start + 1}`]: key,
-    [`GIT_CONFIG_VALUE_${start + 1}`]: basicAuthHeader(token),
-  };
+  return configEnv(
+    [
+      [key, ""],
+      [key, basicAuthHeader(token)],
+    ],
+    baseEnv,
+  );
 }
 
 /** A literal pathspec for a repo-relative path. */
@@ -413,6 +439,8 @@ export class Git {
       LANGUAGE: "C",
       ...options.env,
     };
+    // No hooks for launchset's own git work (see NO_HOOKS).
+    Object.assign(env, configEnv([["core.hooksPath", NO_HOOKS]], env));
     if (options.auth && this.#token)
       Object.assign(env, authConfigEnv(this.#token, this.serverUrl, env, owner));
     const command = this.mask(`git ${args.join(" ")}`);
@@ -821,8 +849,8 @@ export class Git {
     assertRefName("tag", name);
     const ref = `refs/tags/${name}`;
     const args = ["push", "--porcelain", this.remote, `${ref}:${ref}`];
-    // launchset's tags point at commits that are already on the remote, so there are no LFS
-    // objects to upload: git-lfs's pre-push hook is skipped (no lock check, no network).
+    // Hooks are off anyway (NO_HOOKS). This also tells git-lfs there's nothing to upload,
+    // should its hook run: launchset's tags point at commits that are already on the remote.
     const result = await this.exec(args, { auth: true, env: { GIT_LFS_SKIP_PUSH: "1" } });
     const status = this.#pushStatus(result.stdout, ref);
     if (result.code === 0) return status ?? "created";

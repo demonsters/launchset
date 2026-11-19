@@ -3,7 +3,8 @@
  * read-only GITHUB_TOKEN as `http.<server>/.extraheader`; launchset pushes with the App token.
  * git-lfs's pre-push hook doesn't apply git's "empty value resets the list" rule, so it used to
  * send the read-only header first and its lock check failed with "You must have push access to
- * verify locks" (every `mark` in the first release of an LFS repo).
+ * verify locks" (every `mark` in the first release of an LFS repo). launchset now runs git without
+ * the checkout's hooks, so git-lfs isn't involved in its pushes at all.
  *
  * The server here is smart-HTTP git (`git http-backend`) plus the git-lfs API on one host, like
  * github.com, and it judges only the first Authorization header. Needs git-lfs; skipped
@@ -113,7 +114,7 @@ async function gitServer(root: string): Promise<{ server: Server; url: string; s
 }
 
 describe.skipIf(!hasGitLfs())("pushing from a read-only checkout of a Git LFS repo", () => {
-  it("pushes marker tags and the release branch with the App token, lock check included", async () => {
+  it("pushes marker tags and the release branch with the App token, without git-lfs", async () => {
     const root = tempDir("lfs-server");
     const bare = join(root, "acme", "app.git");
     sh(root, "init", "--quiet", "--bare", "-b", "main", bare);
@@ -146,17 +147,13 @@ describe.skipIf(!hasGitLfs())("pushing from a read-only checkout of a Git LFS re
       expect(seen.filter((r) => r.path.includes("/info/lfs/"))).toEqual([]);
       expect(seen.every((r) => r.auth.join() === "APP")).toBe(true);
 
-      // A branch with a new LFS object (the release branch never has one, but the hook runs
-      // for branch pushes): the lock check and the upload check go out with the App token only.
-      repo.git("checkout", "--quiet", "-b", "launchset/release/main");
-      repo.commit("more assets", { "b.bin": "b".repeat(1024) });
+      // The release branch: launchset's commit on top of the base branch.
+      await git.checkoutNewBranch("launchset/release/main", "main");
+      repo.write("package.json", '{ "version": "1.5.0" }\n');
+      await git.commitAll("Release v1.5.0", ["package.json"]);
       seen.length = 0;
       expect(await git.pushBranch("launchset/release/main", { force: true })).toBe("created");
-      const lfs = seen.filter((r) => r.path.includes("/info/lfs/"));
-      expect(lfs.map((r) => r.path)).toEqual([
-        "/acme/app.git/info/lfs/locks/verify",
-        "/acme/app.git/info/lfs/objects/batch",
-      ]);
+      expect(seen.filter((r) => r.path.includes("/info/lfs/"))).toEqual([]);
       expect(seen.every((r) => r.auth.join() === "APP")).toBe(true);
     } finally {
       server.close();

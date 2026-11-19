@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
@@ -634,48 +634,35 @@ describe("authentication", () => {
     }
   });
 
-  it("gives pre-push hooks (git-lfs) the App header and skips them for tag pushes", async () => {
+  it("runs none of the checkout's hooks: pushes, commits and checkouts", async () => {
     const remote = tempDir("remote");
     sh(remote, "init", "--quiet", "--bare", "-b", "main");
     const repo = initRepo();
     repo.commit("a");
-    // A GitHub-style remote URL (the owner scopes the header); pushes go to the local remote.
-    const serverUrl = "https://github.com";
-    repo.git("remote", "add", "origin", `${serverUrl}/acme/app`);
-    repo.git("config", `url.${remote}.pushInsteadOf`, `${serverUrl}/acme/app`);
-    // What actions/checkout persists for the read-only GITHUB_TOKEN.
-    repo.git("config", `http.${serverUrl}/.extraheader`, "AUTHORIZATION: basic UkVBRE9OTFk=");
-    // A pre-push hook, like the one git-lfs installs: record what it would see.
-    const seen = join(repo.dir, ".git", "pre-push.log");
-    writeFileSync(
-      join(repo.dir, ".git", "hooks", "pre-push"),
-      `#!/bin/sh\nprintf 'skip=%s\\n' "$GIT_LFS_SKIP_PUSH" >> '${seen}'\ngit config --get-regexp '^http\\..*\\.extraheader$' >> '${seen}'\nprintf -- '--\\n' >> '${seen}'\n`,
-    );
-    chmodSync(join(repo.dir, ".git", "hooks", "pre-push"), 0o755);
-    const token = "ghs_AppInstallationToken123";
-    const git = new Git({ cwd: repo.dir, token, serverUrl });
+    repo.git("remote", "add", "origin", remote);
+    // Hooks a CI job installs before launchset runs (husky sets core.hooksPath on `prepare`,
+    // git-lfs adds pre-push, post-checkout, post-commit): every one fails and logs that it ran.
+    const hooks = tempDir("hooks");
+    const ran = join(hooks, "ran.log");
+    const names = ["pre-push", "pre-commit", "commit-msg", "post-commit", "post-checkout"];
+    for (const name of [...names, "reference-transaction"]) {
+      writeFileSync(join(hooks, name), `#!/bin/sh\necho ${name} >> '${ran}'\nexit 1\n`);
+      chmodSync(join(hooks, name), 0o755);
+    }
+    repo.git("config", "core.hooksPath", hooks);
+    const git = new Git({ cwd: repo.dir, token: "ghs_AppInstallationToken123" });
 
-    repo.git("tag", "launchset/web@1.0.0");
-    expect(await git.pushTag("launchset/web@1.0.0")).toBe("created");
-    expect(await git.pushBranch("main")).toBe("created");
+    await git.checkoutNewBranch("launchset/release/main", "main");
+    repo.write("package.json", '{ "version": "1.5.0" }\n');
+    await git.commitAll("Release v1.5.0", ["package.json"]);
+    expect(await git.pushBranch("launchset/release/main", { force: true })).toBe("created");
+    await git.checkout("main");
+    await git.createTag("launchset/web@1.5.0", await git.headSha());
+    expect(await git.pushTag("launchset/web@1.5.0")).toBe("created");
 
-    const [tagPush, branchPush] = readFileSync(seen, "utf8").split("--\n");
-    // A tag points at a commit that is already pushed: no LFS objects, no hook work.
-    expect(tagPush).toMatch(/^skip=1\n/);
-    // A branch push keeps the hook. git-lfs uses only the most specific matching key, and
-    // (unlike git) doesn't treat an empty value as a reset: the owner key must hold just the
-    // reset and the App header, so the read-only header never reaches it.
-    expect(branchPush).toMatch(/^skip=\n/);
-    expect(branchPush).toContain(
-      `http.${serverUrl}/.extraheader AUTHORIZATION: basic UkVBRE9OTFk=`,
-    );
-    const owner = (branchPush ?? "")
-      .split("\n")
-      .filter((line) => line.startsWith(`http.${serverUrl}/acme/.extraheader`));
-    expect(owner).toEqual([
-      `http.${serverUrl}/acme/.extraheader `,
-      `http.${serverUrl}/acme/.extraheader ${basicAuthHeader(token)}`,
-    ]);
+    expect(existsSync(ran) ? readFileSync(ran, "utf8") : "").toBe("");
+    // The team's setting is untouched: their own git commands still run the hooks.
+    expect(repo.git("config", "core.hooksPath")).toBe(hooks);
   });
 
   it("masks tokens and URL credentials", () => {
