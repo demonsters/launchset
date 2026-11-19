@@ -556,6 +556,14 @@ describe("authentication", () => {
       GIT_CONFIG_KEY_2: "http.https://ghe.acme.com/.extraheader",
       GIT_CONFIG_VALUE_2: header,
     });
+    // Scoped to the remote's owner: more specific than the header actions/checkout persists.
+    expect(authConfigEnv("ghs_secret", undefined, {}, "acme")).toEqual({
+      GIT_CONFIG_COUNT: "2",
+      GIT_CONFIG_KEY_0: "http.https://github.com/acme/.extraheader",
+      GIT_CONFIG_VALUE_0: "",
+      GIT_CONFIG_KEY_1: "http.https://github.com/acme/.extraheader",
+      GIT_CONFIG_VALUE_1: header,
+    });
     expect(normalizeServerUrl(undefined)).toBe("https://github.com/");
     expect(normalizeServerUrl("")).toBe("https://github.com/");
     expect(normalizeServerUrl("https://ghe.acme.com/")).toBe("https://ghe.acme.com/");
@@ -624,6 +632,50 @@ describe("authentication", () => {
     } finally {
       server.close();
     }
+  });
+
+  it("gives pre-push hooks (git-lfs) the App header and skips them for tag pushes", async () => {
+    const remote = tempDir("remote");
+    sh(remote, "init", "--quiet", "--bare", "-b", "main");
+    const repo = initRepo();
+    repo.commit("a");
+    // A GitHub-style remote URL (the owner scopes the header); pushes go to the local remote.
+    const serverUrl = "https://github.com";
+    repo.git("remote", "add", "origin", `${serverUrl}/acme/app`);
+    repo.git("config", `url.${remote}.pushInsteadOf`, `${serverUrl}/acme/app`);
+    // What actions/checkout persists for the read-only GITHUB_TOKEN.
+    repo.git("config", `http.${serverUrl}/.extraheader`, "AUTHORIZATION: basic UkVBRE9OTFk=");
+    // A pre-push hook, like the one git-lfs installs: record what it would see.
+    const seen = join(repo.dir, ".git", "pre-push.log");
+    writeFileSync(
+      join(repo.dir, ".git", "hooks", "pre-push"),
+      `#!/bin/sh\nprintf 'skip=%s\\n' "$GIT_LFS_SKIP_PUSH" >> '${seen}'\ngit config --get-regexp '^http\\..*\\.extraheader$' >> '${seen}'\nprintf -- '--\\n' >> '${seen}'\n`,
+    );
+    chmodSync(join(repo.dir, ".git", "hooks", "pre-push"), 0o755);
+    const token = "ghs_AppInstallationToken123";
+    const git = new Git({ cwd: repo.dir, token, serverUrl });
+
+    repo.git("tag", "launchset/web@1.0.0");
+    expect(await git.pushTag("launchset/web@1.0.0")).toBe("created");
+    expect(await git.pushBranch("main")).toBe("created");
+
+    const [tagPush, branchPush] = readFileSync(seen, "utf8").split("--\n");
+    // A tag points at a commit that is already pushed: no LFS objects, no hook work.
+    expect(tagPush).toMatch(/^skip=1\n/);
+    // A branch push keeps the hook. git-lfs uses only the most specific matching key, and
+    // (unlike git) doesn't treat an empty value as a reset: the owner key must hold just the
+    // reset and the App header, so the read-only header never reaches it.
+    expect(branchPush).toMatch(/^skip=\n/);
+    expect(branchPush).toContain(
+      `http.${serverUrl}/.extraheader AUTHORIZATION: basic UkVBRE9OTFk=`,
+    );
+    const owner = (branchPush ?? "")
+      .split("\n")
+      .filter((line) => line.startsWith(`http.${serverUrl}/acme/.extraheader`));
+    expect(owner).toEqual([
+      `http.${serverUrl}/acme/.extraheader `,
+      `http.${serverUrl}/acme/.extraheader ${basicAuthHeader(token)}`,
+    ]);
   });
 
   it("masks tokens and URL credentials", () => {

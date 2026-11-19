@@ -86,6 +86,8 @@ For each target:
 
 `mark` also runs when `already-published` is `true`. That covers a job that uploaded but failed before marking. It uses a **fresh** App token, created right before it, because tokens expire after an hour and native builds can take longer.
 
+The `build` job checks out with the default `GITHUB_TOKEN`, which can only read. `mark` pushes its tag with the App token instead, so no extra setup is needed. That includes repos that use **Git LFS**: a marker tag points at a commit that is already on GitHub and carries no LFS objects, so launchset skips git-lfs's pre-push hook for tag pushes. For branch pushes (the release branch) the hook runs and authenticates with the App token, lock checks included.
+
 A failed job is re-run from the Actions page. The plan output is reused, so the re-run has the same version and build number.
 
 ### Job `finalize`
