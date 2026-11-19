@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.3 (2026-11-19)
+
+### Patch changes
+- `mark` works in repos that use Git LFS. It failed with "You must have push access to verify locks", because git-lfs's pre-push hook sent the build job's read-only `GITHUB_TOKEN` instead of the App token. Tag pushes now skip the LFS hook (a tag carries no new LFS objects), and branch pushes give git-lfs the App token. ([#12](https://github.com/demonsters/launchset/pull/12), @rene-demonsters)
+- launchset runs its git commands without the repo's git hooks. A job that installed husky, simple-git-hooks, lefthook or git-lfs hooks before `mark` could fail after the upload, because a pre-push hook ran tests, lint or `launchset check --push` on launchset's own push. ([#14](https://github.com/demonsters/launchset/pull/14), @rene-demonsters)
+
 ## 1.0.2 (2026-11-19)
 
 ### Patch changes
