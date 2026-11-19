@@ -19,6 +19,7 @@
 import { execFile } from "node:child_process";
 import { posix } from "node:path";
 import { EXPECTED_ERROR } from "../core/errors.ts";
+import { DEFAULT_SERVER_URLS, type ForgeHost } from "../core/forge-links.ts";
 
 /** Identity of commits launchset makes (release PR, changelog backport). */
 export const LAUNCHSET_IDENTITY = {
@@ -36,8 +37,10 @@ export interface GitOptions {
   cwd: string;
   /** Token used for network commands (push, fetch, ls-remote). Never printed. */
   token?: string;
-  /** `GITHUB_SERVER_URL`; default `https://github.com`. */
+  /** `GITHUB_SERVER_URL` / `CI_SERVER_URL`; default the host's public server. */
   serverUrl?: string;
+  /** The code host, for the default server and for reading the repository from the remote. */
+  host?: ForgeHost;
   /** Remote name; default `origin`. */
   remote?: string;
   /** Identity for commits made by launchset; default {@link LAUNCHSET_IDENTITY}. */
@@ -204,8 +207,11 @@ const NUL = "\0";
 const MAX_BUFFER = 256 * 1024 * 1024;
 
 /** `https://github.com` → `https://github.com/` (the `http.<url>` config key needs the slash). */
-export function normalizeServerUrl(serverUrl: string | undefined): string {
-  const url = (serverUrl ?? "").trim() || "https://github.com";
+export function normalizeServerUrl(
+  serverUrl: string | undefined,
+  host: ForgeHost = "github",
+): string {
+  const url = (serverUrl ?? "").trim() || DEFAULT_SERVER_URLS[host];
   return url.endsWith("/") ? url : `${url}/`;
 }
 
@@ -277,32 +283,53 @@ export function topPathspec(path: string): string {
   return `:(top,literal)${path}`;
 }
 
-/** Parse `owner/repo` from a GitHub remote URL (https, ssh, scp-like); undefined otherwise. */
-export function parseGitHubRepo(url: string, serverUrl?: string): string | undefined {
-  const hosts = new Set(["github.com"]);
-  try {
-    hosts.add(new URL(normalizeServerUrl(serverUrl)).host.toLowerCase());
-  } catch {
-    // An unparsable server URL only means we recognise github.com alone.
+/**
+ * The full repository path of a remote URL on `host` (default GitHub), or undefined when the
+ * URL isn't a repository on a known server: https/http (userinfo is dropped, never returned),
+ * `ssh://git@host:port/path`, scp-like `git@host:path`. GitHub paths are `owner/repo`; GitLab
+ * paths may nest (`group/sub/project`). Known servers: `github.com` or `gitlab.com`, and
+ * `serverUrl`'s host.
+ */
+export function parseRepoFromRemote(
+  url: string,
+  serverUrl?: string,
+  host: ForgeHost = "github",
+): string | undefined {
+  const gitlab = host === "gitlab";
+  const known = new Set([DEFAULT_SERVER_URLS[host].replace(/^https:\/\//, "")]);
+  if (serverUrl?.trim()) {
+    try {
+      const server = new URL(normalizeServerUrl(serverUrl, host));
+      known.add(server.host.toLowerCase());
+      // GitLab's ssh port differs from its web port, so its bare host name counts too.
+      if (gitlab) known.add(server.hostname.toLowerCase());
+    } catch {
+      // An unparsable server URL only means we recognise the public host alone.
+    }
   }
   const trimmed = url.trim();
-  let host: string;
+  let remoteHost: string;
   let path: string;
   const scp = /^(?:[^@/]+@)?([^:/]+):(?!\/)(.+)$/.exec(trimmed);
   if (scp && !/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) {
-    host = scp[1] ?? "";
+    remoteHost = scp[1] ?? "";
     path = scp[2] ?? "";
   } else {
     try {
       const parsed = new URL(trimmed);
       if (!["https:", "http:", "ssh:", "git:"].includes(parsed.protocol)) return undefined;
-      host = parsed.host;
+      remoteHost = gitlab && parsed.protocol === "ssh:" ? parsed.hostname : parsed.host;
       path = parsed.pathname;
     } catch {
       return undefined;
     }
   }
-  if (!hosts.has(host.toLowerCase())) return undefined;
+  if (!known.has(remoteHost.toLowerCase())) return undefined;
+  if (gitlab) {
+    const match = /^\/?(.+?)(?:\.git)?\/*$/.exec(path);
+    const segments = match?.[1]?.split("/") ?? [];
+    return segments.length >= 2 && segments.every(Boolean) ? segments.join("/") : undefined;
+  }
   const match = /^\/?([^/]+)\/([^/]+?)(?:\.git)?\/?$/.exec(path);
   if (!match) return undefined;
   return `${match[1]}/${match[2]}`;
@@ -382,6 +409,7 @@ export class Git {
   readonly cwd: string;
   readonly remote: string;
   readonly serverUrl: string;
+  readonly host: ForgeHost;
   readonly identity: GitIdentity;
   readonly #token: string | undefined;
   readonly #secrets: string[];
@@ -391,7 +419,8 @@ export class Git {
   constructor(options: GitOptions) {
     this.cwd = options.cwd;
     this.remote = options.remote ?? "origin";
-    this.serverUrl = normalizeServerUrl(options.serverUrl);
+    this.host = options.host ?? "github";
+    this.serverUrl = normalizeServerUrl(options.serverUrl, this.host);
     this.identity = options.identity ?? LAUNCHSET_IDENTITY;
     this.#token = options.token || undefined;
     this.#secrets = [];
@@ -1057,10 +1086,10 @@ export class Git {
     return (await this.#tryRemoteUrl()) !== undefined;
   }
 
-  /** `owner/repo` of the remote when it's a GitHub URL, else undefined. */
+  /** Full repository path of the remote when it's a URL on this host, else undefined. */
   async repoFromRemote(): Promise<string | undefined> {
     const url = await this.#tryRemoteUrl();
-    return url === undefined ? undefined : parseGitHubRepo(url, this.serverUrl);
+    return url === undefined ? undefined : parseRepoFromRemote(url, this.serverUrl, this.host);
   }
 
   /** The remote URL, or undefined without the remote (not cached then: one may be added). */

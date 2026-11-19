@@ -1,14 +1,16 @@
 /**
- * Which code host launchset runs against, and the CI environment adapter for it. Only GitHub
- * has an adapter so far (see design/GITLAB.md).
+ * Which code host launchset runs against, and the CI environment adapter for it (see
+ * design/GITLAB.md).
  */
 
 import { LaunchsetError } from "../../core/errors.ts";
 import { FORGE_HOSTS, type ForgeHost } from "../../core/forge-links.ts";
 import { readGitHubEnvironment } from "./github.ts";
+import { gitlabEnvironment } from "./gitlab.ts";
 import type { CiEnvironment, Env } from "./types.ts";
 
 export * from "./github.ts";
+export * from "./gitlab.ts";
 export * from "./types.ts";
 
 /** How the host was found, for messages. */
@@ -70,12 +72,7 @@ export async function detectHost(
   return { host: "github", source: "default" };
 }
 
-/** Read the CI environment of `host`. GitLab has no adapter yet: a clear error. */
+/** Read the CI environment of `host`. */
 export async function readCiEnvironment(host: ForgeHost, env: Env): Promise<CiEnvironment> {
-  if (host === "gitlab") {
-    throw new LaunchsetError("unsupported-host", "GitLab support is not available yet", {
-      hint: "launchset runs on GitHub for now. Unset LAUNCHSET_HOST (or set it to github) outside GitLab CI.",
-    });
-  }
-  return readGitHubEnvironment(env);
+  return host === "gitlab" ? gitlabEnvironment(env) : readGitHubEnvironment(env);
 }

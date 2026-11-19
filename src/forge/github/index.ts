@@ -5,6 +5,7 @@
  */
 
 import type { Octokit } from "@octokit/rest";
+import { cachedClosedPrs } from "../closed-prs.ts";
 import type { Forge, Logger, PrFileStatus, PullRequest, Release } from "../types.ts";
 import { stickyMarker } from "../types.ts";
 import { type CallInfo, GitHubError, toGitHubError } from "./errors.ts";
@@ -156,10 +157,11 @@ export function createGitHub(options: GitHubOptions): Forge {
       }
       return result;
     });
-  const closedListings = new Map<
-    string,
-    { since: number | undefined; prs: Promise<PullRequest[]> }
-  >();
+  const closedPrsInto = cachedClosedPrs(
+    listClosedPrs,
+    (value) =>
+      new GitHubError(`Invalid updatedSince "${value}".`, undefined, "", "Pass an ISO 8601 time."),
+  );
 
   return {
     repository,
@@ -349,33 +351,7 @@ export function createGitHub(options: GitHubOptions): Forge {
       });
     },
 
-    async closedPrsInto(baseBranch, options = {}) {
-      const since = options.updatedSince ? Date.parse(options.updatedSince) : undefined;
-      if (since !== undefined && Number.isNaN(since)) {
-        throw new GitHubError(
-          `Invalid updatedSince "${options.updatedSince}".`,
-          undefined,
-          "",
-          "Pass an ISO 8601 time.",
-        );
-      }
-      // One listing per branch serves later calls that look back no further (bot PRs and
-      // changelog links of one release PR).
-      const cached = closedListings.get(baseBranch);
-      if (
-        cached &&
-        (cached.since === undefined || (since !== undefined && since >= cached.since))
-      ) {
-        const prs = await cached.prs;
-        return prs.filter((pr) => since === undefined || !(Date.parse(pr.updatedAt) < since));
-      }
-      const prs = listClosedPrs(baseBranch, since);
-      closedListings.set(baseBranch, { since, prs });
-      prs.catch(() => {
-        if (closedListings.get(baseBranch)?.prs === prs) closedListings.delete(baseBranch);
-      });
-      return [...(await prs)];
-    },
+    closedPrsInto,
 
     prFiles(number) {
       return call(`GET ${base}/pulls/${number}/files`, PR, false, async (octokit) => {

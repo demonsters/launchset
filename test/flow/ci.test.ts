@@ -147,12 +147,6 @@ describe("GitHub environment", () => {
       inputs: { x: "1" },
     });
   });
-
-  it("GitLab has no adapter yet", async () => {
-    await expect(readCiEnvironment("gitlab", {})).rejects.toThrow(
-      "GitLab support is not available yet",
-    );
-  });
 });
 
 describe("createContext and the host", () => {
@@ -164,24 +158,6 @@ describe("createContext and the host", () => {
     });
     return repo;
   };
-
-  it("fails clearly when the environment says GitLab", async () => {
-    const repo = project();
-    await expect(createContext({ cwd: repo.dir, env: { GITLAB_CI: "true" } })).rejects.toThrow(
-      "GitLab support is not available yet",
-    );
-    await expect(
-      createContext({ cwd: repo.dir, env: { LAUNCHSET_HOST: "gitlab" } }),
-    ).rejects.toThrow("GitLab support is not available yet");
-  });
-
-  it("falls back to GitHub when only the remote looks like GitLab", async () => {
-    const repo = project();
-    repo.git("remote", "set-url", "origin", "git@gitlab.com:acme/app.git");
-    const context = await createContext({ cwd: repo.dir, env: {} });
-    expect(context.host).toBe("github");
-    expect(context.ci.host).toBe("github");
-  });
 
   it("puts the run URL on the run", async () => {
     const repo = project();

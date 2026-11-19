@@ -1,6 +1,6 @@
 /**
  * What launchset reads from the CI environment, host-neutral. One adapter per host
- * (`github.ts`) fills it in from that host's variables; flows read only this, never
+ * (`github.ts`, `gitlab.ts`) fills it in from that host's variables; flows read only this, never
  * `GITHUB_*` / `CI_*` variables themselves.
  */
 
@@ -69,6 +69,8 @@ export interface CiEnvironment {
    * workflow's `GITHUB_TOKEN`).
    */
   fallbackToken?: string;
+  /** What the fallback token is: `job` is GitLab's `CI_JOB_TOKEN` (sent as `JOB-TOKEN`). */
+  fallbackTokenKind?: "job";
   /** The run's event; undefined outside CI. */
   event?: EventInfo;
   /** The run's id, number and attempt (no URL: that needs the repository). */

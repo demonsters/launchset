@@ -10,6 +10,7 @@ import { LaunchsetError } from "../core/errors.ts";
 import { type ForgeHost, forgeLinks } from "../core/forge-links.ts";
 import type { RunInfo } from "../core/types.ts";
 import { createGitHub } from "../forge/github/index.ts";
+import { createGitLab } from "../forge/gitlab/index.ts";
 import type { Forge } from "../forge/types.ts";
 import { Git } from "../git/index.ts";
 import { type CiEnvironment, detectHost, readCiEnvironment } from "./ci/index.ts";
@@ -46,7 +47,7 @@ export interface FlowContext {
   token?: string;
   /** Full repository path (`owner/repo`). */
   repository?: string;
-  /** `https://github.com` (or the GHES URL), without trailing slash. */
+  /** `https://github.com`, `https://gitlab.com` or the self-hosted URL, without trailing slash. */
   serverUrl: string;
   env: Record<string, string | undefined>;
   /** The CI environment (event, ref, sha, run); mostly empty outside CI. */
@@ -79,30 +80,37 @@ export async function createContext(options: ContextOptions): Promise<FlowContex
   const log = options.log ?? silentLogger;
   const { config, file, root } = await loadConfig(options.cwd);
   const detected = await detectHost(env, () => originUrl(root));
-  let host = detected.host;
-  if (host === "gitlab" && detected.source === "remote") {
-    log.debug(
-      "The remote looks like GitLab, but GitLab support is not available yet: using GitHub.",
-    );
-    host = "github";
-  }
+  const { host } = detected;
   const ci = await readCiEnvironment(host, env);
   const { serverUrl } = ci;
   const token = options.token || ci.token || undefined;
-  const git = new Git({ cwd: root, ...(token ? { token } : {}), serverUrl });
+  const git = new Git({ cwd: root, ...(token ? { token } : {}), serverUrl, host });
   let repository = options.repository || ci.repository || undefined;
   if (!repository) repository = (await git.repoFromRemote().catch(() => undefined)) ?? undefined;
-  const client = (clientToken: string | undefined) =>
-    clientToken && repository
-      ? createGitHub({
-          token: clientToken,
-          repository,
-          ...(ci.apiUrl ? { apiUrl: ci.apiUrl } : {}),
-          log,
-        })
-      : undefined;
-  const forge = client(token);
-  const fallbackForge = ci.fallbackToken !== token ? client(ci.fallbackToken) : undefined;
+  const client = (clientToken: string | undefined, kind?: "job") => {
+    if (!clientToken || !repository) return undefined;
+    if (host === "gitlab") {
+      return createGitLab({
+        token: clientToken,
+        ...(kind ? { tokenKind: kind } : {}),
+        repository,
+        ...(ci.apiUrl ? { apiUrl: ci.apiUrl } : {}),
+        serverUrl,
+        log,
+      });
+    }
+    return createGitHub({
+      token: clientToken,
+      repository,
+      ...(ci.apiUrl ? { apiUrl: ci.apiUrl } : {}),
+      log,
+    });
+  };
+  const fallback = () => client(ci.fallbackToken, ci.fallbackTokenKind);
+  // Without a token of our own, the fallback (GitLab: CI_JOB_TOKEN) still serves the reads it
+  // can do; its writes fail with a hint to set LAUNCHSET_TOKEN.
+  const forge = client(token) ?? (token ? undefined : fallback());
+  const fallbackForge = token && ci.fallbackToken !== token ? fallback() : undefined;
   const context: FlowContext = {
     cwd: root,
     config,

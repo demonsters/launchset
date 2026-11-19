@@ -36,6 +36,7 @@ export interface PullRequest {
 }
 
 export interface Release {
+  /** GitHub's numeric release id. GitLab releases have none (they're keyed by tag): always 0. */
   id: number;
   tag: string;
   name: string;
