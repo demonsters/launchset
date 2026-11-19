@@ -12,7 +12,15 @@
  *   for what only the action offers (release with side effects, preview-comment).
  */
 
-import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { HttpResponse, http } from "msw";
@@ -267,6 +275,7 @@ export class World {
   #run = 40;
   #id = 0;
   #clock = START.getTime();
+  #teamHooks: string | undefined;
 
   constructor() {
     const { remote, repo } = repoWithRemote();
@@ -354,7 +363,54 @@ export class World {
     })();
     if (isBranch) repo.git("checkout", "--quiet", "-B", checkout, `origin/${checkout}`);
     else repo.git("checkout", "--quiet", "--detach", checkout);
+    this.#prepareCheckout(repo);
     return new Job(this, repo, options);
+  }
+
+  /**
+   * From now on, every job checkout looks like a team's CI checkout after an install step:
+   * hooks installed through `core.hooksPath` (what husky does on `prepare`), every one failing
+   * and logging that it ran, and the read-only `GITHUB_TOKEN` header actions/checkout persists.
+   * launchset must run none of them. {@link hooksRan} says which ran.
+   */
+  installTeamHooks(): void {
+    const dir = join(this.scratch, "team-hooks");
+    mkdirSync(dir, { recursive: true });
+    const log = join(this.scratch, "team-hooks.log");
+    const names = [
+      "pre-commit",
+      "prepare-commit-msg",
+      "commit-msg",
+      "post-commit",
+      "pre-push",
+      "post-checkout",
+      "post-merge",
+      "pre-rebase",
+      "post-rewrite",
+      "reference-transaction",
+    ];
+    for (const name of names) {
+      const file = join(dir, name);
+      writeFileSync(file, `#!/bin/sh\necho ${name} >> '${log}'\nexit 1\n`);
+      chmodSync(file, 0o755);
+    }
+    this.#teamHooks = dir;
+  }
+
+  /** Hooks that ran in job checkouts since {@link installTeamHooks}, one per line. */
+  hooksRan(): string {
+    const log = join(this.scratch, "team-hooks.log");
+    return existsSync(log) ? readFileSync(log, "utf8") : "";
+  }
+
+  #prepareCheckout(repo: TestRepo): void {
+    if (!this.#teamHooks) return;
+    repo.git("config", "core.hooksPath", this.#teamHooks);
+    repo.git(
+      "config",
+      "http.https://github.com/.extraheader",
+      `AUTHORIZATION: basic ${Buffer.from("x-access-token:ghs_ReadOnly").toString("base64")}`,
+    );
   }
 
   /** A job for a `push` event of `branch` (checked out at the pushed commit). */
@@ -395,6 +451,7 @@ export class World {
     const headSha = repo.git("rev-parse", `origin/${headRef}`);
     repo.git("checkout", "--quiet", "--detach", `origin/${baseRef}`);
     repo.git("merge", "--no-ff", "--quiet", "-m", `Merge ${headSha} into ${baseRef}`, headSha);
+    this.#prepareCheckout(repo);
     return new Job(this, repo, {
       ...options,
       ref: `refs/pull/${input.number}/merge`,

@@ -25,9 +25,15 @@ See [GitHub App setup](/github-app/). Close the old release PR (or let launchset
 
 ## `mark` fails with `Authentication required: You must have push access to verify locks`
 
-**Cause.** The repo uses Git LFS, and launchset 1.0.2 or older pushed with an App token that git-lfs didn't use. The `build` job's checkout persists the read-only `GITHUB_TOKEN`, and git-lfs's pre-push hook sent that token to the lock check. The image or app was built and uploaded, but `mark` failed, so `finalize` didn't release either.
+**Cause.** The repo uses Git LFS, and launchset 1.0.2 or older ran git-lfs's pre-push hook on its pushes. The `build` job's checkout persists the read-only `GITHUB_TOKEN`, and the hook sent that token to the lock check instead of the App token. The image or app was built and uploaded, but `mark` failed, so `finalize` didn't release either.
 
-**Fix.** Update launchset (`demonsters/launchset-action@v1` picks up new releases). From 1.0.3 on, tag pushes skip the LFS hook and branch pushes give git-lfs the App token. Then start **Launchset release** by hand (`workflow_dispatch`) without inputs. It builds the targets without a marker again (with `verify`, the existing uploads are found and the build is skipped), then `mark` and `finalize` finish the release. On an older version, add `git config lfs.locksverify false` as a step before `mark` in `launchset-release.yml`.
+**Fix.** Update launchset (`demonsters/launchset-action@v1` picks up new releases). From 1.0.3 on, launchset runs git without the repo's hooks, git-lfs's included. Then start **Launchset release** by hand (`workflow_dispatch`) without inputs. It builds the targets without a marker again (with `verify`, the existing uploads are found and the build is skipped), then `mark` and `finalize` finish the release. On an older version, add `git config lfs.locksverify false` as a step before `mark` in `launchset-release.yml`.
+
+## `mark` or the release PR fails in a git hook (`pre-push`, `reference-transaction`, ...)
+
+**Cause.** launchset 1.0.2 or older ran the repo's git hooks on its own pushes, checkouts and commits. A job that installs dependencies before launchset runs (most build jobs) also installs husky, simple-git-hooks or lefthook hooks, and a pre-push hook then ran your tests, lint or `npx @demonsters/launchset check --push` (which can't reach the private package in CI) during `mark`.
+
+**Fix.** Update launchset: from 1.0.3 on, it runs git without the repo's hooks. On an older version, set `HUSKY=0` (husky) or `SKIP_SIMPLE_GIT_HOOKS=1` (simple-git-hooks) for the job, or install dependencies after `mark`.
 
 ## `The token lacks access. The GitHub App needs "Contents: read & write"...`
 
