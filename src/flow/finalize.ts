@@ -16,6 +16,7 @@ import {
   type UnfinishedVersion,
 } from "../core/finalize.ts";
 import { type ForgeHost, forgeWords } from "../core/forge-links.ts";
+import { hostProfile } from "../core/hosts.ts";
 import { partialTag, releaseTag } from "../core/tags.ts";
 import type { Plan } from "../core/types.ts";
 import { mapLimit } from "../forge/concurrency.ts";
@@ -73,11 +74,11 @@ export async function existingReleases(
 }
 
 /**
- * GitLab's latest release is the one created last (newest `released_at`; there is no "latest"
- * flag): create pre-releases (superseded partial releases) before the others, so the real
+ * On a host without a latest flag (GitLab), the latest release is the one created last
+ * (GitLab: newest `released_at`): create pre-releases (superseded partial releases) before the others, so the real
  * release stays the latest. Otherwise the order is kept.
  */
-function gitlabReleaseOrder(actions: readonly FinalizeAction[]): FinalizeAction[] {
+function latestLastOrder(actions: readonly FinalizeAction[]): FinalizeAction[] {
   const pre = (a: FinalizeAction) => (a.kind === "create-release" && a.prerelease ? 0 : 1);
   const releases = actions.filter((a) => a.kind === "create-release");
   const sorted = [...releases].sort((a, b) => pre(a) - pre(b));
@@ -93,7 +94,7 @@ export async function executeFinalizeActions(
 ): Promise<{ executed: ExecutedAction[]; backportPr?: FinalizeData["backportPr"] }> {
   const executed: ExecutedAction[] = [];
   let backportPr: FinalizeData["backportPr"];
-  const ordered = context.host === "gitlab" ? gitlabReleaseOrder(actions) : actions;
+  const ordered = hostProfile(context.host).latestFlag ? actions : latestLastOrder(actions);
   for (const action of ordered) {
     switch (action.kind) {
       case "create-tag":
@@ -266,7 +267,7 @@ function describe(executed: ExecutedAction, host: ForgeHost): string {
       return `tag ${action.tag} at ${action.sha.slice(0, 7)}: ${result}`;
     case "create-release":
       // GitLab has no pre-releases: a release whose tag is a prerelease or partial is a release.
-      return `created ${action.prerelease && host !== "gitlab" ? "pre-release" : "release"} ${action.name}: ${result}`;
+      return `created ${action.prerelease && hostProfile(host).prereleaseFlag ? "pre-release" : "release"} ${action.name}: ${result}`;
     case "update-release":
       return `updated release ${action.name}: ${result}`;
     case "backport-changelog":

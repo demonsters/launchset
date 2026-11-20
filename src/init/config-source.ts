@@ -4,6 +4,7 @@
  */
 
 import { LaunchsetError } from "../core/errors.ts";
+import { ciOf } from "../core/hosts.ts";
 import type { Answers } from "./decisions.ts";
 import { parseImages, parseTagList } from "./decisions.ts";
 import type { DetectContext } from "./detect.ts";
@@ -155,7 +156,7 @@ export function buildConfig(ctx: DetectContext, answers: Answers): ConfigPlan {
     );
   }
   const host = answers.host ?? ctx.host.host;
-  if (host === "gitlab" && ctx.gitlab) {
+  if (ciOf(host) === "gitlab-ci" && ctx.gitlab) {
     const plan = planTemplates(
       ctx.gitlab,
       included.filter((t) => t.gitlab),

@@ -14,6 +14,7 @@ import {
 import { errorMessage, LaunchsetError } from "../core/errors.ts";
 import { forgeHints } from "../core/forge-hints.ts";
 import { forgeWords } from "../core/forge-links.ts";
+import { DEFAULT_HOST, hostProfile } from "../core/hosts.ts";
 import { type ChangesetFile, renderSummary } from "../core/plan-common.ts";
 import { ForgeError } from "../forge/errors.ts";
 import type { ChangedFile } from "../git/index.ts";
@@ -235,7 +236,7 @@ export async function check(
     tags,
     changesetDir: dir,
     ...(options.docsUrl ? { docsUrl: options.docsUrl } : {}),
-    ...(context.host !== "github" ? { host: context.host } : {}),
+    ...(context.host !== DEFAULT_HOST ? { host: context.host } : {}),
   });
 
   const data: CheckData = { result };
@@ -293,7 +294,9 @@ function gitlabCommentFailure(
   error: unknown,
   pr: { number: number; fork: boolean },
 ): { warning?: string; error?: LaunchsetError } | undefined {
-  if (context.host !== "gitlab" || !(error instanceof ForgeError)) return undefined;
+  if (hostProfile(context.host).ci !== "gitlab-ci" || !(error instanceof ForgeError)) {
+    return undefined;
+  }
   const mr = forgeWords("gitlab").prText(pr.number);
   const denied = error.status === 401 || error.status === 403 || error.status === 404;
   if (pr.fork && (denied || !context.token)) {
@@ -326,7 +329,7 @@ function gitlabCommentFailure(
  * MRs), so bot MRs (`check.bots`) are recognised. `""` when it can't be read (logged).
  */
 async function fetchAuthor(context: FlowContext, number: number): Promise<string> {
-  if (context.host !== "gitlab" || !context.forge || number <= 0) return "";
+  if (hostProfile(context.host).ci !== "gitlab-ci" || !context.forge || number <= 0) return "";
   try {
     return (await context.forge.getPr(number)).author;
   } catch (error) {
@@ -347,7 +350,9 @@ async function headOnlyCheckout(
   tip: string,
   headSha: string,
 ): Promise<boolean> {
-  if (context.host !== "gitlab" || context.ci.event?.kind !== "pr") return false;
+  if (hostProfile(context.host).ci !== "gitlab-ci" || context.ci.event?.kind !== "pr") {
+    return false;
+  }
   if ((await context.git.headSha()) !== headSha) return false;
   return !(await context.git.isAncestor(tip, headSha));
 }

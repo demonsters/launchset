@@ -4,7 +4,15 @@
  */
 
 import { LaunchsetError } from "../../core/errors.ts";
-import { FORGE_HOSTS, type ForgeHost } from "../../core/forge-links.ts";
+import {
+  CI_DETECTION_ORDER,
+  type CiFlag,
+  DEFAULT_HOST,
+  FORGE_HOSTS,
+  type ForgeHost,
+  HOSTS,
+  isForgeHost,
+} from "../../core/hosts.ts";
 import { readGitHubEnvironment } from "./github.ts";
 import { gitlabEnvironment } from "./gitlab.ts";
 import type { CiEnvironment, Env } from "./types.ts";
@@ -13,8 +21,11 @@ export * from "./github.ts";
 export * from "./gitlab.ts";
 export * from "./types.ts";
 
-/** How the host was found, for messages. */
-export type HostSource = "LAUNCHSET_HOST" | "GITLAB_CI" | "GITHUB_ACTIONS" | "remote" | "default";
+/**
+ * How the host was found, for messages: `LAUNCHSET_HOST`, the CI flag of the host
+ * (`GITLAB_CI`, `GITHUB_ACTIONS`), the origin `remote`, or the `default` host.
+ */
+export type HostSource = "LAUNCHSET_HOST" | CiFlag | "remote" | "default";
 
 export interface HostDetection {
   host: ForgeHost;
@@ -66,17 +77,19 @@ export function hostFromEnv(env: Env): HostDetection | undefined {
   const explicit = env.LAUNCHSET_HOST?.trim();
   if (explicit) {
     const host = explicit.toLowerCase();
-    if (!(FORGE_HOSTS as readonly string[]).includes(host)) {
+    if (!isForgeHost(host)) {
       throw new LaunchsetError(
         "invalid-host",
         `LAUNCHSET_HOST is "${explicit}", expected ${FORGE_HOSTS.map((h) => `"${h}"`).join(" or ")}`,
         { hint: "Unset LAUNCHSET_HOST to detect the host from the CI environment and the remote." },
       );
     }
-    return { host: host as ForgeHost, source: "LAUNCHSET_HOST" };
+    return { host, source: "LAUNCHSET_HOST" };
   }
-  if (env.GITLAB_CI === "true") return { host: "gitlab", source: "GITLAB_CI" };
-  if (env.GITHUB_ACTIONS === "true") return { host: "github", source: "GITHUB_ACTIONS" };
+  for (const host of CI_DETECTION_ORDER) {
+    const flag = HOSTS[host].ciFlag;
+    if (env[flag] === "true") return { host, source: flag };
+  }
   return undefined;
 }
 
@@ -92,12 +105,23 @@ export async function detectHost(
   const fromEnv = hostFromEnv(env);
   if (fromEnv) return fromEnv;
   const url = await remoteUrl?.().catch(() => undefined);
-  const host = url === undefined ? undefined : remoteHost(url);
-  if (host?.includes("gitlab")) return { host: "gitlab", source: "remote" };
-  return { host: "github", source: "default" };
+  const hostname = url === undefined ? undefined : remoteHost(url);
+  const host = hostname ? hostFromRemoteName(hostname) : undefined;
+  if (host) return { host, source: "remote" };
+  return { host: DEFAULT_HOST, source: "default" };
 }
+
+/** The host a remote's host name says the repo is on (`gitlab.acme.dev`), if any. */
+export function hostFromRemoteName(hostname: string): ForgeHost | undefined {
+  return FORGE_HOSTS.find((host) => HOSTS[host].remoteMatches?.(hostname));
+}
+
+/** The CI environment readers, per host. */
+const ENVIRONMENTS: Readonly<
+  Record<ForgeHost, (env: Env) => CiEnvironment | Promise<CiEnvironment>>
+> = { github: readGitHubEnvironment, gitlab: gitlabEnvironment };
 
 /** Read the CI environment of `host`. */
 export async function readCiEnvironment(host: ForgeHost, env: Env): Promise<CiEnvironment> {
-  return host === "gitlab" ? gitlabEnvironment(env) : readGitHubEnvironment(env);
+  return ENVIRONMENTS[host](env);
 }

@@ -14,6 +14,7 @@ import { CHANGESET_DIR, isChangesetPath } from "../core/changesets.ts";
 import { LaunchsetError } from "../core/errors.ts";
 import { finalizeCandidates, type UnfinishedVersion } from "../core/finalize.ts";
 import { forgeHints } from "../core/forge-hints.ts";
+import { DEFAULT_HOST } from "../core/hosts.ts";
 import {
   type BotPrInfo,
   type ChangesetFile,
@@ -510,7 +511,7 @@ export function releaseInputFor(
     now: context.now,
   };
   if (state.releaseCommit) input.releaseCommit = state.releaseCommit;
-  if (context.host !== "github") input.host = context.host;
+  if (context.host !== DEFAULT_HOST) input.host = context.host;
   if (context.run) input.run = context.run;
   if (context.repository) input.repository = context.repository;
   return input;

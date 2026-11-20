@@ -1,19 +1,17 @@
 /**
  * Links and words that differ per code host (GitHub, GitLab): PR / MR URLs and their text,
- * the PR head ref, CI run URLs and what a release is called. Pure.
+ * the PR head ref, CI run URLs and what a release is called, all read from the host's
+ * {@link HostProfile}. Pure.
  */
 
-/** The code hosts launchset knows. */
-export type ForgeHost = "github" | "gitlab";
+import { DEFAULT_HOST, FORGE_HOSTS, type ForgeHost, HOSTS, hostProfile } from "./hosts.ts";
 
-/** Every host, for validation and messages. */
-export const FORGE_HOSTS: readonly ForgeHost[] = ["github", "gitlab"];
+export { FORGE_HOSTS, type ForgeHost };
 
 /** The host's server when none is configured. */
-export const DEFAULT_SERVER_URLS: Readonly<Record<ForgeHost, string>> = {
-  github: "https://github.com",
-  gitlab: "https://gitlab.com",
-};
+export const DEFAULT_SERVER_URLS: Readonly<Record<ForgeHost, string>> = Object.fromEntries(
+  FORGE_HOSTS.map((host) => [host, HOSTS[host].defaultServerUrl]),
+) as Record<ForgeHost, string>;
 
 /** Words and refs of a host; no repository needed. */
 export interface ForgeWords {
@@ -54,38 +52,29 @@ export interface ForgeLinksInput {
 }
 
 /** The words of `host` (default GitHub). */
-export function forgeWords(host: ForgeHost = "github"): ForgeWords {
-  if (host === "gitlab") {
-    return {
-      host,
-      prText: (n) => `!${n}`,
-      prRef: (n) => `refs/merge-requests/${n}/head`,
-      prName: "MR",
-      releaseName: "GitLab release",
-      prereleaseName: "GitLab release",
-    };
-  }
+export function forgeWords(host: ForgeHost = DEFAULT_HOST): ForgeWords {
+  const profile = hostProfile(host);
   return {
     host,
-    prText: (n) => `#${n}`,
-    prRef: (n) => `refs/pull/${n}/head`,
-    prName: "PR",
-    releaseName: "GitHub Release",
-    prereleaseName: "GitHub pre-release",
+    prText: (n) => `${profile.prSymbol}${n}`,
+    prRef: profile.prRef,
+    prName: profile.prName,
+    releaseName: profile.releaseName,
+    prereleaseName: profile.prereleaseName,
   };
 }
 
 /** Links into `repository` on `host` (default GitHub). */
 export function forgeLinks(input: ForgeLinksInput): ForgeLinks {
   const words = forgeWords(input.host);
-  const serverUrl = (input.serverUrl || DEFAULT_SERVER_URLS[words.host]).replace(/\/+$/, "");
+  const profile = hostProfile(words.host);
+  const serverUrl = (input.serverUrl || profile.defaultServerUrl).replace(/\/+$/, "");
   const repoUrl = `${serverUrl}/${input.repository}`;
-  const gitlab = words.host === "gitlab";
   return {
     ...words,
     serverUrl,
     repository: input.repository,
-    prUrl: (n) => (gitlab ? `${repoUrl}/-/merge_requests/${n}` : `${repoUrl}/pull/${n}`),
-    runUrl: (id) => (gitlab ? `${repoUrl}/-/pipelines/${id}` : `${repoUrl}/actions/runs/${id}`),
+    prUrl: (n) => `${repoUrl}/${profile.prPath(n)}`,
+    runUrl: (id) => `${repoUrl}/${profile.runPath(id)}`,
   };
 }

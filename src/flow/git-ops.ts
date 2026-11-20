@@ -7,6 +7,7 @@
 import { gitlabSettings } from "../core/config/schema.ts";
 import { errorMessage, LaunchsetError } from "../core/errors.ts";
 import { forgeHints } from "../core/forge-hints.ts";
+import { hostProfile } from "../core/hosts.ts";
 import { indexTags } from "../core/tags.ts";
 import type { Forge, PullRequest } from "../forge/types.ts";
 import {
@@ -21,20 +22,19 @@ import type { FlowContext } from "./context.ts";
 
 export type TagResult = "created" | "exists";
 
-/** GitLab's push option that creates no pipeline for the push. */
-export const GITLAB_SKIP_CI = "ci.skip";
-
 /**
- * The push options for one of launchset's tags. GitLab: `ci.skip`, so a tag push starts no tag
+ * The push options for one of launchset's tags: the host's push option that skips CI
+ * (`skipCiPushOption`; GitLab `ci.skip`), so a tag push starts no tag
  * pipeline (which would run every job without rules): always for marker and partial tags (only
  * launchset reads them), and for release and prerelease tags unless `gitlab.tagPipelines` is
  * true. GitHub: none (its tag pushes stay as they were).
  */
 export function tagPushOptions(context: FlowContext, name: string): string[] {
-  if (context.host !== "gitlab") return [];
+  const skipCi = hostProfile(context.host).skipCiPushOption;
+  if (!skipCi) return [];
   const index = indexTags([name], { tags: context.config.tags, targets: context.config.targets });
   const internal = index.partials.size > 0 || index.markerTags.length > 0;
-  if (internal || !gitlabSettings(context.config).tagPipelines) return [GITLAB_SKIP_CI];
+  if (internal || !gitlabSettings(context.config).tagPipelines) return [skipCi];
   return [];
 }
 

@@ -10,6 +10,7 @@ import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { gitlabSettings, targetShell } from "../core/config/schema.ts";
+import { hostProfile } from "../core/hosts.ts";
 import type { Plan } from "../core/types.ts";
 import type { FlowContext, FlowResult, Logger } from "../flow/index.ts";
 import { outputsFor } from "../flow/index.ts";
@@ -314,7 +315,7 @@ export async function writeChildPipeline(
   request: ChildPipelineRequest,
   opts: { ci?: boolean | undefined },
 ): Promise<void> {
-  if (!ciEnabled(io, opts) || context.host !== "gitlab") return;
+  if (!ciEnabled(io, opts) || hostProfile(context.host).ci !== "gitlab-ci") return;
   const content = await childPipelineFor(io, context, request);
   await writeFile(ciFilePath(io, "child"), content, "utf8");
   printChild(io, ciFileName(io, "child"), content);

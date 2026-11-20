@@ -9,6 +9,7 @@ import { type ChangelogEntry, renderSection } from "./changelog.ts";
 import { CHANGESET_DIR } from "./changesets.ts";
 import type { ResolvedConfig } from "./config/schema.ts";
 import { LaunchsetError } from "./errors.ts";
+import { forgeHints } from "./forge-hints.ts";
 import { type ForgeHost, forgeWords } from "./forge-links.ts";
 import {
   type BotPrInfo,
@@ -189,7 +190,6 @@ function renderReleasePrBody(input: {
   host?: ForgeHost;
 }): string {
   const PR = forgeWords(input.host).prName;
-  const gitlab = input.host === "gitlab";
   const blocks = [
     RELEASE_PR_MARKER,
     `Merging this ${PR} releases **v${input.version}** (${input.bump}) from ${code(input.base)}: it builds and ships every auto target (${joinWords(input.autoTargets.map(code))}).`,
@@ -200,9 +200,7 @@ function renderReleasePrBody(input: {
       [
         "### Manual targets",
         "",
-        gitlab
-          ? `Stamped with ${input.version} by this MR, but shipped on demand (a release pipeline run with the \`LAUNCHSET_TARGET\` variable, or \`launchset ship\`):`
-          : `Stamped with ${input.version} by this PR, but shipped on demand (a release workflow run with the \`target\` input, or \`launchset ship\`):`,
+        `Stamped with ${input.version} by this ${PR}, but shipped on demand (${forgeHints(input.host).shipOnDemand}, or \`launchset ship\`):`,
         "",
         ...input.manualTargets.map((s) => `- ${describeManualTarget(s)}`),
       ].join("\n"),

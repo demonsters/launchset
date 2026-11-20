@@ -154,9 +154,7 @@ export function planPreview(input: PreviewInput): PreviewDecision {
     if (!trigger.manual && !trigger.labels.includes(config.preview.label)) {
       return skip(
         "no-label",
-        words.host === "gitlab"
-          ? `${prLabel(trigger.number)} doesn't have the ${code(config.preview.label)} label: add the label and push, or start the manual preview job.`
-          : `${prLabel(trigger.number)} doesn't have the ${code(config.preview.label)} label: add it to build a preview.`,
+        `${prLabel(trigger.number)} doesn't have the ${code(config.preview.label)} label: ${forgeHints(words.host).previewAddLabel}`,
       );
     }
     if (

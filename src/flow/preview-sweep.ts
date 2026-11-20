@@ -18,6 +18,7 @@
 
 import { errorMessage, LaunchsetError, messageWithHint } from "../core/errors.ts";
 import { forgeWords } from "../core/forge-links.ts";
+import { hostProfile } from "../core/hosts.ts";
 import { renderSummary } from "../core/plan-common.ts";
 import { isReleasePrBranch } from "../core/release-pr.ts";
 import {
@@ -110,11 +111,12 @@ async function coveringPipeline(
 
 function gitlabForge(context: FlowContext): GitLabForge {
   const words = forgeWords("gitlab");
-  if (context.host !== "gitlab") {
+  const { labelEvents, name } = hostProfile(context.host);
+  if (labelEvents) {
     throw new LaunchsetError(
       "gitlab-only",
-      "preview-sweep is for GitLab only: on GitHub, adding the preview label starts the preview workflow by itself (the pull_request `labeled` event).",
-      { hint: "Nothing to set up on GitHub. On GitLab, run it in a pipeline schedule." },
+      `preview-sweep is for GitLab only: on ${name}, adding the preview label starts the preview workflow by itself (the pull_request \`labeled\` event).`,
+      { hint: `Nothing to set up on ${name}. On GitLab, run it in a pipeline schedule.` },
     );
   }
   if (!context.token || !isGitLabForge(context.forge)) {
@@ -144,7 +146,7 @@ export async function previewSweep(
   if (!Number.isSafeInteger(max) || max < 1) {
     throw new LaunchsetError("invalid-max", `--max must be a positive integer, not ${max}`);
   }
-  if (context.host === "gitlab" && !preview.enabled) {
+  if (!hostProfile(context.host).labelEvents && !preview.enabled) {
     const line = "Previews are disabled in the config (preview: false): nothing to sweep.";
     return {
       ok: true,
@@ -166,7 +168,7 @@ export async function previewSweep(
       },
     };
   }
-  if (context.host === "gitlab" && !preview.rebuildOnPush) {
+  if (!hostProfile(context.host).labelEvents && !preview.rebuildOnPush) {
     throw new LaunchsetError(
       "preview-sweep-manual-previews",
       "preview.rebuildOnPush is false, so on GitLab every MR's preview is a manual job, also with the label: a pipeline the sweep started wouldn't build the preview. GitLab gives such a pipeline no variable or source of its own that the preview job could tell apart from a push.",

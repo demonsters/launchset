@@ -7,6 +7,7 @@
 import { LaunchsetError } from "../core/errors.ts";
 import { planFinalize } from "../core/finalize.ts";
 import { forgeWords } from "../core/forge-links.ts";
+import { DEFAULT_HOST } from "../core/hosts.ts";
 import { planTarget } from "../core/outputs.ts";
 import { normalizeVersionInput, renderSummary, unknownTarget } from "../core/plan-common.ts";
 import { buildShipPlan } from "../core/release.ts";
@@ -116,7 +117,7 @@ export async function mark(
         now: context.now,
         ...(context.run ? { run: context.run } : {}),
         ...(context.repository ? { repository: context.repository } : {}),
-        ...(context.host !== "github" ? { host: context.host } : {}),
+        ...(context.host !== DEFAULT_HOST ? { host: context.host } : {}),
       },
       target.name,
       version,

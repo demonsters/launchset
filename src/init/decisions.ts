@@ -26,6 +26,7 @@
 import semver from "semver";
 import { DOCKER_TAG_PLACEHOLDERS } from "../core/config/schema.ts";
 import { LaunchsetError } from "../core/errors.ts";
+import { DEFAULT_HOST, type ForgeHost, isForgeHost } from "../core/hosts.ts";
 import { renderTag } from "../core/tags.ts";
 import type { DetectContext } from "./detect.ts";
 import { evidenceOf } from "./detect.ts";
@@ -107,9 +108,34 @@ function tagListError(value: string): string | undefined {
   return undefined;
 }
 
-function guessImage(ctx: DetectContext, target: DetectedTarget, host: string): string {
-  const root = target.docker?.dockerfile === "Dockerfile";
-  if (host === "gitlab") {
+/** A guessed image name for a Docker target no CI job pushes, and why it's only a guess. */
+interface ImageGuess {
+  image: string;
+  /** The label's note after the image: `(<note>)`. */
+  note: string;
+}
+
+/** The image guess per host: the host's own container registry. */
+const IMAGE_GUESSES: Readonly<
+  Record<ForgeHost, (ctx: DetectContext, target: DetectedTarget) => ImageGuess>
+> = {
+  github(ctx, target) {
+    const root = target.docker?.dockerfile === "Dockerfile";
+    const note = "a guess: no workflow pushes this image";
+    const repo = ctx.detection.git.github?.toLowerCase();
+    if (repo) {
+      return { image: root ? `ghcr.io/${repo}` : `ghcr.io/${repo}-${target.name}`, note };
+    }
+    const name = (ctx.detection.packageJson?.name ?? target.name)
+      .replace(/^@[^/]+\//, "")
+      .toLowerCase();
+    return {
+      image: root ? `ghcr.io/your-org/${name}` : `ghcr.io/your-org/${name}-${target.name}`,
+      note,
+    };
+  },
+  gitlab(ctx, target) {
+    const root = target.docker?.dockerfile === "Dockerfile";
     // gitlab.com's registry, or registry.<host> of a self-managed GitLab (a guess: it's asked).
     const server = ctx.host.remoteHost;
     const registry =
@@ -120,14 +146,16 @@ function guessImage(ctx: DetectContext, target: DetectedTarget, host: string): s
       ctx.host.gitlabProject ??
       `your-group/${ctx.detection.packageJson?.name?.replace(/^@[^/]+\//, "") ?? target.name}`
     ).toLowerCase();
-    return root ? `${registry}/${project}` : `${registry}/${project}/${target.name}`;
-  }
-  const repo = ctx.detection.git.github?.toLowerCase();
-  if (repo) return root ? `ghcr.io/${repo}` : `ghcr.io/${repo}-${target.name}`;
-  const name = (ctx.detection.packageJson?.name ?? target.name)
-    .replace(/^@[^/]+\//, "")
-    .toLowerCase();
-  return root ? `ghcr.io/your-org/${name}` : `ghcr.io/your-org/${name}-${target.name}`;
+    const selfManaged = server && server !== "gitlab.com";
+    return {
+      image: root ? `${registry}/${project}` : `${registry}/${project}/${target.name}`,
+      note: `a guess: no CI job pushes this image${selfManaged ? `; registry.${server} is only a guess for this GitLab's registry` : ""}`,
+    };
+  },
+};
+
+function guessImage(ctx: DetectContext, target: DetectedTarget, host: string): ImageGuess {
+  return IMAGE_GUESSES[isForgeHost(host) ? host : DEFAULT_HOST](ctx, target);
 }
 
 /** The decision specs for a detection, in the order they're asked. */
@@ -372,18 +400,14 @@ export function decisionSpecs(ctx: DetectContext, explicit: Answers = {}): Spec[
       build(answers) {
         const found = t.docker?.images?.join(", ");
         const guess = guessImage(ctx, t, answers.host ?? ctx.host.host);
-        const value = found ?? guess;
+        const value = found ?? guess.image;
         return {
           id: `docker.${t.name}.image`,
           question: `Image name for ${t.name} (${t.docker?.dockerfile})?`,
           options: [
             {
               value,
-              label: found
-                ? `${value} (from the existing workflow)`
-                : (answers.host ?? ctx.host.host) === "gitlab"
-                  ? `${value} (a guess: no CI job pushes this image${ctx.host.remoteHost && ctx.host.remoteHost !== "gitlab.com" ? `; registry.${ctx.host.remoteHost} is only a guess for this GitLab's registry` : ""})`
-                  : `${value} (a guess: no workflow pushes this image)`,
+              label: found ? `${value} (from the existing workflow)` : `${value} (${guess.note})`,
             },
           ],
           freeform: "an image name like ghcr.io/org/app (no tag), or several separated by commas",

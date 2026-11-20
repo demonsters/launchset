@@ -19,6 +19,7 @@ import { isChangesetPath } from "../core/changesets.ts";
 import { errorMessage, LaunchsetError } from "../core/errors.ts";
 import { forgeHints } from "../core/forge-hints.ts";
 import { type ForgeHost, forgeWords } from "../core/forge-links.ts";
+import { DEFAULT_HOST, hostProfile } from "../core/hosts.ts";
 import { actionOutputs, parsePlan } from "../core/outputs.ts";
 import {
   alert,
@@ -481,10 +482,10 @@ export function jobStatus(job: Job): TargetResultStatus {
 export function findTargetJob(
   jobs: readonly Job[],
   target: string,
-  host: ForgeHost = "github",
+  host: ForgeHost = DEFAULT_HOST,
 ): Job | undefined {
   const pattern =
-    host === "gitlab"
+    hostProfile(host).ci === "gitlab-ci"
       ? new RegExp(`^(?:preview-|build-)?${escapeRegExp(target)}$`, "i")
       : new RegExp(`^(?:.* / )?(?:Preview |Build )?${escapeRegExp(target)}$`, "i");
   return jobs.filter((job) => pattern.test(job.name.trim())).at(-1);
@@ -498,7 +499,7 @@ function unknownResults(targets: readonly string[]): Record<string, TargetResult
 export function targetResults(
   plan: Plan,
   jobs: readonly Job[],
-  host: ForgeHost = "github",
+  host: ForgeHost = DEFAULT_HOST,
 ): Record<string, TargetResult> {
   const results: Record<string, TargetResult> = {};
   for (const name of plan.matrix) {
@@ -519,7 +520,7 @@ async function listRunJobs(context: FlowContext, forge: Forge, runId: number): P
   try {
     return await forge.listJobs(runId);
   } catch (error) {
-    if (!context.fallbackForge || context.host === "gitlab") throw error;
+    if (!context.fallbackForge || !hostProfile(context.host).fallbackListsJobs) throw error;
     context.log.warn(
       `Couldn't list the jobs with the App token (${errorMessage(error)}); trying GITHUB_TOKEN`,
     );

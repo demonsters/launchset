@@ -9,6 +9,7 @@ import { extractSection, extractSectionWithHeading, insertSectionSorted } from "
 import type { ResolvedConfig } from "./config/schema.ts";
 import { LaunchsetError } from "./errors.ts";
 import { type ForgeHost, forgeWords } from "./forge-links.ts";
+import { hostProfile } from "./hosts.ts";
 import {
   code,
   highestVersion,
@@ -551,7 +552,7 @@ function finalizeShip(input: FinalizeInput): FinalizeResult {
       if (action) actions.push(action);
       else
         notices.push(
-          `The ${tag} ${input.host === "gitlab" ? releaseName : "Release"} already lists ${target} as shipped.`,
+          `The ${tag} ${hostProfile(input.host).releaseOfTag} already lists ${target} as shipped.`,
         );
     } else {
       const section = input.changelog === null ? null : extractSection(input.changelog, version);
@@ -636,9 +637,7 @@ function renderFinalizeSummary(
     paragraphs.push(result.actions.map((a) => `- ${describeAction(a, releaseName)}`).join("\n"));
   } else {
     paragraphs.push(
-      host === "gitlab"
-        ? "Nothing to change: tags and releases are up to date."
-        : "Nothing to change: tags and Releases are up to date.",
+      `Nothing to change: tags and ${hostProfile(host).releaseNoun}s are up to date.`,
     );
   }
   return renderSummary({
