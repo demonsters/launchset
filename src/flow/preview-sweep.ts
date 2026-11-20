@@ -18,7 +18,7 @@
 
 import { errorMessage, LaunchsetError, messageWithHint } from "../core/errors.ts";
 import { forgeWords } from "../core/forge-links.ts";
-import { hostProfile } from "../core/hosts.ts";
+import { ciProfile, hostProfile } from "../core/hosts.ts";
 import { renderSummary } from "../core/plan-common.ts";
 import { isReleasePrBranch } from "../core/release-pr.ts";
 import {
@@ -27,7 +27,7 @@ import {
   type LabeledMergeRequest,
   type MergeRequestPipeline,
 } from "../forge/gitlab/index.ts";
-import type { FlowContext, FlowResult } from "./context.ts";
+import { ciSystemOf, type FlowContext, type FlowResult } from "./context.ts";
 
 /** Pipelines one run starts at most, by default. */
 export const DEFAULT_SWEEP_MAX = 10;
@@ -111,8 +111,8 @@ async function coveringPipeline(
 
 function gitlabForge(context: FlowContext): GitLabForge {
   const words = forgeWords("gitlab");
-  const { labelEvents, name } = hostProfile(context.host);
-  if (labelEvents) {
+  const { name } = hostProfile(context.host);
+  if (ciProfile(ciSystemOf(context)).labelEvents) {
     throw new LaunchsetError(
       "gitlab-only",
       `preview-sweep is for GitLab only: on ${name}, adding the preview label starts the preview workflow by itself (the pull_request \`labeled\` event).`,
@@ -146,7 +146,7 @@ export async function previewSweep(
   if (!Number.isSafeInteger(max) || max < 1) {
     throw new LaunchsetError("invalid-max", `--max must be a positive integer, not ${max}`);
   }
-  if (!hostProfile(context.host).labelEvents && !preview.enabled) {
+  if (!ciProfile(ciSystemOf(context)).labelEvents && !preview.enabled) {
     const line = "Previews are disabled in the config (preview: false): nothing to sweep.";
     return {
       ok: true,
@@ -168,7 +168,7 @@ export async function previewSweep(
       },
     };
   }
-  if (!hostProfile(context.host).labelEvents && !preview.rebuildOnPush) {
+  if (!ciProfile(ciSystemOf(context)).labelEvents && !preview.rebuildOnPush) {
     throw new LaunchsetError(
       "preview-sweep-manual-previews",
       "preview.rebuildOnPush is false, so on GitLab every MR's preview is a manual job, also with the label: a pipeline the sweep started wouldn't build the preview. GitLab gives such a pipeline no variable or source of its own that the preview job could tell apart from a push.",

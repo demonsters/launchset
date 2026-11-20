@@ -4,7 +4,15 @@
  * {@link HostProfile}. Pure.
  */
 
-import { DEFAULT_HOST, FORGE_HOSTS, type ForgeHost, HOSTS, hostProfile } from "./hosts.ts";
+import {
+  type CiSystem,
+  ciProfile,
+  DEFAULT_HOST,
+  FORGE_HOSTS,
+  type ForgeHost,
+  HOSTS,
+  hostProfile,
+} from "./hosts.ts";
 
 export { FORGE_HOSTS, type ForgeHost };
 
@@ -49,6 +57,8 @@ export interface ForgeLinksInput {
   /** Default the host's public server ({@link DEFAULT_SERVER_URLS}); trailing slashes are dropped. */
   serverUrl?: string;
   repository: string;
+  /** The CI system whose run URLs `runUrl` gives (default the host's own). */
+  ci?: CiSystem;
 }
 
 /** The words of `host` (default GitHub). */
@@ -75,6 +85,6 @@ export function forgeLinks(input: ForgeLinksInput): ForgeLinks {
     serverUrl,
     repository: input.repository,
     prUrl: (n) => `${repoUrl}/${profile.prPath(n)}`,
-    runUrl: (id) => `${repoUrl}/${profile.runPath(id)}`,
+    runUrl: (id) => `${repoUrl}/${ciProfile(input.ci ?? profile.ci).runPath(id)}`,
   };
 }

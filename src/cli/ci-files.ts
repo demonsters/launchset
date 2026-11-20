@@ -5,6 +5,7 @@
  */
 
 import { resolve } from "node:path";
+import { ciFromEnv, ciProfile } from "../core/hosts.ts";
 import { DEFAULT_CHILD_FILE } from "../templates/gitlab-child.ts";
 import type { CliIo } from "./io.ts";
 
@@ -19,9 +20,11 @@ const CI_FILES = {
 
 type CiFile = keyof typeof CI_FILES;
 
-/** Whether `--ci` is on: the flag, else `GITLAB_CI=true`. */
+/** Whether `--ci` is on: the flag, else whether the CI that runs launchset turns it on (GitLab CI). */
 export function ciEnabled(io: CliIo, opts: { ci?: boolean | undefined }): boolean {
-  return opts.ci ?? io.env.GITLAB_CI === "true";
+  if (opts.ci !== undefined) return opts.ci;
+  const ci = ciFromEnv(io.env);
+  return ci !== undefined && ciProfile(ci).ciFilesByDefault;
 }
 
 /** The name of a `--ci` file as configured (relative to the shell's folder, or absolute). */

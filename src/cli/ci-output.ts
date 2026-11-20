@@ -10,10 +10,10 @@ import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { gitlabSettings, targetShell } from "../core/config/schema.ts";
-import { hostProfile } from "../core/hosts.ts";
+import { ciFromEnv, ciProfile } from "../core/hosts.ts";
 import type { Plan } from "../core/types.ts";
 import type { FlowContext, FlowResult, Logger } from "../flow/index.ts";
-import { outputsFor } from "../flow/index.ts";
+import { ciSystemOf, outputsFor } from "../flow/index.ts";
 import {
   type ChildTarget,
   DEFAULT_TARGETS_FILE,
@@ -292,13 +292,12 @@ export async function childPipelineFor(
   });
 }
 
-/** Print the child pipeline to the job log (a collapsed section in GitLab CI). */
+/** Print the child pipeline to the job log (a collapsed section where the CI has them). */
 function printChild(io: CliIo, file: string, content: string): void {
-  if (io.env.GITLAB_CI === "true") {
-    const time = Math.floor((io.now ?? new Date()).getTime() / 1000);
-    io.stderr(
-      `\u001b[0Ksection_start:${time}:launchset_child[collapsed=true]\r\u001b[0KChild pipeline ${file}\n${content}\u001b[0Ksection_end:${time}:launchset_child\r\u001b[0K\n`,
-    );
+  const ci = ciFromEnv(io.env);
+  const section = ci === undefined ? undefined : ciProfile(ci).logSection;
+  if (section) {
+    io.stderr(section("launchset_child", `Child pipeline ${file}`, content, io.now ?? new Date()));
     return;
   }
   io.stderr(`Child pipeline ${file}:\n${content}`);
@@ -315,7 +314,7 @@ export async function writeChildPipeline(
   request: ChildPipelineRequest,
   opts: { ci?: boolean | undefined },
 ): Promise<void> {
-  if (!ciEnabled(io, opts) || hostProfile(context.host).ci !== "gitlab-ci") return;
+  if (!ciEnabled(io, opts) || ciSystemOf(context) !== "gitlab-ci") return;
   const content = await childPipelineFor(io, context, request);
   await writeFile(ciFilePath(io, "child"), content, "utf8");
   printChild(io, ciFileName(io, "child"), content);

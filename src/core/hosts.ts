@@ -19,14 +19,15 @@ export type ForgeHost = (typeof FORGE_HOSTS)[number];
 export const DEFAULT_HOST: ForgeHost = "github";
 
 /**
- * The CI system a host's pipelines run on. It decides the files `init` writes, how build jobs
- * are named and whether a child pipeline is generated. `actions`: GitHub Actions workflows
- * (the CI of Forgejo and Gitea runs these too). `gitlab-ci`: `.gitlab-ci.yml` pipelines.
+ * A CI system. It decides the files `init` writes, how build jobs are named and whether a
+ * child pipeline is generated. `actions`: GitHub Actions workflows (Forgejo's and Gitea's CI run
+ * these too). `gitlab-ci`: `.gitlab-ci.yml` pipelines. One forge can be used with more than one
+ * CI system (Codeberg: Forgejo Actions or Woodpecker), so these are a table of their own.
  */
 export type CiSystem = "actions" | "gitlab-ci";
 
-/** The environment variable a host's CI sets to `true`. */
-export type CiFlag = "GITHUB_ACTIONS" | "GITLAB_CI";
+/** The environment variable that says which CI system runs launchset. */
+export type CiVariable = "GITHUB_ACTIONS" | "GITLAB_CI";
 
 export interface HostProfile {
   host: ForgeHost;
@@ -34,9 +35,11 @@ export interface HostProfile {
   name: string;
   /** The public server, used when none is configured. */
   defaultServerUrl: string;
+  /**
+   * The host's own CI system: what `init` sets up, and what runs when the environment names
+   * none (a local run) or names one that doesn't serve this host ({@link ciSystemFor}).
+   */
   ci: CiSystem;
-  /** The environment variable the host's CI sets to `true` (`GITHUB_ACTIONS`, `GITLAB_CI`). */
-  ciFlag: CiFlag;
   /**
    * True when the origin remote's host name says the repo is on this host (`gitlab.acme.dev`).
    * Unset for the default host, which needs no evidence.
@@ -51,8 +54,6 @@ export interface HostProfile {
   prRef(number: number): string;
   /** The web path of a PR, below the repository URL: `pull/12`, `-/merge_requests/12`. */
   prPath(number: number): string;
-  /** The web path of a CI run, below the repository URL: `actions/runs/7`, `-/pipelines/7`. */
-  runPath(id: number): string;
   /** `GitHub Release` or `GitLab release`. */
   releaseName: string;
   /** What the release of a prerelease tag is called (`GitHub pre-release`, `GitLab release`). */
@@ -74,11 +75,6 @@ export interface HostProfile {
   latestFlag: boolean;
   /** Markdown alerts are written lowercase (`> [!note]`, GitLab) instead of `> [!NOTE]`. */
   lowercaseAlerts: boolean;
-  /**
-   * Adding a label to a PR starts a CI run (GitHub's pull_request `labeled`). Without it, a
-   * labelled PR only gets its preview on the next pipeline, or from `launchset preview-sweep`.
-   */
-  labelEvents: boolean;
   /** Repository paths may nest (`group/sub/project`), not only `owner/repo`. */
   nestedRepositories: boolean;
   /**
@@ -94,11 +90,6 @@ export interface HostProfile {
    * launchset's tag pushes carry no push options.
    */
   skipCiPushOption?: string;
-  /**
-   * The CI's fallback token (GitHub's workflow `GITHUB_TOKEN`) can list a run's jobs, so a
-   * failed listing is retried with it. GitLab's `CI_JOB_TOKEN` can't.
-   */
-  fallbackListsJobs: boolean;
   /** The error code when an API token is needed and missing. */
   noTokenError: string;
 }
@@ -108,12 +99,10 @@ const GITHUB: HostProfile = {
   name: "GitHub",
   defaultServerUrl: "https://github.com",
   ci: "actions",
-  ciFlag: "GITHUB_ACTIONS",
   prSymbol: "#",
   prName: "PR",
   prRef: (n) => `refs/pull/${n}/head`,
   prPath: (n) => `pull/${n}`,
-  runPath: (id) => `actions/runs/${id}`,
   releaseName: "GitHub Release",
   prereleaseName: "GitHub pre-release",
   releaseOfTag: "Release",
@@ -121,11 +110,9 @@ const GITHUB: HostProfile = {
   prereleaseFlag: true,
   latestFlag: true,
   lowercaseAlerts: false,
-  labelEvents: true,
   nestedRepositories: false,
   selfManagedRemotes: false,
   gitTokenUser: "x-access-token",
-  fallbackListsJobs: true,
   noTokenError: "no-github-token",
 };
 
@@ -134,13 +121,11 @@ const GITLAB: HostProfile = {
   name: "GitLab",
   defaultServerUrl: "https://gitlab.com",
   ci: "gitlab-ci",
-  ciFlag: "GITLAB_CI",
   remoteMatches: (hostname) => hostname.includes("gitlab"),
   prSymbol: "!",
   prName: "MR",
   prRef: (n) => `refs/merge-requests/${n}/head`,
   prPath: (n) => `-/merge_requests/${n}`,
-  runPath: (id) => `-/pipelines/${id}`,
   releaseName: "GitLab release",
   prereleaseName: "GitLab release",
   releaseOfTag: "GitLab release",
@@ -148,23 +133,114 @@ const GITLAB: HostProfile = {
   prereleaseFlag: false,
   latestFlag: false,
   lowercaseAlerts: true,
-  labelEvents: false,
   nestedRepositories: true,
   selfManagedRemotes: true,
   gitTokenUser: "oauth2",
   skipCiPushOption: "ci.skip",
-  fallbackListsJobs: false,
   noTokenError: "no-gitlab-token",
 };
 
 /** Every host's profile. A `Record`, so a host added to {@link FORGE_HOSTS} must get one. */
 export const HOSTS: Readonly<Record<ForgeHost, HostProfile>> = { github: GITHUB, gitlab: GITLAB };
 
+/** What differs between CI systems. */
+export interface CiProfile {
+  ci: CiSystem;
+  /** The product, for messages: `GitHub Actions`, `GitLab CI`. */
+  name: string;
+  /**
+   * How the environment says this CI runs launchset: `variable` has `value` (`GITLAB_CI` is
+   * `true`; Woodpecker would be `CI` = `woodpecker`).
+   */
+  detect: { variable: CiVariable; value: string };
+  /**
+   * The hosts this CI runs against, the one it's used with when the environment names no host
+   * first.
+   */
+  hosts: readonly [ForgeHost, ...ForgeHost[]];
+  /** The web path of a run, below the repository URL: `actions/runs/7`, `-/pipelines/7`. */
+  runPath(id: number): string;
+  /**
+   * Adding a label to a PR starts a run (GitHub's pull_request `labeled`). Without it, a
+   * labelled PR only gets its preview on the next pipeline, or from `launchset preview-sweep`.
+   */
+  labelEvents: boolean;
+  /**
+   * The CI's fallback token (GitHub's workflow `GITHUB_TOKEN`) can list a run's jobs, so a
+   * failed listing is retried with it. GitLab's `CI_JOB_TOKEN` can't.
+   */
+  fallbackListsJobs: boolean;
+  /** `--ci` (writing plan.json, launchset.env, …) is on unless `--no-ci` says otherwise. */
+  ciFilesByDefault: boolean;
+  /**
+   * A collapsed section of the job log around `content`, with title `title` (GitLab CI's
+   * `section_start`/`section_end`). Unset: the CI has none, and `content` is printed plainly.
+   */
+  logSection?: (id: string, title: string, content: string, now: Date) => string;
+}
+
+const ACTIONS: CiProfile = {
+  ci: "actions",
+  name: "GitHub Actions",
+  detect: { variable: "GITHUB_ACTIONS", value: "true" },
+  hosts: ["github"],
+  runPath: (id) => `actions/runs/${id}`,
+  labelEvents: true,
+  fallbackListsJobs: true,
+  ciFilesByDefault: false,
+};
+
+const GITLAB_CI: CiProfile = {
+  ci: "gitlab-ci",
+  name: "GitLab CI",
+  detect: { variable: "GITLAB_CI", value: "true" },
+  hosts: ["gitlab"],
+  runPath: (id) => `-/pipelines/${id}`,
+  labelEvents: false,
+  fallbackListsJobs: false,
+  ciFilesByDefault: true,
+  logSection: (id, title, content, now) => {
+    const time = Math.floor(now.getTime() / 1000);
+    return `\u001b[0Ksection_start:${time}:${id}[collapsed=true]\r\u001b[0K${title}\n${content}\u001b[0Ksection_end:${time}:${id}\r\u001b[0K\n`;
+  },
+};
+
+/** Every CI system's profile. A `Record`, so a new {@link CiSystem} must get one. */
+export const CI_SYSTEMS: Readonly<Record<CiSystem, CiProfile>> = {
+  actions: ACTIONS,
+  "gitlab-ci": GITLAB_CI,
+};
+
 /**
- * The order hosts are recognised from their CI flag. A host whose CI also sets another host's
- * flag (Forgejo and Gitea runners set `GITHUB_ACTIONS` as well) must come before that host.
+ * The order CI systems are recognised from the environment. A CI that also sets another CI's
+ * variable (Forgejo and Gitea runners may set `GITHUB_ACTIONS` as well) must come before it.
  */
-export const CI_DETECTION_ORDER: readonly ForgeHost[] = ["gitlab", "github"];
+export const CI_DETECTION_ORDER: readonly CiSystem[] = ["gitlab-ci", "actions"];
+
+/** The CI system the environment says runs launchset, if any (ignores `LAUNCHSET_HOST`). */
+export function ciFromEnv(env: Readonly<Record<string, string | undefined>>): CiSystem | undefined {
+  return CI_DETECTION_ORDER.find((ci) => {
+    const { variable, value } = CI_SYSTEMS[ci].detect;
+    return env[variable] === value;
+  });
+}
+
+/**
+ * The CI system for a run on `host`: the one the environment names when it serves `host`,
+ * else the host's own ({@link HostProfile.ci}).
+ */
+export function ciSystemFor(
+  host: ForgeHost,
+  env: Readonly<Record<string, string | undefined>>,
+): CiSystem {
+  const detected = ciFromEnv(env);
+  return detected && CI_SYSTEMS[detected].hosts.includes(host) ? detected : hostProfile(host).ci;
+}
+
+/** The profile of CI system `ci`. */
+export function ciProfile(ci: CiSystem): CiProfile {
+  return CI_SYSTEMS[ci];
+}
 
 /** The profile of `host` (default {@link DEFAULT_HOST}). */
 export function hostProfile(host: ForgeHost = DEFAULT_HOST): HostProfile {

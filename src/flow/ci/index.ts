@@ -5,8 +5,11 @@
 
 import { LaunchsetError } from "../../core/errors.ts";
 import {
-  CI_DETECTION_ORDER,
-  type CiFlag,
+  CI_SYSTEMS,
+  type CiSystem,
+  type CiVariable,
+  ciFromEnv,
+  ciSystemFor,
   DEFAULT_HOST,
   FORGE_HOSTS,
   type ForgeHost,
@@ -25,7 +28,7 @@ export * from "./types.ts";
  * How the host was found, for messages: `LAUNCHSET_HOST`, the CI flag of the host
  * (`GITLAB_CI`, `GITHUB_ACTIONS`), the origin `remote`, or the `default` host.
  */
-export type HostSource = "LAUNCHSET_HOST" | CiFlag | "remote" | "default";
+export type HostSource = "LAUNCHSET_HOST" | CiVariable | "remote" | "default";
 
 export interface HostDetection {
   host: ForgeHost;
@@ -71,7 +74,8 @@ export function serverUrlFromRemote(url: string): string | undefined {
 
 /**
  * The host from the environment alone: `LAUNCHSET_HOST` (`github` / `gitlab`, anything else
- * is an error), else `GITLAB_CI=true` → gitlab, else `GITHUB_ACTIONS=true` → github.
+ * is an error), else the CI system the environment names (`ciFromEnv`: `GITLAB_CI=true`,
+ * `GITHUB_ACTIONS=true`) and the host it runs against.
  */
 export function hostFromEnv(env: Env): HostDetection | undefined {
   const explicit = env.LAUNCHSET_HOST?.trim();
@@ -86,10 +90,8 @@ export function hostFromEnv(env: Env): HostDetection | undefined {
     }
     return { host, source: "LAUNCHSET_HOST" };
   }
-  for (const host of CI_DETECTION_ORDER) {
-    const flag = HOSTS[host].ciFlag;
-    if (env[flag] === "true") return { host, source: flag };
-  }
+  const ci = ciFromEnv(env);
+  if (ci) return { host: CI_SYSTEMS[ci].hosts[0], source: CI_SYSTEMS[ci].detect.variable };
   return undefined;
 }
 
@@ -116,12 +118,18 @@ export function hostFromRemoteName(hostname: string): ForgeHost | undefined {
   return FORGE_HOSTS.find((host) => HOSTS[host].remoteMatches?.(hostname));
 }
 
-/** The CI environment readers, per host. */
+/** The environment readers, per CI system. */
 const ENVIRONMENTS: Readonly<
-  Record<ForgeHost, (env: Env) => CiEnvironment | Promise<CiEnvironment>>
-> = { github: readGitHubEnvironment, gitlab: gitlabEnvironment };
+  Record<CiSystem, (env: Env) => CiEnvironment | Promise<CiEnvironment>>
+> = { actions: readGitHubEnvironment, "gitlab-ci": gitlabEnvironment };
 
-/** Read the CI environment of `host`. */
+/**
+ * Read the CI environment for a run on `host`, with the reader of its CI system
+ * ({@link ciSystemFor}: the one the environment names when it serves `host`, else the host's).
+ */
 export async function readCiEnvironment(host: ForgeHost, env: Env): Promise<CiEnvironment> {
-  return ENVIRONMENTS[host](env);
+  const system = ciSystemFor(host, env);
+  const ci = await ENVIRONMENTS[system](env);
+  ci.system = system;
+  return ci;
 }

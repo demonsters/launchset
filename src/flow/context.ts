@@ -9,7 +9,7 @@ import { ConfigError, hostConfigIssues, type ResolvedConfig } from "../core/conf
 import { LaunchsetError } from "../core/errors.ts";
 import { forgeHints } from "../core/forge-hints.ts";
 import { type ForgeHost, forgeLinks } from "../core/forge-links.ts";
-import { hostProfile } from "../core/hosts.ts";
+import { type CiSystem, ciSystemFor, hostProfile } from "../core/hosts.ts";
 import type { RunInfo } from "../core/types.ts";
 import type { Forge } from "../forge/types.ts";
 import { Git, type GitIdentity } from "../git/index.ts";
@@ -92,7 +92,7 @@ export async function createContext(options: ContextOptions): Promise<FlowContex
   // Only a host known from the environment or the remote: a GitLab config in a repo without a
   // remote (a local `launchset version`) still works.
   if (detected.source !== "default") {
-    const issues = hostConfigIssues(config, host);
+    const issues = hostConfigIssues(config, host, ciSystemFor(host, env));
     if (issues.length > 0) throw new ConfigError(issues, file);
   }
   const adapter = HOST_ADAPTERS[host];
@@ -156,11 +156,21 @@ export async function createContext(options: ContextOptions): Promise<FlowContex
   if (repository) context.repository = repository;
   const fromEnv = ci.run ? { ...ci.run } : undefined;
   if (fromEnv?.id !== undefined && repository) {
-    fromEnv.url = forgeLinks({ host, serverUrl, repository }).runUrl(fromEnv.id);
+    fromEnv.url = forgeLinks({
+      host,
+      serverUrl,
+      repository,
+      ...(ci.system ? { ci: ci.system } : {}),
+    }).runUrl(fromEnv.id);
   }
   const run = options.run ? { ...fromEnv, ...options.run } : fromEnv;
   if (run) context.run = run;
   return context;
+}
+
+/** The CI system of the run: the one its environment was read with, else the host's own. */
+export function ciSystemOf(context: Pick<FlowContext, "host" | "ci">): CiSystem {
+  return context.ci.system ?? hostProfile(context.host).ci;
 }
 
 /** The forge client, or a clear error saying a token is needed. */

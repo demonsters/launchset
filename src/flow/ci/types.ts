@@ -5,6 +5,7 @@
  */
 
 import type { ForgeHost } from "../../core/forge-links.ts";
+import type { CiSystem } from "../../core/hosts.ts";
 import type { RunInfo } from "../../core/types.ts";
 
 /** A pull request (merge request) of the event. */
@@ -59,6 +60,11 @@ export interface EventInfo {
 /** The CI environment of one run, as an adapter read it. Everything is optional outside CI. */
 export interface CiEnvironment {
   host: ForgeHost;
+  /**
+   * The CI system that was read (`readCiEnvironment` sets it). Unset: the host's own CI
+   * ({@link ciSystemOf}).
+   */
+  system?: CiSystem;
   /** True when running in the host's CI (GitHub: `GITHUB_ACTIONS=true`). */
   inCi: boolean;
   /** Web URL of the server, without trailing slash (GitHub: `GITHUB_SERVER_URL`). */

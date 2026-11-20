@@ -10,7 +10,7 @@
 import { z } from "zod";
 import { isMaintenanceBranch, matchBranch } from "../branches.ts";
 import { LaunchsetError } from "../errors.ts";
-import { type ForgeHost, hostProfile } from "../hosts.ts";
+import { type CiSystem, type ForgeHost, hostProfile } from "../hosts.ts";
 
 export const TARGET_NAME = /^[a-z0-9][a-z0-9-]*$/;
 
@@ -973,8 +973,12 @@ export function gitlabSettings(config: Pick<ResolvedConfig, "gitlab">): {
  * The release workflow builds every target in one matrix job, so `after` can't order them
  * there.
  */
-export function hostConfigIssues(config: ResolvedConfig, host: ForgeHost): ConfigIssue[] {
-  if (hostProfile(host).ci !== "actions") return [];
+export function hostConfigIssues(
+  config: ResolvedConfig,
+  host: ForgeHost,
+  ci: CiSystem = hostProfile(host).ci,
+): ConfigIssue[] {
+  if (ci !== "actions") return [];
   return Object.values(config.targets)
     .filter((t) => (t.after ?? []).length > 0)
     .map((t) => ({
