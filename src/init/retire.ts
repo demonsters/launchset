@@ -321,7 +321,7 @@ function commentedLines(lines: { text: string }[], reason: string, indent?: stri
 }
 
 /** The start of the comment lines right above `start` (same indentation, no blank line). */
-function commentsAbove(text: string, start: number): number {
+export function commentsAbove(text: string, start: number): number {
   const indent = indentAt(text, start);
   let at = start;
   while (at > 0) {
@@ -358,11 +358,16 @@ export function retireGitLab(text: string, ops: GitLabOp[]): string {
       case "remove-job": {
         const [s, e] = pairLines(text, op.job.pair);
         let from = commentsAbove(text, s);
+        let to = e;
         // The last job: its blank line before goes too, so the file doesn't end in one.
         if (e === text.length && /\r?\n\r?\n$/.test(text.slice(0, from))) {
           from = text.slice(0, from).replace(/\r?\n$/, "").length;
+        } else if (/(^|\n)[ \t]*\r?\n$/.test(text.slice(0, from))) {
+          // A blank line on both sides: one of them goes, so no double blank line is left.
+          const blank = /^[ \t]*\r?\n/.exec(text.slice(e));
+          if (blank) to = e + blank[0].length;
         }
-        edits.remove(from, e);
+        edits.remove(from, to);
         break;
       }
       case "hide-job": {
@@ -435,6 +440,10 @@ export function retireGitLab(text: string, ops: GitLabOp[]): string {
         const range = latestFlagRange(text, op.item.ref.node, op.entry);
         if (!range) throw new Error(`internal: can't find ${op.entry} in the script`);
         edits.remove(range[0], range[1]);
+        break;
+      }
+      case "remove-seq-items": {
+        for (const item of op.items) removeSeqItem(text, op.seq, item, edits);
         break;
       }
       case "remove-include": {

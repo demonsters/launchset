@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parse as parseYaml } from "yaml";
+import { loadConfig } from "../../src/config/load.ts";
 import type { Plan } from "../../src/core/types.ts";
 import { guessHost } from "../../src/init/detect.ts";
 import {
@@ -26,9 +27,14 @@ import {
 import { type InitDetectJson, runInit } from "../../src/init/index.ts";
 import { detectMachinery, gitlabCommandKinds } from "../../src/init/machinery.ts";
 import { applyRetirement } from "../../src/init/retire.ts";
-import { checkTargetsFile, renderChildPipeline } from "../../src/templates/gitlab-child.ts";
+import {
+  checkTargetsFile,
+  checkTemplateFile,
+  inspectTargetJobs,
+  renderChildPipeline,
+} from "../../src/templates/gitlab-child.ts";
 import { GitLabReference, parseGitLabYaml } from "../../src/templates/gitlab-yaml.ts";
-import { collect, fixtureRepo, options, read, repoFrom, status } from "./helpers.ts";
+import { collect, fixture, fixtureRepo, options, read, repoFrom, status } from "./helpers.ts";
 
 const tempDir = (files: Record<string, string>) => repoFrom(files, { git: false });
 
@@ -658,5 +664,371 @@ describe("init --yes on GitLab", () => {
     expect(parseYaml(read(dir, ".gitlab-ci.yml")).include).toEqual([
       { local: ".gitlab/launchset.yml" },
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Custom targets from GitLab jobs (the gitlab-desktop fixture: a PowerShell runner, packages on
+// tags, a site image that needs both packages)
+
+describe("custom targets from GitLab tag jobs", () => {
+  const repo = () =>
+    fixtureRepo("gitlab-desktop", { tags: ["v0.6.0"], remote: "git@gitlab.com:acme/desktop.git" });
+
+  it("proposes a target per tag job that builds or publishes, with shell, after and templates", async () => {
+    const json = await detectJson(repo());
+    const byId = new Map(json.decisions.map((d) => [d.id, d]));
+    expect(json.detection.targets.map((t) => [t.name, t.type, t.proposed])).toEqual([
+      ["windows", "custom", "auto"],
+      ["appimage", "custom", "auto"],
+      ["site", "custom", "auto"],
+    ]);
+    const [windows, appimage, site] = json.detection.targets;
+    expect(windows?.gitlab).toMatchObject({
+      job: "package:windows",
+      path: ".gitlab-ci.yml",
+      line: 66,
+      shell: "powershell",
+      after: [],
+      templates: [{ name: ".windows", path: ".gitlab-ci.yml", line: 45 }],
+    });
+    expect(windows?.gitlab?.shellEvidence.map((e) => e.note)).toEqual([
+      "hooks of .windows is PowerShell ($env:)",
+      ".windows runs on runners tagged windows",
+    ]);
+    expect(appimage?.gitlab).toMatchObject({ shell: "sh", templates: [] });
+    expect(site?.gitlab).toMatchObject({ after: ["windows", "appimage"] });
+    expect(byId.get("target.site")).toMatchObject({
+      question: 'How is the custom target site (the steps of GitLab job "site:release") released?',
+      default: "auto",
+      evidence: [
+        {
+          path: ".gitlab-ci.yml",
+          line: 102,
+          note: expect.stringMatching(/^GitLab job "site:release" runs on tags and publishes/),
+        },
+      ],
+    });
+    expect(byId.get("gitlab.windows.shell")).toMatchObject({ default: "powershell" });
+    expect(byId.get("gitlab.appimage.shell")).toMatchObject({ default: "sh" });
+    expect(byId.get("gitlab.templates")).toMatchObject({
+      default: "move",
+      evidence: [
+        { path: ".gitlab-ci.yml", line: 45, note: "windows extends .windows" },
+        { path: ".gitlab-ci.yml", line: 95, note: "site extends .site" },
+      ],
+    });
+    // The note about tag pipelines, with where the rule is.
+    expect(json.detection.notes).toContainEqual(
+      expect.objectContaining({
+        level: "info",
+        manual: true,
+        path: ".gitlab-ci.yml",
+        line: 11,
+        message: expect.stringMatching(
+          /^workflow: rules start a pipeline for every tag push \(- if: \$CI_COMMIT_TAG\), which runs every job without rules \(lint, test:linux, test:windows\)\. On GitLab launchset pushes all its tags .* with git push -o ci\.skip/,
+        ),
+      }),
+    );
+    // Reading CFBundleShortVersionString from a plist doesn't make build_app.py a version writer.
+    expect(json.detection.machinery.map((m) => m.path)).not.toContain("scripts/build_app.py");
+  });
+
+  it("disables only the tag rule of a job that something else starts too", async () => {
+    const json = await detectJson(repo());
+    expect(json.detection.machinery.map((m) => [m.what, m.actions, m.effects.disable])).toEqual([
+      [
+        'GitLab job "package:windows" (runs on tags)',
+        ["disable", "keep"],
+        'removes its tag rule (- if: $CI_COMMIT_TAG) from job "package:windows"; it keeps its other rule (when: manual)',
+      ],
+      [
+        'GitLab job "package:appimage" (runs on tags)',
+        ["disable", "keep"],
+        'removes its tag rule (- if: $CI_COMMIT_TAG) from job "package:appimage"; it keeps its other rule (when: manual)',
+      ],
+      [
+        'GitLab job "site:release" (runs on tags)',
+        ["disable", "keep"],
+        'removes the job "site:release"',
+      ],
+    ]);
+  });
+
+  it("init --yes: config, prefilled target jobs, moved templates; the child pipeline builds", async () => {
+    const dir = repo();
+    const result = await runInit(options(dir, { yes: true, decide: { skill: "no" } }));
+    expect(result.changes.map((c) => c.path).sort()).toEqual([
+      ".gitlab-ci.yml",
+      ".gitlab/ci-templates.yml",
+      ".gitlab/launchset-targets.yml",
+      ".gitlab/launchset.yml",
+      ".launchset/README.md",
+      "CHANGELOG.md",
+      "launchset.config.ts",
+      "package.json",
+    ]);
+    const config = read(dir, "launchset.config.ts");
+    expect(config).toContain('gitlab: { include: [".gitlab/ci-templates.yml"] },');
+    expect(config).toContain(
+      '    windows: {\n      type: "custom",\n      gitlab: { shell: "powershell" },\n    },',
+    );
+    expect(config).toContain('site: { type: "custom", after: ["windows", "appimage"] },');
+
+    // .gitlab-ci.yml: the templates moved out, the tag rules and site:release gone, both includes.
+    const root = read(dir, ".gitlab-ci.yml");
+    const ci = parseGitLabYaml(root) as Record<string, Record<string, unknown>>;
+    expect(ci[".windows"]).toBeUndefined();
+    expect(ci[".site"]).toBeUndefined();
+    expect(ci["site:release"]).toBeUndefined();
+    expect(ci["package:windows"]?.rules).toEqual([{ when: "manual", allow_failure: true }]);
+    expect(ci["test:windows"]).toEqual({
+      extends: ".windows",
+      script: ["uv run --locked pytest -v -n 4"],
+    });
+    expect(ci.include).toEqual([
+      { local: ".gitlab/ci-templates.yml" },
+      { local: ".gitlab/launchset.yml" },
+    ]);
+    expect(ci.workflow).toEqual(
+      (parseGitLabYaml(fixture("gitlab-desktop", ".gitlab-ci.yml")) as Record<string, unknown>)
+        .workflow,
+    );
+    expect(root).not.toMatch(/\n\n\n/);
+
+    // The templates, moved unchanged with their comments.
+    const templates = read(dir, ".gitlab/ci-templates.yml");
+    const original = fixture("gitlab-desktop", ".gitlab-ci.yml");
+    const block = (name: string, next: string) =>
+      original.slice(
+        original.lastIndexOf("\n\n", original.indexOf(`\n${name}:`)) + 2,
+        original.indexOf(next),
+      );
+    expect(templates).toContain(block(".windows", "\ntest:windows:"));
+    expect(templates).toContain(
+      "# The site image: nginx with the downloads, built with crane.\n.site:\n",
+    );
+    expect(checkTemplateFile(".gitlab/ci-templates.yml", templates)).toHaveProperty(".windows");
+
+    // The target jobs: the job's keys, without rules and needs; CI_COMMIT_TAG → LAUNCHSET_TAG.
+    const targetsText = read(dir, ".gitlab/launchset-targets.yml");
+    const targets = parseGitLabYaml(targetsText) as Record<string, Record<string, unknown>>;
+    expect(targets[".launchset-windows"]).toEqual({
+      extends: ".windows",
+      timeout: "40m",
+      script: [
+        "choco install innosetup -y --no-progress",
+        "uv run --locked --group package scripts/build_app.py --clean --installer",
+        '$p = Start-Process -FilePath "dist\\app\\Acme\\Acme.exe" -ArgumentList "--quit-after","3000" -PassThru',
+      ],
+      artifacts: {
+        paths: ["dist/Acme-*-setup.exe", "dist/Acme-*-windows-x64.zip", "dist/platform-*.json"],
+      },
+    });
+    expect(targets[".launchset-site"]).toEqual({
+      extends: ".site",
+      script: [
+        'python3 hosting/build_image.py --packages dist --previous "$SITE_IMAGE:latest" --push "$SITE_IMAGE:$LAUNCHSET_TAG" "$SITE_IMAGE:latest"',
+      ],
+    });
+    expect(targetsText).toContain(
+      "# --- site (custom): from your job site:release (.gitlab-ci.yml:102) ---",
+    );
+    expect(targetsText).toContain('needs became "after" in launchset.config');
+    expect(targetsText).toContain(
+      "its image (nginx:1.30.7-alpine) needs Node 24 or later, npm and git",
+    );
+    expect(targetsText).toContain("the runner needs Node 24 or later, npm and git on its PATH");
+    expect(targets[".launchset-appimage"]).toMatchObject({
+      tags: ["docker"],
+      image: "ubuntu:22.04",
+    });
+
+    expect(result.manualSteps.join("\n")).toContain(
+      "Check the build steps init copied from your jobs into .gitlab/launchset-targets.yml for windows, appimage, site",
+    );
+    expect(result.manualSteps.join("\n")).toContain(
+      ".gitlab-ci.yml:11: workflow: rules start a pipeline",
+    );
+
+    // The child pipeline from what init wrote: PowerShell, after, the template include.
+    const { config: resolved } = await loadConfig(dir);
+    const plan = {
+      schemaVersion: 1,
+      mode: "publish",
+      channel: "release",
+      version: "0.7.0",
+      baseVersion: "0.7.0",
+      buildNumber: 1,
+      releaseSha: "a".repeat(40),
+      branch: "main",
+      maintenance: false,
+      distTag: "latest",
+      tag: "v0.7.0",
+      matrix: ["windows", "appimage", "site"],
+      targets: {},
+      createdAt: "2026-11-20T00:00:00.000Z",
+    } as Plan;
+    const inspected = inspectTargetJobs({
+      targetsText,
+      includes: [{ path: ".gitlab/ci-templates.yml", text: templates }],
+      matrix: plan.matrix,
+      kind: "preview",
+    });
+    expect(inspected.warnings).toEqual([]);
+    expect([...inspected.notInterruptible]).toEqual(["windows"]);
+    const child = parseGitLabYaml(
+      renderChildPipeline({
+        plan,
+        kind: "release",
+        planJob: "launchset-release",
+        currentSha: "a".repeat(40),
+        includes: resolved.gitlab?.include ?? [],
+        targets: {
+          windows: { shell: "powershell" },
+          site: { after: resolved.targets.site?.after ?? [] },
+        },
+      }),
+    ) as Record<string, Record<string, unknown>>;
+    expect(child.include).toEqual([
+      { local: ".gitlab/ci-templates.yml" },
+      { local: ".gitlab/launchset-targets.yml" },
+    ]);
+    expect((child["build-windows"]?.script as unknown[] | undefined)?.[0]).toBe(
+      "Set-Location -LiteralPath $env:CI_PROJECT_DIR",
+    );
+    expect(child["build-site"]?.needs).toEqual([
+      { pipeline: "$PARENT_PIPELINE_ID", job: "launchset-release" },
+      { job: "build-windows", artifacts: true, optional: true },
+      { job: "build-appimage", artifacts: true, optional: true },
+    ]);
+  });
+
+  it("gitlab.templates=keep: nothing moves, and the config has no gitlab.include", async () => {
+    const dir = repo();
+    await runInit(options(dir, { yes: true, decide: { skill: "no", "gitlab.templates": "keep" } }));
+    expect(existsSync(join(dir, ".gitlab/ci-templates.yml"))).toBe(false);
+    expect(read(dir, "launchset.config.ts")).not.toContain("include");
+    expect(parseGitLabYaml(read(dir, ".gitlab-ci.yml"))).toHaveProperty(".windows");
+  });
+
+  it("an auto target can't come after a manual one: the dependency is dropped with a note", async () => {
+    const dir = repo();
+    await runInit(options(dir, { yes: true, decide: { skill: "no", "target.windows": "manual" } }));
+    const config = read(dir, "launchset.config.ts");
+    expect(config).toContain(
+      '"site:release" needed windows\'s job, but windows is manual (a release doesn\'t build it), so it isn\'t in "after".',
+    );
+    expect(config).toContain('after: ["appimage"]');
+  });
+});
+
+describe("machinery: jobs only other removed jobs need", () => {
+  const text = [
+    "build:",
+    "  only: [tags]",
+    "  script: [make]",
+    "  artifacts:",
+    "    paths: [dist/]",
+    "deploy:",
+    "  rules:",
+    "    - if: $CI_COMMIT_TAG",
+    "  needs: [build]",
+    "  script: [./deploy.sh]",
+    "test:",
+    "  script: [make test]",
+    "",
+  ].join("\n");
+
+  it("both go: build's disable requires deploy's", () => {
+    const findings = machinery(text);
+    expect(
+      findings.map((f) => [f.item.id, f.item.actions, f.item.effects.disable, f.item.requires]),
+    ).toEqual([
+      [
+        "machinery..gitlab-ci.yml#1",
+        ["disable", "keep"],
+        'removes the job "build" (together with job "deploy", which needs it: only when that one is disabled too)',
+        ["machinery..gitlab-ci.yml#2"],
+      ],
+      ["machinery..gitlab-ci.yml#2", ["disable", "keep"], 'removes the job "deploy"', undefined],
+    ]);
+  });
+
+  it("keeping deploy leaves build only keep; disabling both removes both", async () => {
+    const files = { ".gitlab-ci.yml": text, "package.json": '{"name":"x","version":"1.0.0"}\n' };
+    const keepDeploy = await detectJson(repoFrom(files, { remote: GITLAB_REMOTE }));
+    expect(keepDeploy.decisions.map((d) => d.id)).toContain("machinery..gitlab-ci.yml#1");
+    const dir = repoFrom(files, { remote: GITLAB_REMOTE });
+    const kept = await runInit(
+      options(dir, { yes: true, decide: { skill: "no", "machinery..gitlab-ci.yml#2": "keep" } }),
+    );
+    expect(kept.manualSteps.join("\n")).toContain(
+      'Still in place because you chose keep: GitLab job "build"',
+    );
+    expect(parseGitLabYaml(read(dir, ".gitlab-ci.yml"))).toHaveProperty("build");
+    await expect(
+      runInit(
+        options(repoFrom(files, { remote: GITLAB_REMOTE }), {
+          yes: true,
+          decide: {
+            skill: "no",
+            "machinery..gitlab-ci.yml#1": "disable",
+            "machinery..gitlab-ci.yml#2": "keep",
+          },
+        }),
+      ),
+    ).rejects.toThrow(/--decide machinery\.\.gitlab-ci\.yml#1=disable: expected one of keep/);
+    const both = repoFrom(files, { remote: GITLAB_REMOTE });
+    await runInit(options(both, { yes: true, decide: { skill: "no" } }));
+    const after = parseGitLabYaml(read(both, ".gitlab-ci.yml")) as Record<string, unknown>;
+    expect(after.build).toBeUndefined();
+    expect(after.deploy).toBeUndefined();
+    expect(after.test).toBeDefined();
+  });
+
+  it("only: [tags, main] loses only tags", async () => {
+    const { read: readOut, findings } = await disableAll({
+      ".gitlab-ci.yml":
+        "build:\n  only:\n    - tags\n    - main\n  script: [make]\n  artifacts:\n    paths: [dist/]\n",
+    });
+    expect(findings[0]?.item.effects.disable).toBe(
+      'removes its tag rule (tags in only:) from job "build"; it keeps its other rule (only: main)',
+    );
+    expect(readOut(".gitlab-ci.yml")).toBe(
+      "build:\n  only:\n    - main\n  script: [make]\n  artifacts:\n    paths: [dist/]\n",
+    );
+  });
+});
+
+describe("--decide target.<name>=custom", () => {
+  it("declares a target in a project init detects nothing in", async () => {
+    const files = { ".gitlab-ci.yml": "lint:\n  script: [make lint]\n" };
+    await expect(
+      runInit(options(repoFrom(files, { remote: GITLAB_REMOTE }), { yes: true })),
+    ).rejects.toMatchObject({
+      code: "no-targets",
+      message: expect.stringContaining("init detected nothing to release"),
+      hint: expect.stringContaining("--decide target.<name>=custom"),
+    });
+    const dir = repoFrom(files, { remote: GITLAB_REMOTE });
+    const json = await detectJson(dir);
+    expect(json.detection.targets).toEqual([]);
+    const result = await runInit(
+      options(dir, { yes: true, decide: { "target.app": "custom", skill: "no" } }),
+    );
+    expect(read(dir, "launchset.config.ts")).toContain('app: { type: "custom" },');
+    expect(read(dir, ".gitlab/launchset-targets.yml")).toContain(".launchset-app:");
+    expect(result.manualSteps.join("\n")).toContain("Add your build and upload steps for app");
+  });
+
+  it("rejects bad names and detected targets of another type", async () => {
+    const dir = fixtureRepo("gitlab-docker", { tags: ["v2.3.0"], remote: GITLAB_REMOTE });
+    await expect(
+      runInit(options(dir, { yes: true, decide: { "target.Bad_Name": "custom" } })),
+    ).rejects.toThrow(/"Bad_Name" isn't a valid target name/);
+    await expect(
+      runInit(options(dir, { yes: true, decide: { "target.docker": "custom" } })),
+    ).rejects.toThrow(/docker is a detected docker target/);
   });
 });

@@ -8,7 +8,12 @@ import { renderConfigSource } from "../../src/init/config-source.ts";
 import { classifyTag, plainVersion, roundUpOffset } from "../../src/init/detect.ts";
 import { launchsetTagsMatched, matchesFilter } from "../../src/init/github-filter.ts";
 import { addLefthookCommand, detectHooks, installHook } from "../../src/init/hooks.ts";
-import { commandKinds, detectMachinery, type MachineryInput } from "../../src/init/machinery.ts";
+import {
+  commandKinds,
+  detectMachinery,
+  type MachineryInput,
+  scriptFileKinds,
+} from "../../src/init/machinery.ts";
 import { packageFile, packageRoot } from "../../src/init/package-files.ts";
 import { applyRetirement, removeSegments } from "../../src/init/retire.ts";
 import {
@@ -191,6 +196,30 @@ describe("shell commands", () => {
       "version-writer",
     ]);
     expect(commandKinds("pnpm build")).toEqual([]);
+  });
+
+  it("a script that only reads a version key from a plist isn't a version writer", () => {
+    const reads = [
+      "from pathlib import Path",
+      "",
+      "def write_info(target: Path, info: dict) -> None:",
+      '    target.write_text(json.dumps(info, indent=2) + "\\n", encoding="utf-8")',
+      "",
+      "def bundle_version(bundle: Path) -> str:",
+      "    import plistlib",
+      '    with (bundle / "Contents" / "Info.plist").open("rb") as f:',
+      '        return str(plistlib.load(f)["CFBundleShortVersionString"])',
+      "",
+      "def build_number(plist):",
+      "    return plist.get('CFBundleVersion') or run(['/usr/libexec/PlistBuddy', '-c', 'Print :CFBundleVersion', plist])",
+    ].join("\n");
+    expect(scriptFileKinds(reads)).toEqual({ kinds: [], line: 0 });
+    // Assigning the key, or replacing it in a file, still counts.
+    const writes = `${reads}\n\ninfo = {}\ninfo["CFBundleShortVersionString"] = version\n`;
+    expect(scriptFileKinds(writes)).toEqual({ kinds: ["version-writer"], line: 15 });
+    expect(
+      scriptFileKinds('writeFileSync(f, s.replace(/versionCode \\d+/, "versionCode 3"));\n').kinds,
+    ).toEqual(["version-writer"]);
   });
 
   it("removes && parts and keeps the other separators as written", () => {

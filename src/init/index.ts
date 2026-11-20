@@ -13,7 +13,7 @@ import { dirname, resolve } from "node:path";
 import { applyEdits, modify, parseTree } from "jsonc-parser";
 import semver from "semver";
 import { CHANGELOG_TITLE } from "../core/changelog.ts";
-import { resolveConfig } from "../core/config/schema.ts";
+import { resolveConfig, TARGET_NAME } from "../core/config/schema.ts";
 import { LaunchsetError } from "../core/errors.ts";
 import { renderTag } from "../core/tags.ts";
 import { REQUIRED_APP_PERMISSIONS } from "../forge/github/permissions.ts";
@@ -43,6 +43,7 @@ import {
   planGitLab,
   writeGitLabRoot,
   writeTargetsFile,
+  writeTemplatesFile,
 } from "./gitlab-write.ts";
 import { installHook } from "./hooks.ts";
 import { readPackageFile } from "./package-files.ts";
@@ -99,6 +100,52 @@ function explicitAnswers(options: InitOptions, ctx: DetectContext): Answers {
     answers[flag.decision] = v;
   }
   return answers;
+}
+
+/**
+ * `--decide target.<name>=custom` declares a custom target (released automatically) that
+ * detection didn't find, so a project init detects nothing in can be set up; its build steps go
+ * in the CI files by hand. For a custom target init did detect, `custom` means `auto`.
+ */
+function declareTargets(ctx: DetectContext, answers: Answers): Answers {
+  const out = { ...answers };
+  for (const [id, value] of Object.entries(answers)) {
+    const name = /^target\.(.+)$/.exec(id)?.[1];
+    if (name === undefined || value !== "custom") continue;
+    const found = ctx.detection.targets.find((t) => t.name === name);
+    if (found && found.type !== "custom") {
+      throw new LaunchsetError(
+        "invalid-decision",
+        `--decide ${id}=custom: ${name} is a detected ${found.type} target.`,
+        {
+          hint: `Answer auto, manual or none for it, or declare the custom target under another name.`,
+        },
+      );
+    }
+    if (!found) {
+      if (!TARGET_NAME.test(name)) {
+        throw new LaunchsetError(
+          "invalid-decision",
+          `--decide ${id}=custom: "${name}" isn't a valid target name.`,
+          {
+            hint: "Target names are lowercase letters, digits and dashes, starting with a letter or digit.",
+          },
+        );
+      }
+      ctx.detection.targets.push({
+        name,
+        type: "custom",
+        dir: ".",
+        files: [],
+        builtBy: [],
+        proposed: "auto",
+        reason: `declared with --decide ${id}=custom`,
+        declared: true,
+      });
+    }
+    out[id] = "auto";
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -210,7 +257,7 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
   if (options.convertOnly) return convertOnly(root, options, { log, warn, out, lines, warnings });
 
   const ctx = await detect(root, options.now ? { now: options.now } : {});
-  const explicit = explicitAnswers(options, ctx);
+  const explicit = declareTargets(ctx, explicitAnswers(options, ctx));
 
   if (options.detect) {
     const { decisions, answers } = await resolveDecisions(ctx, { explicit });
@@ -333,7 +380,9 @@ async function writeAll(
   const conversions = await planConversion(root, d.changesets);
   const host = answers.host ?? ctx.host.host;
   const gitlab: GitLabPlan | undefined =
-    host === "gitlab" ? planGitLab(ctx, resolved, plan) : undefined;
+    host === "gitlab"
+      ? planGitLab(ctx, resolved, plan, { moveTemplates: answers["gitlab.templates"] === "move" })
+      : undefined;
   const workflows = gitlab
     ? []
     : renderWorkflows({
@@ -348,7 +397,11 @@ async function writeAll(
       finding: m,
       action: (answers[m.item.id] ?? "keep") as "remove" | "disable" | "keep",
     }));
-  await applyRetirement(root, chosen, { write: false });
+  // Moving the templates the target jobs extend: removed from their files with the retirement.
+  const moves = gitlab?.templates
+    ? [{ finding: gitlab.templates.finding, action: "remove" as const }]
+    : [];
+  await applyRetirement(root, [...chosen, ...moves], { write: false });
   const overwrite = (path: string) => answers[`file.${path}`] !== "keep";
 
   for (const v of d.versions) {
@@ -468,7 +521,8 @@ async function writeAll(
   }
 
   // --- Retire conflicting machinery
-  const retired = await applyRetirement(root, chosen, { write: true });
+  const retired = await applyRetirement(root, [...chosen, ...moves], { write: true });
+  if (gitlab) changes.push(...(await writeTemplatesFile(root, gitlab, writeIo)));
   changes.push(...retired.changes);
   // .gitlab-ci.yml after retirement: its edits were computed on the original text.
   const gitlabRootSteps: string[] = [];
@@ -541,14 +595,20 @@ async function writeAll(
   const secret = gitlab ? "CI/CD variable" : "secret";
   const secrets = gitlab ? "CI/CD variables" : "secrets";
   if (gitlab) {
-    manualSteps.push(...gitlabManualSteps(resolved, buildTargets), ...gitlabRootSteps);
+    manualSteps.push(
+      ...gitlabManualSteps(resolved, buildTargets, gitlab.prefilled),
+      ...gitlabRootSteps,
+    );
     const ciFiles = new Set((ctx.gitlab?.files ?? []).map((f) => f.path));
     const retiredCi = [
       ...new Set(retiredPaths.filter((p) => ciFiles.has(p) || p.startsWith(".github/workflows/"))),
     ];
     if (retiredCi.length > 0) {
+      const copied = plan.targets.flatMap((t) => (t.gitlab ? [`"${t.gitlab.job}"`] : []));
       manualSteps.push(
-        `Move the build steps you still need from ${retiredCi.join(", ")} into .gitlab/launchset-targets.yml (the comments there name the jobs that built each image), then check what's left in those files.`,
+        copied.length > 0
+          ? `Check what's left in ${retiredCi.join(", ")}: init copied the steps of ${copied.join(", ")} into .gitlab/launchset-targets.yml; move any other build steps you still need there too.`
+          : `Move the build steps you still need from ${retiredCi.join(", ")} into .gitlab/launchset-targets.yml (the comments there name the jobs that built each image), then check what's left in those files.`,
       );
     }
   } else {

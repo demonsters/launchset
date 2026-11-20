@@ -356,6 +356,43 @@ export function effective(
   return undefined;
 }
 
+/** Like {@link effective}, with the job that sets the value (itself or a template). */
+export function effectiveFrom(
+  ci: GitLabCi,
+  job: GitLabJob,
+  key: string,
+  seen = new Set<GitLabJob>(),
+): { job: GitLabJob; value: unknown } | undefined {
+  if (seen.has(job)) return undefined;
+  seen.add(job);
+  if (job.data[key] !== undefined) return { job, value: job.data[key] };
+  for (const name of [...names(job.data.extends)].reverse()) {
+    const parent = ci.jobs.get(name);
+    const found = parent ? effectiveFrom(ci, parent, key, seen) : undefined;
+    if (found) return found;
+  }
+  return undefined;
+}
+
+/**
+ * The hidden jobs a job relies on: the templates it extends and the jobs its keys
+ * `!reference`, and theirs, in the order found (nearest first).
+ */
+export function templatesOf(ci: GitLabCi, job: GitLabJob): GitLabJob[] {
+  const out: GitLabJob[] = [];
+  const visit = (current: GitLabJob) => {
+    const used = [...names(current.data.extends), ...referencedJobs(current.data)];
+    for (const name of used) {
+      const template = ci.jobs.get(name);
+      if (!template?.hidden || out.includes(template)) continue;
+      out.push(template);
+      visit(template);
+    }
+  };
+  visit(job);
+  return out;
+}
+
 const TAG_CONDITION = /(?<![!])\$\{?CI_COMMIT_TAG\}?(?!\s*==\s*null)(?!\s*==\s*"")/;
 const BRANCH_CONDITION =
   /\$\{?(?:CI_COMMIT_BRANCH|CI_DEFAULT_BRANCH|CI_COMMIT_REF_NAME|CI_COMMIT_REF_SLUG|CI_COMMIT_REF_PROTECTED)\b|\$CI_PIPELINE_SOURCE\s*==\s*["']push["']/;
@@ -459,11 +496,17 @@ export function usersOf(ci: GitLabCi, job: GitLabJob): GitLabJob[] {
 
 /** Why `job` can't simply be deleted: jobs that extend, need or reference it. */
 export function referencesTo(ci: GitLabCi, job: GitLabJob): string[] {
-  const out: string[] = [];
+  return referencingJobs(ci, job).map((r) => r.why);
+}
+
+/** The jobs that extend, need, depend on or `!reference` `job`, each with why (one per way). */
+export function referencingJobs(ci: GitLabCi, job: GitLabJob): { job: string; why: string }[] {
+  const out: { job: string; why: string }[] = [];
   for (const file of ci.files) {
     for (const other of file.jobs) {
       if (other === job) continue;
-      if (names(other.data.extends).includes(job.name)) out.push(`job "${other.name}" extends it`);
+      const add = (why: string) => out.push({ job: other.name, why });
+      if (names(other.data.extends).includes(job.name)) add(`job "${other.name}" extends it`);
       const needs = Array.isArray(other.data.needs) ? other.data.needs : [];
       const needed = needs.some(
         (n) =>
@@ -474,12 +517,12 @@ export function referencesTo(ci: GitLabCi, job: GitLabJob): string[] {
             (n as Record<string, unknown>).pipeline === undefined &&
             (n as Record<string, unknown>).project === undefined),
       );
-      if (needed) out.push(`job "${other.name}" needs it`);
+      if (needed) add(`job "${other.name}" needs it`);
       if (names(other.data.dependencies).includes(job.name)) {
-        out.push(`job "${other.name}" depends on its artifacts`);
+        add(`job "${other.name}" depends on its artifacts`);
       }
       if (referencedJobs(other.data).has(job.name)) {
-        out.push(`job "${other.name}" uses !reference [${job.name}, …]`);
+        add(`job "${other.name}" uses !reference [${job.name}, …]`);
       }
     }
   }
@@ -692,4 +735,106 @@ export function hasWorkflowRules(ci: GitLabCi): boolean {
     const workflow = f.data.workflow;
     return Boolean(workflow && typeof workflow === "object" && "rules" in workflow);
   });
+}
+
+/** A `workflow: rules` entry that lets tag pipelines run. */
+export interface WorkflowTagRule {
+  path: string;
+  line: number;
+  /** The rule's `if`. */
+  condition: string;
+}
+
+/**
+ * The `workflow: rules` entries that start pipelines for tags: an `if` with `$CI_COMMIT_TAG`
+ * (not compared to null or ""), without `when: never`.
+ */
+export function workflowTagRules(ci: GitLabCi): WorkflowTagRule[] {
+  const out: WorkflowTagRule[] = [];
+  for (const file of ci.files) {
+    const workflow = pairOf(file.root, "workflow")?.value;
+    if (!isMap(workflow)) continue;
+    const rules = (workflow as YAMLMap).get("rules", true);
+    if (!isSeq(rules)) continue;
+    for (const item of (rules as YAMLSeq).items) {
+      if (!isMap(item)) continue;
+      const rule = item as YAMLMap;
+      const condition = rule.get("if");
+      if (typeof condition !== "string" || !TAG_CONDITION.test(condition)) continue;
+      if (rule.get("when") === "never") continue;
+      const range = (item as { range?: number[] }).range;
+      out.push({ path: file.path, line: lineOf(file.text, range?.[0] ?? 0), condition });
+    }
+  }
+  return out;
+}
+
+/** Visible jobs that run in every pipeline the workflow allows (no rules, only or except). */
+export function unruledJobs(ci: GitLabCi): GitLabJob[] {
+  return [...ci.jobs.values()].filter(
+    (job) =>
+      !job.hidden &&
+      effective(ci, job, "rules") === undefined &&
+      effective(ci, job, "only") === undefined &&
+      effective(ci, job, "except") === undefined &&
+      effective(ci, job, "trigger") === undefined,
+  );
+}
+
+/** The job's own tag rules, and what else would start it once they're gone. */
+export interface TagRuleEdit {
+  /** The sequence holding the rules (`rules:` or `only:`). */
+  seq: YAMLSeq;
+  /** The entries to remove: `- if: $CI_COMMIT_TAG` rules, or `tags` in `only`. */
+  items: Node[];
+  /** What still starts the job, e.g. `when: manual` or `if: $CI_COMMIT_BRANCH == "main"`. */
+  others: string[];
+  key: "rules" | "only";
+}
+
+const ONLY_TAG_RULE = /\|\|/;
+
+/**
+ * For a job that runs on tags and on something else: the tag entries of its own `rules` (an
+ * `if` that only matches tags: `$CI_COMMIT_TAG`, maybe with `&&`) or `only: [tags, …]`, which
+ * can go while the rest still starts it. Undefined when the tag trigger comes from a template
+ * (`extends`), a rule mixes tags with `||`, or nothing else would start the job.
+ */
+export function tagRuleEdit(job: GitLabJob): TagRuleEdit | undefined {
+  const rulesPair = pairOf(job.map, "rules");
+  if (rulesPair) {
+    const seq = rulesPair.value;
+    if (!isSeq(seq)) return undefined;
+    const items: Node[] = [];
+    const others: string[] = [];
+    for (const item of (seq as YAMLSeq).items) {
+      if (!isMap(item)) return undefined;
+      const rule = (item as YAMLMap).toJSON() as Record<string, unknown>;
+      const condition = typeof rule.if === "string" ? rule.if : undefined;
+      if (condition !== undefined && TAG_CONDITION.test(condition) && rule.when !== "never") {
+        if (ONLY_TAG_RULE.test(condition)) return undefined;
+        items.push(item as Node);
+        continue;
+      }
+      if (rule.when === "never") continue;
+      others.push(
+        condition !== undefined
+          ? `if: ${condition}${rule.when ? ` (when: ${String(rule.when)})` : ""}`
+          : `when: ${String(rule.when ?? "on_success")}`,
+      );
+    }
+    if (items.length === 0 || others.length === 0) return undefined;
+    return { seq: seq as YAMLSeq, items, others, key: "rules" };
+  }
+  const onlyPair = pairOf(job.map, "only");
+  if (onlyPair && isSeq(onlyPair.value)) {
+    const seq = onlyPair.value as YAMLSeq;
+    const items = seq.items.filter((i) => isScalar(i) && i.value === "tags") as Node[];
+    const others = seq.items
+      .filter((i) => !(isScalar(i) && i.value === "tags"))
+      .map((i) => (isScalar(i) ? String(i.value) : "…"));
+    if (items.length === 0 || others.length === 0) return undefined;
+    return { seq, items, others: others.map((o) => `only: ${o}`), key: "only" };
+  }
+  return undefined;
 }

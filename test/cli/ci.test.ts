@@ -200,6 +200,10 @@ describe("--ci files", () => {
     });
     expect(on.code).toBe(0);
     expect(read(f.dir, "launchset.env")).toContain("LAUNCHSET_VERSION=1.4.0\n");
+    // GITLAB_CI makes the host GitLab: the local bare remote takes no push options (ci.skip).
+    expect(on.stderr).toContain(
+      "The remote doesn't take push options, so launchset/docker-api@1.4.0 was pushed without ci.skip",
+    );
   });
 
   it("prints the summary after the lines, or on stderr with --json", async () => {

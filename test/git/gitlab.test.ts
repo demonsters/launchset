@@ -155,13 +155,16 @@ describe("commit identity", () => {
 });
 
 describe("push options", () => {
-  it("pushTag sends them (git push -o), and fails where the remote doesn't take them", async () => {
+  it("pushTag sends them (git push -o), and retries without where the remote doesn't take them", async () => {
     const { remote, repo } = repoWithRemote();
     const git = new Git({ cwd: repo.dir });
     await git.createTag("plain", repo.head());
-    await expect(git.pushTag("plain", { pushOptions: ["ci.skip"] })).rejects.toThrow(
-      /push options/,
-    );
+    // A remote without push options: pushed without them, and the caller hears about it.
+    let unsupported = 0;
+    expect(
+      await git.pushTag("plain", { pushOptions: ["ci.skip"], onUnsupported: () => unsupported++ }),
+    ).toBe("created");
+    expect(unsupported).toBe(1);
     // Like GitLab: the remote advertises push options; a hook records them.
     sh(remote, "config", "receive.advertisePushOptions", "true");
     const log = join(remote, "options.log");

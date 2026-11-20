@@ -75,6 +75,11 @@ export interface GitLabTemplateInput {
    * images there log in with the job's `CI_REGISTRY_*` credentials.
    */
   gitlabRegistries?: string[];
+  /**
+   * Ready `.launchset-<target>` jobs by target (with their `# ---` heading), used instead of the
+   * target type's template: init copies them from the existing GitLab job a target came from.
+   */
+  prefill?: Record<string, string>;
 }
 
 const template = (name: string) => readTemplateFile("gitlab", name);
@@ -351,7 +356,7 @@ export function renderGitLabTargetJobs(input: GitLabTemplateInput): Record<strin
   const registries = new Set(input.gitlabRegistries ?? [GITLAB_COM_REGISTRY]);
   const out: Record<string, string> = {};
   for (const t of Object.values(input.config.targets)) {
-    out[t.name] = targetJob(t, input, registries);
+    out[t.name] = input.prefill?.[t.name] ?? targetJob(t, input, registries);
   }
   return out;
 }

@@ -41,7 +41,10 @@ import {
   type GitLabDockerBuild,
   gitlabDockerBuilds,
   readGitLabCi,
+  unruledJobs,
+  workflowTagRules,
 } from "./gitlab-scan.ts";
+import { dockerTargetJobs, gitlabJobTargets } from "./gitlab-targets.ts";
 import { detectHooks } from "./hooks.ts";
 import {
   detectMachinery,
@@ -658,6 +661,7 @@ export async function detect(
       message: n.message,
     });
   }
+  if (gitlab) notes.push(...tagPipelineNotes(gitlab));
   const host = guessHost({
     env: options.env ?? process.env,
     ...(remoteUrl !== undefined ? { remoteUrl } : {}),
@@ -683,6 +687,17 @@ export async function detect(
   const searchDirs = [...new Set([".", ...workspaces])];
   const native = await detectNativeTargets(root, searchDirs, workflows, gitlab, used, notes);
   targets.push(...native.targets);
+  if (gitlab) {
+    const dockerfiles = new Set(
+      targets.flatMap((t) => (t.docker && t.proposed !== "none" ? [t.docker.dockerfile] : [])),
+    );
+    targets.push(
+      ...gitlabJobTargets(gitlab, {
+        skipJobs: dockerTargetJobs(gitlab, gitlabBuilds, dockerfiles),
+        name: (base) => uniqueName(slug(base), used),
+      }),
+    );
+  }
   if (pkg) targets.push(webTarget(targets, used));
 
   const versions = await collectVersions(root, packageJson, targets, tags);
@@ -735,6 +750,26 @@ export async function detect(
     packageJsonText: pkg?.text ?? null,
     tagNames,
   };
+}
+
+/**
+ * A note per `workflow: rules` entry that starts tag pipelines: which of launchset's tags would
+ * start one, and what to change. init never edits `workflow:` (it decides every pipeline).
+ */
+export function tagPipelineNotes(ci: GitLabCi): Note[] {
+  const jobs = unruledJobs(ci).map((j) => j.name);
+  const shown = jobs.length > 6 ? [...jobs.slice(0, 5), `${jobs.length - 5} more`] : jobs;
+  const everyJob =
+    jobs.length > 0
+      ? `every job without rules (${shown.join(", ")})`
+      : "every job whose rules allow tags";
+  return workflowTagRules(ci).map((rule) => ({
+    level: "info",
+    manual: true,
+    path: rule.path,
+    line: rule.line,
+    message: `workflow: rules start a pipeline for every tag push (- if: ${rule.condition}), which runs ${everyJob}. On GitLab launchset pushes all its tags (the markers launchset/<target>@<version>, partial tags, v<version> and prerelease tags) with git push -o ci.skip, so they start none (gitlab.tagPipelines: true in launchset.config lets the release and prerelease tags start one). Other tag pushes still do, e.g. init's baseline tag if you push it. If the rule was only there for the release jobs launchset replaces, remove it; init doesn't edit workflow:.`,
+  }));
 }
 
 /** The repo: HEAD, branch, GitHub repository and tag names. */

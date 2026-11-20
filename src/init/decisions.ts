@@ -8,7 +8,9 @@
  * | `host`                     | `github` `gitlab` (only shown when something points at GitLab) | the origin remote's host, else the CI files found |
  * | `version`                  | a plain X.Y.Z                  | the highest version found (never lower by default)  |
  * | `tags.release`             | a template with `{version}`    | `v{version}`                                        |
- * | `target.<name>`            | `auto` `manual` `none`         | auto when a workflow builds it; manual for native projects no workflow builds |
+ * | `target.<name>`            | `auto` `manual` `none` (`custom` declares a target nothing detected) | auto when a workflow builds it; manual for native projects no workflow builds; auto for a GitLab tag job that builds or publishes (a custom target) |
+ * | `gitlab.<name>.shell`      | `sh` `powershell`              | powershell when the GitLab job's scripts or runner tags say so (custom targets from GitLab jobs) |
+ * | `gitlab.templates`         | `move` `keep`                  | move: the hidden templates the target jobs extend go to .gitlab/ci-templates.yml, which .gitlab-ci.yml and the child pipeline include |
  * | `docker.<name>.image`      | an image name                  | read from the existing workflow; else a guess (ask) |
  * | `docker.<name>.tags`       | `default` or a comma list      | the tags the existing workflow pushes (`v{version}` keeps the v) |
  * | `docker.<name>.verify`     | `yes` `no`                     | yes: `verify: ["registry"]`, so a re-run skips an image that's already pushed |
@@ -27,7 +29,9 @@ import { LaunchsetError } from "../core/errors.ts";
 import { renderTag } from "../core/tags.ts";
 import type { DetectContext } from "./detect.ts";
 import { evidenceOf } from "./detect.ts";
-import type { Decision, DecisionOption, DetectedTarget, Evidence } from "./types.ts";
+import { GITLAB_CI_FILE } from "./gitlab-scan.ts";
+import { planTemplates, TEMPLATES_FILE } from "./gitlab-targets.ts";
+import type { Decision, DecisionOption, DetectedTarget, Evidence, MachineryItem } from "./types.ts";
 
 export type Answers = Record<string, string>;
 
@@ -265,7 +269,11 @@ export function decisionSpecs(ctx: DetectContext, explicit: Answers = {}): Spec[
             ? `the Docker image from ${t.docker?.dockerfile}`
             : t.type === "web"
               ? "a web target (your own build steps, nothing stamped)"
-              : `the ${t.type === "ios" ? "iOS" : "Android"} app in ${t.dir === "." ? "the repo root" : t.dir} (${String(t.source?.kind)})`;
+              : t.type === "custom"
+                ? t.gitlab
+                  ? `the custom target ${t.name} (the steps of GitLab job "${t.gitlab.job}")`
+                  : `the custom target ${t.name} (declared with --decide)`
+                : `the ${t.type === "ios" ? "iOS" : "Android"} app in ${t.dir === "." ? "the repo root" : t.dir} (${String(t.source?.kind)})`;
         return {
           id: `target.${t.name}`,
           question: `How is ${what} released?`,
@@ -283,6 +291,74 @@ export function decisionSpecs(ctx: DetectContext, explicit: Answers = {}): Spec[
             ((t.type === "android" || t.type === "ios") && t.proposed === "manual"),
         };
       },
+      validate: oneOf,
+    });
+  }
+
+  // GitLab jobs turned into custom targets: the runner's shell, and their templates.
+  const onGitLab = hostShown ? { onlyIf: { id: "host", values: ["gitlab"] } } : {};
+  const jobTargets = d.targets.filter((t) => t.gitlab !== undefined);
+  for (const t of jobTargets) {
+    const job = t.gitlab as NonNullable<DetectedTarget["gitlab"]>;
+    specs.push({
+      id: `gitlab.${t.name}.shell`,
+      build: () => ({
+        id: `gitlab.${t.name}.shell`,
+        question: `Which shell does the runner of ${t.name} use (gitlab.shell)? launchset writes its own lines of the build job in it.`,
+        options: [
+          { value: "sh", label: "sh: POSIX sh or bash (Linux, macOS, Docker runners)" },
+          {
+            value: "powershell",
+            label: "powershell: Windows PowerShell 5.1 or PowerShell 7 (Windows runners)",
+          },
+        ],
+        default: job.shell,
+        evidence:
+          job.shellEvidence.length > 0
+            ? job.shellEvidence
+            : [{ path: job.path, line: job.line, note: `no PowerShell in job "${job.job}"` }],
+        ask: false,
+        onlyIf: { id: `target.${t.name}`, values: ["auto", "manual"] },
+      }),
+      validate: oneOf,
+    });
+  }
+  const templates = ctx.gitlab ? planTemplates(ctx.gitlab, jobTargets) : undefined;
+  if (templates && templates.move.length + templates.blocked.length > 0) {
+    const names = templates.move.map((m) => m.job.name);
+    const users = (name: string) =>
+      jobTargets.filter((t) => t.gitlab?.templates.some((x) => x.name === name)).map((t) => t.name);
+    specs.push({
+      id: "gitlab.templates",
+      build: () => ({
+        id: "gitlab.templates",
+        question: `The jobs of ${jobTargets.map((t) => t.name).join(", ")} extend templates in ${[...new Set(templates.move.map((m) => m.file.path))].join(", ") || GITLAB_CI_FILE}, which launchset's child pipeline can't include (it would run every job there). Move ${names.join(", ") || "them"} to ${TEMPLATES_FILE}, which both .gitlab-ci.yml and the child pipeline include?`,
+        options: [
+          ...(names.length > 0
+            ? [
+                {
+                  value: "move",
+                  label: `move: ${names.join(", ")} move to ${TEMPLATES_FILE} as written; .gitlab-ci.yml includes it, and so does the child pipeline (gitlab.include)`,
+                },
+              ]
+            : []),
+          {
+            value: "keep",
+            label: `keep: leave them where they are; the target jobs can't extend them in the child pipeline until you move them${templates.blocked.length > 0 ? ` (${templates.blocked.map((b) => `${b.name}: ${b.why}`).join("; ")})` : ""}`,
+          },
+        ],
+        default: names.length > 0 ? "move" : "keep",
+        evidence: [
+          ...templates.move.map((m) => ({
+            path: m.file.path,
+            line: m.job.line,
+            note: `${users(m.job.name).join(", ")} ${users(m.job.name).length === 1 ? "extends" : "extend"} ${m.job.name}`,
+          })),
+          ...templates.blocked.map((b) => ({ path: GITLAB_CI_FILE, note: `${b.name}: ${b.why}` })),
+        ],
+        ask: names.length === 0,
+        ...onGitLab,
+      }),
       validate: oneOf,
     });
   }
@@ -392,20 +468,34 @@ export function decisionSpecs(ctx: DetectContext, explicit: Answers = {}): Spec[
     });
   }
 
-  // Machinery
-  for (const m of ctx.machinery) {
-    const item = m.item;
+  // Machinery. An item that `requires` others (their jobs need its job) comes after them: its
+  // disable is only offered when they go too.
+  const items = machineryInOrder(ctx.machinery.map((m) => m.item));
+  for (const item of items) {
     if (item.actions.length < 2) continue;
     specs.push({
       id: item.id,
-      build() {
-        const def = item.actions.includes("disable") ? "disable" : "keep";
+      build(answers) {
+        const kept = (item.requires ?? []).filter(
+          (id) =>
+            answers[id] !== undefined && answers[id] !== "disable" && answers[id] !== "remove",
+        );
+        const actions =
+          kept.length > 0 ? item.actions.filter((a) => a !== "disable") : item.actions;
+        const def = actions.includes("disable") ? "disable" : "keep";
+        const keepNote =
+          kept.length > 0
+            ? ` (no disable: ${kept.join(", ")} ${kept.length === 1 ? "is" : "are"} kept, and ${kept.length === 1 ? "its job needs" : "their jobs need"} this one)`
+            : "";
         return {
           id: item.id,
           question: `${item.what} (${item.path}:${item.line}) conflicts with launchset: it ${item.reasons.join("; it ")}. What should init do?`,
-          options: item.actions.map((a) => ({
+          options: actions.map((a) => ({
             value: a,
-            label: `${a}: ${item.effects[a] ?? ""}`.replace(/: $/, ""),
+            label: `${a}: ${item.effects[a] ?? ""}${a === "keep" ? keepNote : ""}`.replace(
+              /: $/,
+              "",
+            ),
           })),
           default: def,
           evidence: item.evidence,
@@ -605,6 +695,24 @@ export function decisionSpecs(ctx: DetectContext, explicit: Answers = {}): Spec[
     });
   }
   return specs;
+}
+
+/** Machinery items in detection order, except that each comes after the items it requires. */
+function machineryInOrder(items: readonly MachineryItem[]): MachineryItem[] {
+  const out: MachineryItem[] = [];
+  const placed = new Set<string>();
+  const place = (item: MachineryItem, path: Set<string>) => {
+    if (placed.has(item.id) || path.has(item.id)) return;
+    path.add(item.id);
+    for (const id of item.requires ?? []) {
+      const required = items.find((i) => i.id === id);
+      if (required) place(required, path);
+    }
+    placed.add(item.id);
+    out.push(item);
+  };
+  for (const item of items) place(item, new Set());
+  return out;
 }
 
 export interface ResolveOptions {

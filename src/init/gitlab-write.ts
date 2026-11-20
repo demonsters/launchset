@@ -10,10 +10,10 @@
  */
 
 import type { ResolvedConfig } from "../core/config/schema.ts";
+import { escapeRegExp } from "../core/regex.ts";
 import {
   GITLAB_COM_REGISTRY,
   GITLAB_FILES,
-  GITLAB_INCLUDE_SNIPPET,
   renderGitLabCi,
   renderGitLabTargetJobs,
 } from "../templates/gitlab.ts";
@@ -30,6 +30,15 @@ import {
   workflowBlock,
 } from "./gitlab-edit.ts";
 import { gitlabStages, hasWorkflowRules } from "./gitlab-scan.ts";
+import {
+  jobBlock,
+  planTemplates,
+  prefillTargetJob,
+  TEMPLATES_FILE,
+  TEMPLATES_HEADER,
+  templatesText,
+} from "./gitlab-targets.ts";
+import type { MachineryFinding } from "./machinery.ts";
 import type { Change } from "./types.ts";
 
 export interface GitLabPlan {
@@ -49,6 +58,17 @@ export interface GitLabPlan {
   workflowRules: boolean;
   /** Notes about the existing `workflow:` (MR pipelines, auto_cancel). */
   workflowNotes: string[];
+  /** Targets whose job init copied from an existing GitLab job. */
+  prefilled: string[];
+  /** The templates init moves to `.gitlab/ci-templates.yml` (`gitlab.templates=move`). */
+  templates?: {
+    path: string;
+    /** The file's new content (or the blocks to append to an existing one). */
+    content: string;
+    blocks: { name: string; text: string }[];
+    /** The removals from their files, run with the retirement edits. */
+    finding: MachineryFinding;
+  };
 }
 
 /** Comments above a target's job: the existing jobs that built its Dockerfile. */
@@ -96,10 +116,54 @@ function gitlabRegistries(ctx: DetectContext, config: ResolvedConfig): string[] 
 }
 
 /** Everything init writes on GitLab, rendered (throws before anything is written). */
+/** The move of the templates the target jobs extend, as a removal finding plus the new file. */
+function templateMove(ctx: DetectContext, plan: ConfigPlan): GitLabPlan["templates"] {
+  if (!ctx.gitlab) return undefined;
+  const moved = planTemplates(
+    ctx.gitlab,
+    plan.targets.filter((t) => t.gitlab),
+  ).move;
+  if (moved.length === 0) return undefined;
+  const names = moved.map((m) => m.job.name);
+  const first = moved[0] as (typeof moved)[number];
+  const finding: MachineryFinding = {
+    item: {
+      id: "gitlab.templates",
+      kinds: [],
+      path: first.file.path,
+      line: first.job.line,
+      what: `the template${names.length === 1 ? "" : "s"} ${names.join(", ")}`,
+      reasons: [],
+      actions: ["remove", "keep"],
+      effects: { remove: `moved to ${TEMPLATES_FILE}` },
+      evidence: [],
+    },
+    edits: {
+      remove: moved.map(({ job, file }) => ({
+        kind: "gitlab" as const,
+        path: file.path,
+        text: file.text,
+        op: { op: "remove-job" as const, job },
+      })),
+    },
+  };
+  const body = templatesText({ move: moved, include: [], blocked: [] });
+  return {
+    path: TEMPLATES_FILE,
+    content: `${TEMPLATES_HEADER}\n\n${body}\n`,
+    blocks: moved.map(({ job, file }) => ({
+      name: job.name,
+      text: jobBlock(file.text, job.pair).text.replace(/\r\n/g, "\n").replace(/\n+$/, ""),
+    })),
+    finding,
+  };
+}
+
 export function planGitLab(
   ctx: DetectContext,
   resolved: ResolvedConfig,
   plan: ConfigPlan,
+  options: { moveTemplates?: boolean } = {},
 ): GitLabPlan {
   const ci = ctx.gitlab;
   const stages = ci ? gitlabStages(ci) : undefined;
@@ -112,11 +176,17 @@ export function planGitLab(
         : `in stage ${picked}, the last of stages: in ${stages.path}, which has no test`;
   }
   const registries = gitlabRegistries(ctx, resolved);
+  const prefill: Record<string, string> = {};
+  for (const t of plan.targets) {
+    const job = ci && t.gitlab ? prefillTargetJob(ci, t) : undefined;
+    if (job !== undefined) prefill[t.name] = job;
+  }
   const input = {
     config: resolved,
     stage: stage.name,
     hints: plan.hints,
     gitlabRegistries: registries,
+    prefill,
   };
   const comments = prefillComments(ctx, plan);
   const [jobs, targets, root] = renderGitLabCi(input);
@@ -143,7 +213,10 @@ export function planGitLab(
       );
     }
   }
+  const templates = options.moveTemplates ? templateMove(ctx, plan) : undefined;
   return {
+    ...(templates ? { templates } : {}),
+    prefilled: Object.keys(prefill),
     jobs: {
       path: jobs.path,
       content: jobs.content,
@@ -206,6 +279,33 @@ export async function writeTargetsFile(
   return { changes: c ? [c] : [], manualSteps: [] };
 }
 
+/** `.gitlab/ci-templates.yml`: written when missing, else the moved templates it lacks appended. */
+export async function writeTemplatesFile(
+  root: string,
+  gitlab: GitLabPlan,
+  io: WriteIo,
+): Promise<Change[]> {
+  const templates = gitlab.templates;
+  if (!templates) return [];
+  const current = await readTextOrNull(absolute(root, templates.path));
+  const names = templates.blocks.map((b) => b.name).join(", ");
+  if (current === null) {
+    const c = await io.writeText(
+      templates.path,
+      templates.content,
+      `${names}, moved from ${templates.finding.item.path}: templates .gitlab-ci.yml and the child pipeline both include`,
+    );
+    return c ? [c] : [];
+  }
+  let text = current;
+  for (const block of templates.blocks) {
+    if (new RegExp(`^${escapeRegExp(block.name)}:`, "m").test(text)) continue;
+    text = appendBlock(text, `\n${block.text}`);
+  }
+  const c = await io.writeText(templates.path, text, `added ${names}`);
+  return c ? [c] : [];
+}
+
 function indent(block: string, by: string): string {
   return block
     .split("\n")
@@ -244,29 +344,55 @@ export async function writeGitLabRoot(
     return { change, manualSteps: [] };
   }
   const manualSteps: string[] = [];
-  const edit = addLocalInclude(current, GITLAB_FILES.jobs);
-  let change: Change | null = null;
-  if ("error" in edit) {
-    io.warn(`can't add the include to ${path}: ${edit.error}.`);
-    manualSteps.push(
-      `Add launchset's jobs to ${path} by hand (init couldn't: ${edit.error}):\n\n${indent(GITLAB_INCLUDE_SNIPPET.trimEnd(), "       ")}`,
-    );
-  } else if (edit.changed) {
-    change = await io.writeText(path, edit.text, edit.summary);
+  let text = current;
+  const summaries: string[] = [];
+  const locals = [...(gitlab.templates ? [gitlab.templates.path] : []), GITLAB_FILES.jobs];
+  for (const local of locals) {
+    const edit = addLocalInclude(text, local);
+    if ("error" in edit) {
+      io.warn(`can't add the include of ${local} to ${path}: ${edit.error}.`);
+      manualSteps.push(
+        `Add ${local} to the include: of ${path} by hand (init couldn't: ${edit.error}):\n\n${indent(`include:\n  - local: ${local}`, "       ")}`,
+      );
+    } else if (edit.changed) {
+      text = edit.text;
+      summaries.push(edit.summary);
+    }
   }
+  let change: Change | null = null;
+  if (text !== current) change = await io.writeText(path, text, summaries.join("; "));
   if (!gitlab.workflowRules) manualSteps.push(workflowStep(gitlab));
   manualSteps.push(...gitlab.workflowNotes);
   return { change, manualSteps };
 }
 
 /** The GitLab counterpart of the GitHub App steps. */
-export function gitlabManualSteps(config: ResolvedConfig, targets: readonly string[]): string[] {
+export function gitlabManualSteps(
+  config: ResolvedConfig,
+  targets: readonly string[],
+  prefilled: readonly string[] = [],
+): string[] {
+  const rest = targets.filter((t) => !prefilled.includes(t));
+  const steps: string[] = [];
+  if (prefilled.length > 0) {
+    steps.push(
+      `Check the build steps init copied from your jobs into ${GITLAB_FILES.targets} for ${prefilled.join(", ")}: they now run in launchset's child pipeline for the release commit (not a tag pipeline). Add "files" to those targets in launchset.config for the files that hold the version, so stamp writes it in CI.`,
+    );
+  }
+  if (rest.length > 0) {
+    steps.push(
+      `Add your build and upload steps for ${rest.join(", ")} to ${GITLAB_FILES.targets}.`,
+    );
+  }
+  return [...gitlabBaseSteps(config), ...steps];
+}
+
+function gitlabBaseSteps(config: ResolvedConfig): string[] {
   return [
     "Create the CI/CD variable LAUNCHSET_TOKEN: a project access token (Settings > Access tokens) with the role Maintainer and the scopes api and write_repository, added under Settings > CI/CD > Variables as Masked. Don't make it Protected: protected variables don't reach merge request pipelines, so the check couldn't post its note. (Pushes made with CI_JOB_TOKEN never start pipelines, so launchset needs its own token.)",
     "Add the CI/CD variable NPM_TOKEN (Masked): an npm token that can read the private @demonsters/launchset package, which every launchset job installs.",
     `Let the token's bot user push to the protected branches ${config.baseBranch} and ${config.maintenanceBranches} and create the release tags (Settings > Repository > Protected branches and Protected tags). With GitLab's default rules (Maintainers may push and create tags) the Maintainer role is enough.`,
     'For manual runs (manual targets, previews of any branch, release retries with variables), allow pipeline variables: Settings > CI/CD > Variables, "Minimum role to use pipeline variables" (new projects on GitLab.com start at no_one_allowed).',
-    `Add your build and upload steps for ${targets.join(", ")} to ${GITLAB_FILES.targets}.`,
   ];
 }
 

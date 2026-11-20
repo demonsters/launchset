@@ -392,6 +392,8 @@ export interface PushTagOptions {
    * for remotes that accept push options: git fails the push when the server doesn't.
    */
   pushOptions?: readonly string[];
+  /** Called when the remote doesn't take push options: the push is then retried without. */
+  onUnsupported?: () => void;
 }
 
 function pushOptionArgs(options: readonly string[] | undefined): string[] {
@@ -1004,11 +1006,28 @@ export class Git {
   async pushTag(name: string, options: PushTagOptions = {}): Promise<PushResult> {
     assertRefName("tag", name);
     const ref = `refs/tags/${name}`;
-    const args = ["push", "--porcelain", ...pushOptionArgs(options.pushOptions)];
-    args.push(this.remote, `${ref}:${ref}`);
-    // Hooks are off anyway (NO_HOOKS). This also tells git-lfs there's nothing to upload,
-    // should its hook run: launchset's tags point at commits that are already on the remote.
-    const result = await this.exec(args, { auth: true, env: { GIT_LFS_SKIP_PUSH: "1" } });
+    const push = async (withOptions: boolean) => {
+      const args = ["push", "--porcelain"];
+      if (withOptions) args.push(...pushOptionArgs(options.pushOptions));
+      args.push(this.remote, `${ref}:${ref}`);
+      // Hooks are off anyway (NO_HOOKS). This also tells git-lfs there's nothing to upload,
+      // should its hook run: launchset's tags point at commits that are already on the remote.
+      return {
+        args,
+        result: await this.exec(args, { auth: true, env: { GIT_LFS_SKIP_PUSH: "1" } }),
+      };
+    };
+    let { args, result } = await push(true);
+    if (
+      result.code !== 0 &&
+      (options.pushOptions?.length ?? 0) > 0 &&
+      /does not support push options/i.test(result.stderr)
+    ) {
+      // A remote without push options (not GitLab: a mirror, a plain git server): the tag
+      // matters more than the option.
+      options.onUnsupported?.();
+      ({ args, result } = await push(false));
+    }
     const status = this.#pushStatus(result.stdout, ref);
     if (result.code === 0) return status ?? "created";
 

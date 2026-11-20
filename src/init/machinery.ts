@@ -14,7 +14,7 @@
  *   evidence here and as manual steps after writing; they don't block `disable`.
  */
 
-import { isMap, isScalar, isSeq, type Pair, type YAMLMap } from "yaml";
+import { isMap, isScalar, isSeq, type Node, type Pair, type YAMLMap, type YAMLSeq } from "yaml";
 import { escapeRegExp } from "../core/regex.ts";
 import { lineOf } from "../core/text.ts";
 import { joinRel, linesOf, normalizeRel } from "./fs.ts";
@@ -30,7 +30,9 @@ import {
   gitlabCiOf,
   gitlabDockerBuilds,
   referencesTo,
+  referencingJobs,
   runsOnTags,
+  tagRuleEdit,
   usersOf,
 } from "./gitlab-scan.ts";
 import { latestFlagRange } from "./text-edit.ts";
@@ -88,7 +90,9 @@ export type GitLabOp =
   /** A `-t <image>:latest` flag of a build that has other tags. */
   | { op: "remove-flag"; item: GitLabScriptItem; entry: string }
   /** The include entry of a deleted file. */
-  | { op: "remove-include"; include: GitLabInclude };
+  | { op: "remove-include"; include: GitLabInclude }
+  /** Entries of a sequence, e.g. a job's tag rules (`- if: $CI_COMMIT_TAG`) or `tags` in `only`. */
+  | { op: "remove-seq-items"; seq: YAMLSeq; items: Node[] };
 
 export type Edit =
   | { kind: "delete-file"; path: string }
@@ -154,6 +158,21 @@ const RELEASE_TOOL_COMMAND =
   /\b(?:semantic-release|release-it|standard-version|release-please|commit-and-tag-version)\b/;
 const VERSION_KEYS =
   /\b(MARKETING_VERSION|CURRENT_PROJECT_VERSION|versionCode|versionName|CFBundleVersion|CFBundleShortVersionString)\b/;
+/**
+ * Places that only read a version key: a subscript that isn't assigned to
+ * (`plistlib.load(f)["CFBundleShortVersionString"]`), `.get("versionName")`, PlistBuddy's
+ * `Print`. A line whose version keys are all read like this doesn't count as a writer.
+ */
+const VERSION_KEY_READS = new RegExp(
+  String.raw`\[\s*["']${VERSION_KEYS.source}["']\s*\](?!\s*(?:=(?!=)|\+=|\|=))|\.(?:get|getProperty|objectForKey)\(\s*["']${VERSION_KEYS.source}["']|\bPrint\s*:?\s*${VERSION_KEYS.source}`,
+  "g",
+);
+
+/** A line that names a version key other than to read it. */
+function writesVersionKey(line: string): boolean {
+  return VERSION_KEYS.test(line.replace(VERSION_KEY_READS, ""));
+}
+
 const VERSION_WRITE_COMMANDS = [
   /\bagvtool\s+(?:new-version|new-marketing-version|next-version|bump)\b/,
   /PlistBuddy[^\n]*Set\s*:?\s*(?:CFBundleVersion|CFBundleShortVersionString)/,
@@ -168,7 +187,7 @@ const FASTLANE_WRITERS =
   /^\s*(?:increment_build_number|increment_version_number|increment_version_code|android_set_version_code|android_set_version_name|increment_version_name)\b|set_info_plist_value[^\n]*CFBundle(?:Short)?Version/;
 const DOC_LINES = /\bnpm\s+version\b|\bgit\s+tag\b|\bchangesets?\b/i;
 /** Steps that publish or deploy something (for unfiltered `push` workflows). */
-const PUBLISH_COMMAND =
+export const PUBLISH_COMMAND =
   /\b(?:npm|pnpm|yarn)\s+publish\b|\bgh\s+release\b|\bdocker\s+(?:buildx\s+build[^\n]*--push|push)\b|\bkubectl\s+(?:apply|set\s+image|rollout)\b|\bhelm\s+(?:upgrade|install)\b|\b(?:vercel|netlify|flyctl|fly|wrangler|firebase|eas)\s+(?:deploy|publish|submit)\b|\baws\s+s3\s+(?:sync|cp)\b|\bfastlane\b|\btwine\s+upload\b|\bcargo\s+publish\b/;
 const PUBLISH_ACTION =
   /deploy|gh-pages|action-gh-release|create-release|release-action|publish|upload-google-play|upload-testflight|vercel|netlify|wrangler|firebase|ssh-action/i;
@@ -240,7 +259,9 @@ export function scriptFileKinds(text: string): { kinds: MachineryKind[]; line: n
   note("release-tool", first(RELEASE_TOOL_COMMAND));
   const tagLines = TAG_COMMANDS.map((t) => first(t)).filter((n) => n > 0);
   note("tag-creation", tagLines.length > 0 ? Math.min(...tagLines) : 0);
-  if (FILE_WRITE.test(text)) note("version-writer", first(VERSION_KEYS));
+  if (FILE_WRITE.test(text)) {
+    note("version-writer", lines.find((l) => writesVersionKey(l.text))?.number ?? 0);
+  }
   note("changesets-write", first(/@changesets\/write/));
   return { kinds, line };
 }
@@ -285,6 +306,10 @@ interface Draft {
   why?: string;
   /** Overrides the default reasons of the kinds. */
   reasons?: string[];
+  /** The GitLab job (for {@link MachineryItem.requires}). */
+  gitlabJob?: string;
+  /** GitLab jobs whose disable must come with this one's (they need this job). */
+  requires?: string[];
 }
 
 function addKind(draft: Draft, kind: MachineryKind) {
@@ -763,6 +788,7 @@ function gitlabJobDraft(
   file: GitLabFile,
   job: GitLabJob,
   build: GitLabDockerBuild | undefined,
+  gone: ReadonlySet<string> = new Set(),
 ): GitLabJobDraft | undefined {
   const kinds: MachineryKind[] = [];
   const evidence: Evidence[] = [];
@@ -812,9 +838,12 @@ function gitlabJobDraft(
   }
   if (kinds.length === 0) return undefined;
 
-  const refs = referencesTo(ci, job);
+  // References from jobs this run removes too (by default) don't block removing this one.
+  const referencing = referencingJobs(ci, job);
+  const refs = referencing.filter((r) => !gone.has(r.job)).map((r) => r.why);
+  const waived = [...new Set(referencing.filter((r) => gone.has(r.job)).map((r) => r.job))];
   const removable = !job.hidden && !job.anchored && refs.length === 0;
-  for (const r of refs) evidence.push({ path: file.path, line: job.line, note: r });
+  for (const r of referencing) evidence.push({ path: file.path, line: job.line, note: r.why });
   const label = job.hidden ? `GitLab template "${job.name}"` : `GitLab job "${job.name}"`;
   const draft: Draft = {
     kinds,
@@ -825,6 +854,7 @@ function gitlabJobDraft(
     effects: { keep: "leaves it as is" },
     evidence,
     reasons: kinds.map((k) => GITLAB_REASON[k] ?? REASON[k]),
+    gitlabJob: job.name,
   };
   const result: GitLabJobDraft = { job, draft, removesJob: false };
   const noDisable = (why: string) => {
@@ -834,11 +864,30 @@ function gitlabJobDraft(
   const removeJob = () => {
     draft.disable = [gitlabEdit(file, { op: "remove-job", job })];
     draft.effects.disable = `removes the job "${job.name}"`;
+    if (waived.length > 0) {
+      draft.requires = waived;
+      draft.effects.disable += ` (together with ${waived.map((w) => `job "${w}"`).join(" and ")}, which ${waived.length === 1 ? "needs" : "need"} it: only when ${waived.length === 1 ? "that one is" : "those are"} disabled too)`;
+    }
     result.removesJob = true;
     return result;
   };
   const blocker = refs[0] ?? (job.anchored ? "it has a YAML anchor others may use" : undefined);
   if (tagged) {
+    // Other rules start it too (a manual trial build, branch pushes): only the tag rules go.
+    const edit = tagRuleEdit(job);
+    if (edit) {
+      const entries = edit.items.map((item) => {
+        const value = (item as { toJSON(): unknown }).toJSON();
+        return edit.key === "only"
+          ? "tags"
+          : `- if: ${String((value as Record<string, unknown>).if)}`;
+      });
+      draft.disable = [
+        gitlabEdit(file, { op: "remove-seq-items", seq: edit.seq, items: edit.items }),
+      ];
+      draft.effects.disable = `removes its tag ${edit.items.length === 1 ? "rule" : "rules"} (${entries.join(", ")}${edit.key === "only" ? " in only:" : ""}) from job "${job.name}"; it keeps its other ${edit.others.length === 1 ? "rule" : "rules"} (${edit.others.join("; ")})`;
+      return result;
+    }
     if (removable) return removeJob();
     return noDisable(
       `${blocker ?? "it is a template"}, so it can't simply be removed; edit it by hand`,
@@ -945,20 +994,39 @@ function gitlabJobDraft(
 }
 
 function gitlabDrafts(ci: GitLabCi, builds: readonly GitLabDockerBuild[]): Draft[] {
-  const byFile = new Map<GitLabFile, GitLabJobDraft[]>();
-  for (const file of ci.files) {
-    const list: GitLabJobDraft[] = [];
-    for (const job of file.jobs) {
-      if (ci.jobs.get(job.name) !== job || usersOf(ci, job).length === 0) continue;
-      const d = gitlabJobDraft(
-        ci,
-        file,
-        job,
-        builds.find((b) => b.job === job),
-      );
-      if (d) list.push(d);
+  const draftAll = (gone: ReadonlySet<string>) => {
+    const byFile = new Map<GitLabFile, GitLabJobDraft[]>();
+    for (const file of ci.files) {
+      const list: GitLabJobDraft[] = [];
+      for (const job of file.jobs) {
+        if (ci.jobs.get(job.name) !== job || usersOf(ci, job).length === 0) continue;
+        const d = gitlabJobDraft(
+          ci,
+          file,
+          job,
+          builds.find((b) => b.job === job),
+          gone,
+        );
+        if (d) list.push(d);
+      }
+      byFile.set(file, list);
     }
-    byFile.set(file, list);
+    return byFile;
+  };
+  // The jobs this run removes by default, to a fixed point: a job only other removed jobs need
+  // can go too (site:release needs package:windows; both on tags only: both go).
+  let gone = new Set<string>();
+  let byFile = draftAll(gone);
+  for (;;) {
+    const next = new Set(
+      [...byFile.values()]
+        .flat()
+        .filter((d) => d.removesJob)
+        .map((d) => d.job.name),
+    );
+    if ([...next].every((name) => gone.has(name))) break;
+    gone = next;
+    byFile = draftAll(gone);
   }
   const drafts: Draft[] = [];
   for (const [file, list] of byFile) {
@@ -1261,6 +1329,8 @@ export function detectMachinery(input: MachineryInput): MachineryFinding[] {
     byPath.set(d.path, list);
   }
   const findings: MachineryFinding[] = [];
+  const idOfJob = new Map<string, string>();
+  const requiresOf = new Map<MachineryItem, string[]>();
   for (const [path, list] of [...byPath].sort(([a], [b]) => a.localeCompare(b))) {
     list.sort((a, b) => a.line - b.line);
     list.forEach((d, index) => {
@@ -1287,8 +1357,14 @@ export function detectMachinery(input: MachineryInput): MachineryFinding[] {
       const edits: MachineryFinding["edits"] = {};
       if (actions.includes("remove")) edits.remove = d.remove;
       if (d.disable && d.disable.length > 0) edits.disable = d.disable;
+      if (d.gitlabJob) idOfJob.set(d.gitlabJob, item.id);
+      if (d.requires) requiresOf.set(item, d.requires);
       findings.push({ item, edits });
     });
+  }
+  for (const [item, jobs] of requiresOf) {
+    const ids = jobs.map((j) => idOfJob.get(j)).filter((id): id is string => id !== undefined);
+    if (ids.length > 0) item.requires = ids;
   }
   return findings;
 }

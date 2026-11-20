@@ -13,6 +13,7 @@ import {
   type Git,
   LeaseError,
   type PushResult,
+  type PushTagOptions,
   TagCleanupError,
   TagExistsError,
 } from "../git/index.ts";
@@ -37,6 +38,18 @@ export function tagPushOptions(context: FlowContext, name: string): string[] {
   return [];
 }
 
+/** {@link tagPushOptions} for `Git.pushTag`, warning when the remote doesn't take them. */
+export function tagPushOptionsFor(context: FlowContext, name: string): PushTagOptions {
+  const pushOptions = tagPushOptions(context, name);
+  return {
+    pushOptions,
+    onUnsupported: () =>
+      context.log.warn(
+        `The remote doesn't take push options, so ${name} was pushed without ${pushOptions.join(", ")}: it may start a tag pipeline.`,
+      ),
+  };
+}
+
 /**
  * Create tag `name` at `sha` and push it (when a remote exists). Idempotent: a tag that
  * already points to `sha` (locally or on the remote) is fine; one that points elsewhere is a
@@ -59,7 +72,7 @@ export async function ensureTag(
   try {
     // A tag that only exists locally must not linger: a later ship, mark or finalize would
     // take it for shipped. createAndPushTag removes it again when the push fails.
-    const options = { pushOptions: tagPushOptions(context, name) };
+    const options = tagPushOptionsFor(context, name);
     pushed =
       existing === undefined
         ? await git.createAndPushTag(name, sha, options)
