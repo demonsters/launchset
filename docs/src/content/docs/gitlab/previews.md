@@ -30,7 +30,7 @@ The child pipeline and the comment job wait for the plan job. If you never play 
 
 The version is `<next>-pr.<MR number>.<pipeline number>`, for example `1.5.0-pr.123.4`. The number is the pipeline IID (`CI_PIPELINE_IID`), the GitLab counterpart of a run number.
 
-A new push cancels the previous preview pipeline of the MR: the plan job is `interruptible` (with `workflow: auto_cancel: on_new_commit: interruptible`, which `init` writes). Once a prerelease started building, its jobs are not interruptible.
+A new push cancels the previous preview pipeline of the MR: the plan job is `interruptible` (with `workflow: auto_cancel: on_new_commit: interruptible`, which `init` writes). Once a prerelease started building, its jobs are not interruptible. A preview job whose `.launchset-<target>` job (or a template it extends) sets `interruptible: false` stays that way too, for runners a cancel breaks.
 
 ## Start previews when the label is added (preview sweep)
 

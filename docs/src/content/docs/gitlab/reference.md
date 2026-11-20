@@ -63,6 +63,7 @@ Every command that produces outputs takes `--ci`. It is on by default when `GITL
 | `plan.json` | `LAUNCHSET_PLAN_FILE` | The plan. Pass it on with `--plan @plan.json`. |
 | `launchset.env` | `LAUNCHSET_DOTENV` | A dotenv report (`artifacts:reports:dotenv`): `NAME=value`, values with line breaks left out. |
 | `launchset.sh` | `LAUNCHSET_SHELL_ENV` | The same variables as `export NAME='value'`, multi-line values included. `. ./launchset.sh` loads them. |
+| `launchset.ps1` | `LAUNCHSET_POWERSHELL_ENV` | The same variables for PowerShell, `$env:NAME = 'value'` (UTF-8 with a byte order mark, for Windows PowerShell 5.1). `. ./launchset.ps1` loads them. |
 | `launchset-child.yml` | `LAUNCHSET_CHILD_PIPELINE` | The child pipeline. Only `release` and `preview-plan`, always. |
 
 Commands in one job merge into the same files. The plan doesn't go through the dotenv file, because GitLab limits it to 5 KB and 20 variables on self-managed (more on GitLab.com, by tier). `launchset-release` keeps `launchset.env` as a dotenv report for your own later jobs; `release` writes 14 variables and warns when the file is over those defaults. In the build jobs, where stamp, verify and mark add more, nothing uploads the file, so going over is only a debug message (`LAUNCHSET_DEBUG=1`).
@@ -114,6 +115,9 @@ Pipeline events: `merge_request_event` is a check or preview of an MR (also the 
 | `semver` build numbers | Use the run attempt | Always attempt 1: GitLab has no attempt counter. A retried plan job computes the same number, which is what a retry should upload. |
 | Concurrency | `concurrency` groups, one waiting run | `resource_group`, which keeps every waiting job. The order isn't guaranteed; the release flow handles that. |
 | Run number | `GITHUB_RUN_NUMBER` | `CI_PIPELINE_IID` |
+| Target order (`after`) | Not supported: one matrix job builds every target, so `after` is a config error | `needs` on the other targets' jobs, with their artifacts |
+| Tag pushes | Start the workflows that listen to tags | Pushed with `-o ci.skip`: no tag pipelines (`gitlab.tagPipelines: true` lets release and prerelease tags start one) |
+| Shells | Bash on every runner | `sh`, or PowerShell per target (`gitlab.shell`) |
 | Fork PRs | No secrets: no preview | No project variables: no preview, and no check in the fork's own pipeline (run the MR's pipeline in your project to check it) |
 | Bot PRs (`check.bots`) | `dependabot[bot]`, `renovate[bot]` | `renovate-bot` is also a default. Self-managed instances name their bots themselves: add yours to `check.bots`. |
 | Jobs summary | The job summary | The job log |
@@ -133,5 +137,7 @@ GitLab support is written from GitLab's documentation and tested against recorde
 - `$CI_PIPELINE_ID` as a variable of a trigger job (GitLab's own example uses it, but the variables table marks it job-only).
 - The Docker, Android and macOS templates: `docker:29` with `docker:29-dind` and `apk add nodejs-current`, `cimg/android` as a non-root user with an npm prefix, and Node on hosted macOS runners.
 - With `strategy: mirror`, how a failed child job shows in the MR widget.
+- PowerShell build jobs on a real Windows runner. The generated lines were run with PowerShell 7 (as a script file and on stdin, like the runner does), with the runner's per-line error check: a failing command ends the job with its exit code, and the already-published branch ends it with `mark`'s. Windows PowerShell 5.1 and npm's `.ps1`/`.cmd` shims on Windows weren't tried.
+- `git push -o ci.skip` for tags. GitLab documents it; launchset retries the push without it (with a warning) when a remote doesn't take push options.
 
 Also remember: GitLab 18.2 or newer is the minimum, there is no CI/CD component (jobs install the npm package), and no static pipeline mode (the generated child pipeline is the only shape, so a policy that forbids child pipelines can't use launchset yet).

@@ -104,6 +104,8 @@ These rules apply on top of the types:
 - `kind: "image"` files are only allowed in docker targets.
 - `preview.targets` and every `preview.branches[].targets` must name existing targets.
 - A prerelease pattern in `preview.branches` must not match `baseBranch`.
+- `after` names existing targets, not the target itself and none twice, without cycles; an auto target can only come after auto targets. On GitHub `after` is an error.
+- `gitlab.include` entries are literal repo-relative `.yml` or `.yaml` paths (no variables or wildcards).
 - Files that targets point to must exist. A glob in an `image` entry must match at least one file.
 
 ## All options
@@ -136,6 +138,9 @@ Everything is optional except `targets`. `$schema` is only for editors: point it
 | `buildNumber.offset` | `integer` | `0` | Added to every build number. Use it when existing builds in a store have higher numbers than the strategy would produce. |
 | `check` | `object` |  | The PR check. |
 | `check.bots` | `string[]` | `["dependabot[bot]", "renovate[bot]", "renovate-bot"]` | PR authors that pass the check without a changeset. Matched case-insensitively. Their merged PRs get a generated patch entry under Dependencies in the next release. |
+| `gitlab` | `object` |  | GitLab settings. Ignored on GitHub. |
+| `gitlab.include` | `string[]` | `[]` | Local files launchset's child pipeline includes before `.gitlab/launchset-targets.yml`, so the `.launchset-<target>` jobs can extend their templates (`extends: .windows`). Literal repo-relative `.yml` paths. Each file may only hold hidden jobs (names starting with `.`), `variables` and `default`: the plan job checks this before it writes the child pipeline. `init` moves the templates your target jobs extend to `.gitlab/ci-templates.yml` and lists it here. |
+| `gitlab.tagPipelines` | `boolean` | `false` | Let launchset's release and prerelease tags start tag pipelines. With `false`, every tag launchset pushes on GitLab is pushed with `git push -o ci.skip`, so none starts a pipeline; marker and partial tags never do. |
 
 ### Previews
 
@@ -181,6 +186,9 @@ These options exist on every target type.
 | `targets.<name>.files[].replace` <br>*kind regex* | `string` | required | The replacement text. Placeholders: `{version}`, `{major}`, `{minor}`, `{patch}`, `{buildNumber}`. `$1`, `$<name>`, `$&` and `$$` work like in `String.prototype.replace`. An entry that uses `{buildNumber}` is only stamped in CI. |
 | `targets.<name>.files[].flags` <br>*kind regex* | `string` |  | Extra RegExp flags: any of `i`, `m`, `s`, `u`. `g` is not allowed. |
 | `targets.<name>.files[].path` <br>*kind image* | `string` | required | Docker targets only. A deploy manifest (Kubernetes, Compose, Helm values) or a glob such as `deploy/k8s/*.yaml`. Every `<image>:<tag>` reference to this target's image gets the release tag. |
+| `targets.<name>.after` | `string[]` |  | GitLab only (an error on GitHub). Targets whose jobs must finish first, in the same pipeline: this target's job gets their artifacts. In the child pipeline it `needs` their `build-<target>` (or `preview-<target>`) jobs as optional, so a retry that only builds this target still starts, without those artifacts. Names must exist, can't form a cycle, and an auto target can only come after auto targets. |
+| `targets.<name>.gitlab` | `object` |  | GitLab settings of this target. Ignored on GitHub. |
+| `targets.<name>.gitlab.shell` | `"sh" \| "powershell"` | `"sh"` | `sh` or `powershell`: the shell of the runner that runs this target's job. With `powershell` (Windows PowerShell 5.1 or PowerShell 7), launchset writes its lines of the job in PowerShell and checks `$LASTEXITCODE` after each command; the runner needs Node 24 or later, npm and git on its PATH. |
 
 ### Targets of type "docker"
 

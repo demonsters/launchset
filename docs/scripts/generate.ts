@@ -111,7 +111,7 @@ interface Section {
   rows: Row[];
 }
 
-const TARGET_COMMON = ["release", "buildNumber", "files"];
+const TARGET_COMMON = ["release", "buildNumber", "files", "after", "gitlab"];
 
 /** The `kind` constant of a union variant (`source.kind`, `files[].kind`), if it has one. */
 function kindOf(variant: Json): string | undefined {
@@ -225,8 +225,8 @@ function configSections(schema: Json): Section[] {
       required: false,
       default: defaultOf(prop),
     });
-    if (name === "buildNumber") {
-      flattenObject(prop, "targets[*].buildNumber", "targets.<name>.buildNumber", common);
+    if (name === "buildNumber" || name === "gitlab") {
+      flattenObject(prop, `targets[*].${name}`, `targets.<name>.${name}`, common);
     }
     if (name === "files") {
       descend(prop, "targets[*].files", "targets.<name>.files", common);

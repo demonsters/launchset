@@ -17,13 +17,25 @@
 #
 # Rules for these jobs:
 #   - No `rules`, `when`, `needs` or `stage`: the child pipeline decides when a job runs. (A child
-#     pipeline whose jobs are all ruled out fails to start.)
+#     pipeline whose jobs are all ruled out fails to start.) The plan job warns when a job, or a
+#     template it extends, sets one of them.
+#   - A target that needs another target's output: set "after" on it in launchset.config, e.g.
+#     "after": ["windows", "appimage"]. Its job then waits for theirs and gets their artifacts.
+#     On a retry that only builds the waiting target, the others' artifacts (from the earlier
+#     pipeline) aren't there: upload what other targets need somewhere durable (see the custom
+#     target example), and fetch it from there.
 #   - Every job runs launchset, so its image needs Node 24 or later, npm and git (the
-#     before_script below installs them where the image lacks them).
+#     before_script below installs them where the image lacks them). On a Windows runner with
+#     PowerShell (gitlab.shell: "powershell" on the target), Node 24 or later, npm and git must be
+#     on the runner's PATH; launchset's lines of the job are then PowerShell.
 #   - `before_script` runs first, then launchset's lines and your `script`, all in one shell.
-#     launchset's lines `cd "$CI_PROJECT_DIR"` first, so your steps may change directory.
+#     launchset's lines change to $CI_PROJECT_DIR first, so your steps may change directory.
 #   - Put one command per line, and never `exit` early: GitLab runs the lines in one shell with
 #     `set -e`, which ignores a failure on the left of `&&`, and an `exit` would skip `mark`.
+#   - A job may extend hidden templates (`extends: .windows`) from files listed in gitlab.include
+#     in launchset.config (e.g. .gitlab/ci-templates.yml): the child pipeline includes them. Those
+#     files may only hold hidden jobs, variables and default. Templates in .gitlab-ci.yml itself
+#     aren't there: the child pipeline can't include it (it would run every job in it).
 #   - The variables from `stamp` are set: LAUNCHSET_VERSION (plain X.Y.Z for iOS),
 #     LAUNCHSET_BUILD_NUMBER, LAUNCHSET_CHANNEL (`release`, `prerelease` or `preview`: pick the
 #     upload channel with it; previews go to internal channels only), LAUNCHSET_DIST_TAG,

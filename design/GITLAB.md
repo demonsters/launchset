@@ -1,6 +1,7 @@
 # GitLab support: plan
 
-Status: implemented (all phases); needs a trial on a real GitLab instance (see To verify). Last updated 2026-11-19.
+Status: implemented (all phases), plus the fixes from a trial adoption on GitLab (see
+"Trial fixes"); needs a trial on a real GitLab instance (see To verify). Last updated 2026-11-20.
 
 launchset ran on GitHub only. This plan covers what it takes to also run on GitLab
 (gitlab.com and self-managed), in an order that keeps the GitHub path safe at every step.
@@ -230,7 +231,11 @@ Renderers, written by `init` (phase 5): `renderGitLabCi()` in `src/templates/git
   the project's clone depth. Nothing to build (release-pr, none, a skipped preview): the child is
   a single `launchset-nothing-to-build` job (busybox, `GIT_STRATEGY: none`) that echoes why.
   Before writing the child, launchset checks that the targets file defines `.launchset-<target>`
-  with a `script` (or `extends`) for every target it builds.
+  with a `script` (or `extends`) for every target it builds, checks the `gitlab.include` files
+  (hidden jobs, `variables` and `default` only), and warns about `needs`, `rules`, `when`,
+  `only`, `except` and `stage` on a target job or its templates. A target with `gitlab.shell:
+  powershell` gets the same lines in PowerShell, a target with `after` gets optional `needs` on
+  the other targets' jobs, and the `gitlab.include` files are included before the targets file.
 - Debuggability: in `--ci` mode on GitLab, `release` and `preview-plan` always write
   `launchset-child.yml` (`LAUNCHSET_CHILD_PIPELINE`), print it to the job log (a collapsed
   section) and keep it as an artifact; `launchset plan --gitlab [file|-]` writes it locally.
@@ -259,6 +264,34 @@ Renderers, written by `init` (phase 5): `renderGitLabCi()` in `src/templates/git
   the build steps found in the existing CI where possible.
 - Docs: a GitLab page per area (getting started, token, previews, recipes); keep GitHub the
   default in examples. Update both agent skills (`launchset`, `launchset-adopt`).
+
+## Trial fixes (from adopting a GitLab project)
+
+A trial adoption of a real GitLab project (a Rust + Python desktop app: a Windows runner with
+PowerShell, packages and a site image built on tags, templates in `.gitlab-ci.yml`) found six
+gaps. Each is fixed; the details are in design/DECISIONS.md.
+
+1. **PowerShell runners.** Target option `gitlab: { shell: "powershell" }`: the child job's
+   launchset lines are PowerShell (`$env:`, `Get-Command`, `'@plan.json'`, `. ./launchset.ps1`,
+   `$LASTEXITCODE` checks), and `--ci` also writes `launchset.ps1`. init proposes it for jobs
+   that use PowerShell or run on `windows`-tagged runners.
+2. **Targets after targets.** Target option `after: [...]` (GitLab only; an error on GitHub):
+   optional `needs` with artifacts on the other targets' jobs, in release and preview children.
+   A retry that only builds the dependent target has no artifacts from the earlier pipeline:
+   documented, with a generic package registry example in the custom target template.
+3. **Tag pipelines.** launchset pushes its tags with `-o ci.skip` on GitLab (release and
+   prerelease tags opt back in with `gitlab: { tagPipelines: true }`); init notes a
+   `workflow: rules` entry that allows tag pipelines.
+4. **Adopting a project without detectable targets.** init proposes custom targets from tag jobs
+   that keep artifacts, deploy or publish, prefills their `.launchset-<target>` from the job,
+   turns `needs` between them into `after`; `--decide target.<name>=custom` declares one by
+   hand. Machinery: `disable` removes only the tag rule of a job other rules still start, and a
+   job only removed jobs need can be removed with them.
+5. **Templates in `.gitlab-ci.yml`.** Config `gitlab: { include: [...] }`: files the child
+   pipeline includes (checked: hidden jobs, `variables`, `default` only). init moves the
+   templates the target jobs extend to `.gitlab/ci-templates.yml` and includes it from both.
+6. **Interruptible previews.** A preview job keeps `interruptible: false` from the user's job or
+   the templates it extends.
 
 ## Decided (formerly open decisions)
 
@@ -341,6 +374,12 @@ Still needs a real GitLab instance:
 - The images: `docker:29` + `docker:29-dind` with buildx and `apk add nodejs-current`,
   `cimg/android:*-node` as a non-root user with the npm prefix, Node on the hosted macOS images.
 - With `strategy: mirror`, how a failed child job shows in the MR widget.
+- PowerShell build jobs on a real Windows runner (Windows PowerShell 5.1 and PowerShell 7, npm's
+  `.ps1` / `.cmd` shims, `exit` in a step script). Checked so far: the generated lines under
+  PowerShell 7 on Linux, as a file and on stdin, with the runner's per-line error check.
+- `git push -o ci.skip` on a tag push to GitLab creates no pipeline (documented).
+- A child job with `needs: - job: <x> optional: true` where `<x>` isn't in the pipeline starts
+  (documented for `optional`).
 - The preview sweep: that an API-created MR pipeline has `CI_PIPELINE_SOURCE=merge_request_event`
   and `CI_MERGE_REQUEST_LABELS` (so the labeled rule builds), that the MR pipelines listing has
   `created_at` and a `refs/merge-requests/<iid>/…` ref per pipeline (the docs' example shows only
