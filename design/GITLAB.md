@@ -1,7 +1,8 @@
 # GitLab support: plan
 
 Status: implemented (all phases), plus the fixes from a trial adoption on GitLab (see
-"Trial fixes"); needs a trial on a real GitLab instance (see To verify). Last updated 2026-11-20.
+"Trial fixes"); needs a trial on a real GitLab instance (see To verify). The host abstraction
+now takes more than two hosts (see "More hosts"). Last updated 2026-11-20.
 
 launchset ran on GitHub only. This plan covers what it takes to also run on GitLab
 (gitlab.com and self-managed), in an order that keeps the GitHub path safe at every step.
@@ -292,6 +293,52 @@ gaps. Each is fixed; the details are in design/DECISIONS.md.
    templates the target jobs extend to `.gitlab/ci-templates.yml` and includes it from both.
 6. **Interruptible previews.** A preview job keeps `interruptible: false` from the user's job or
    the templates it extends.
+
+## More hosts (Forgejo, Gitea)
+
+Not planned yet, but the code no longer assumes exactly two hosts, so adding one later doesn't
+mean finding every `host === "gitlab"` again.
+
+**How host differences are kept.** `src/core/hosts.ts` has one `HostProfile` per host: its
+words and paths (`!12`, `-/merge_requests/12`), its CI system (`actions` or `gitlab-ci`) and
+traits that say how it behaves: `prereleaseFlag`, `latestFlag`, `lowercaseAlerts`,
+`labelEvents`, `nestedRepositories`, `selfManagedRemotes`, `skipCiPushOption`,
+`fallbackListsJobs`, `gitTokenUser`. Code asks for a trait, not a host name; a test fails on a
+new comparison with `"github"`/`"gitlab"` (init's host guess in `init/detect.ts` is the one
+exception: it weighs GitLab's own evidence). Texts per host are `Record<ForgeHost, …>` tables
+(`forge-hints.ts`, git's push-failure wording, init's image guess), so adding a host to
+`FORGE_HOSTS` makes the compiler list each one. `src/flow/hosts.ts` holds the run-time side per
+host: the API client and what `createContext` does differently (server from the remote, commit
+identity). CI flags are checked in `CI_DETECTION_ORDER`, the default host (GitHub) last.
+
+**What a new host needs.**
+1. A profile in `core/hosts.ts`, its texts in the tables, and a `CiFlag`.
+2. A `Forge` client (`src/forge/<host>/`) and an adapter in `flow/hosts.ts`.
+3. A CI environment reader (`flow/ci/<host>.ts`).
+4. CI templates and init support for its CI system. A host on `actions` might reuse the GitHub
+   workflows and the Action with small changes; that's the main reason Forgejo and Gitea look
+   cheap.
+5. Docs, skills, and its own "To verify" list.
+
+**Forgejo and Gitea: what we know and what to check.** Their CI (Forgejo Actions, Gitea
+Actions) runs GitHub-Actions-style workflows, so they'd be `ci: "actions"`. From their docs:
+- Forgejo's workflows are "familiar, not compatible": some job keys are ignored
+  (`permissions`, `continue-on-error`), OIDC uses `enable-openid-connect`, the default runner
+  image is a small Debian one with Node, and the `github` context lacks some keys. The
+  workflow templates need a trial there, not an assumption.
+- Forgejo fires `pull_request` `labeled`, so `labelEvents` would be true and no preview sweep
+  is needed. Fork PRs get read-only tokens and no secrets, as on GitHub.
+- Gitea's API has `GET /repos/{owner}/{repo}/actions/runs/{run}/jobs` (for `listJobs`); since
+  which version, and whether Forgejo has the same, is open.
+- Gitea documents repository push options (`repo.private`), not `ci.skip`, so
+  `skipCiPushOption` would be unset (tag pushes may start tag workflows, as on GitHub).
+
+To check before designing: which CI flag the runners set (whether `GITHUB_ACTIONS` is set too,
+which is why the default host is detected last); whether Gitea and Forgejo's APIs still match
+closely enough for one client; release `prerelease` and latest handling; Markdown alerts in
+comments; how a workflow token or access token authenticates git pushes and whether its pushes
+start workflows; whether the Action (`runs.using: node24`) runs on their runners; and how init
+tells them apart (`.forgejo/workflows`, `.gitea/workflows`, the remote's host name).
 
 ## Decided (formerly open decisions)
 
