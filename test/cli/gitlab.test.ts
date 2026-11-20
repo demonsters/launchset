@@ -264,4 +264,52 @@ describe("plan --gitlab", () => {
       "preview-ios",
     ]);
   });
+
+  it("follows the config: PowerShell jobs, after, gitlab.include, interruptible; warns about needs", async () => {
+    const f = fixtureRepo("1.4.0", {
+      config: {
+        gitlab: { include: [".gitlab/ci-templates.yml"] },
+        targets: {
+          windows: { type: "custom", gitlab: { shell: "powershell" } },
+          appimage: { type: "custom" },
+          site: { type: "custom", after: ["windows", "appimage"] },
+        },
+      },
+    });
+    f.repo.commit("Targets", {
+      ".gitlab/ci-templates.yml": ".windows:\n  tags: [windows]\n  interruptible: false\n",
+      ".gitlab/launchset-targets.yml": [
+        ".launchset-windows:\n  extends: .windows\n  script: [build.ps1]\n",
+        ".launchset-appimage:\n  script: [make]\n",
+        ".launchset-site:\n  needs: [build-windows]\n  script: [push]\n",
+      ].join(""),
+    });
+    const r = await cli(["plan", "--preview", "--run-number", "3", "--gitlab", "-"], {
+      cwd: f.dir,
+    });
+    expect(r.code).toBe(0);
+    expect(r.stderr).toMatch(/\.launchset-site sets needs: preview-site replaces it/);
+    const doc = parseGitLabYaml(r.stdout) as Record<string, Record<string, unknown>>;
+    expect(doc.include).toEqual([
+      { local: ".gitlab/ci-templates.yml" },
+      { local: ".gitlab/launchset-targets.yml" },
+    ]);
+    const windows = doc["preview-windows"] as { script: unknown[]; interruptible: boolean };
+    expect(windows.script[0]).toBe("Set-Location -LiteralPath $env:CI_PROJECT_DIR");
+    expect(windows.interruptible).toBe(false);
+    expect(doc["preview-appimage"]?.interruptible).toBe(true);
+    expect(doc["preview-site"]?.needs).toEqual([
+      { pipeline: "$PARENT_PIPELINE_ID", job: "launchset-preview-plan" },
+      { job: "preview-windows", artifacts: true, optional: true },
+      { job: "preview-appimage", artifacts: true, optional: true },
+    ]);
+
+    // A gitlab.include file with a visible job fails the plan job.
+    f.repo.commit("Lint", { ".gitlab/ci-templates.yml": "lint:\n  script: [x]\n" });
+    const unsafe = await cli(["plan", "--preview", "--run-number", "3", "--gitlab", "-"], {
+      cwd: f.dir,
+    });
+    expect(unsafe.code).toBe(1);
+    expect(unsafe.stderr).toContain('.gitlab/ci-templates.yml has "lint"');
+  });
 });

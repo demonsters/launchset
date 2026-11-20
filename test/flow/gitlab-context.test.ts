@@ -136,3 +136,32 @@ describe("commit identity", () => {
     expect((await context.git.identity()).email).toBe("launchset[bot]@users.noreply.github.com");
   });
 });
+
+describe("after is GitLab only", () => {
+  const withAfter = (remote: string) => {
+    const repo = project(remote);
+    repo.commit("after", {
+      "launchset.config.json": JSON.stringify({
+        targets: { web: { type: "web" }, site: { type: "custom", after: ["web"] } },
+      }),
+    });
+    return repo;
+  };
+
+  it("fails on GitHub Actions and with LAUNCHSET_HOST=github", async () => {
+    const repo = withAfter("https://github.com/acme/app.git");
+    for (const env of [{ GITHUB_ACTIONS: "true" }, { LAUNCHSET_HOST: "github" }]) {
+      await expect(createContext({ cwd: repo.dir, env })).rejects.toMatchObject({
+        code: "invalid-config",
+        message: expect.stringContaining("targets.site.after: is GitLab only"),
+      });
+    }
+  });
+
+  it("works on GitLab, and where nothing says GitHub (no CI, no GitLab remote)", async () => {
+    const gitlab = withAfter("git@gitlab.com:acme/app.git");
+    expect((await createContext({ cwd: gitlab.dir, env: {} })).host).toBe("gitlab");
+    const local = withAfter("/tmp/nowhere.git");
+    expect((await createContext({ cwd: local.dir, env: {} })).host).toBe("github");
+  });
+});

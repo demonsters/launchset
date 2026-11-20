@@ -1,6 +1,6 @@
 /**
  * The files of the CLI's `--ci` mode and whether it is on: plan.json, launchset.env,
- * launchset.sh and the GitLab child pipeline, each with the variable that renames it. Used by
+ * launchset.sh, launchset.ps1 and the GitLab child pipeline, each with the variable that renames it. Used by
  * `ci-output.ts`, which writes them, and by `run.ts`, which tells git they are launchset's own.
  */
 
@@ -13,6 +13,7 @@ const CI_FILES = {
   plan: ["LAUNCHSET_PLAN_FILE", "plan.json"],
   dotenv: ["LAUNCHSET_DOTENV", "launchset.env"],
   shell: ["LAUNCHSET_SHELL_ENV", "launchset.sh"],
+  powershell: ["LAUNCHSET_POWERSHELL_ENV", "launchset.ps1"],
   child: ["LAUNCHSET_CHILD_PIPELINE", DEFAULT_CHILD_FILE],
 } as const;
 

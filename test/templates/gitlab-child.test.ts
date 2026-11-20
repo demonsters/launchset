@@ -5,6 +5,8 @@ import { packageVersion } from "../../src/init/package-files.ts";
 import {
   type ChildPipelineInput,
   checkTargetsFile,
+  checkTemplateFile,
+  inspectTargetJobs,
   renderChildPipeline,
 } from "../../src/templates/gitlab-child.ts";
 import { GitLabReference, parseGitLabYaml } from "../../src/templates/gitlab-yaml.ts";
@@ -323,5 +325,236 @@ describe("checkTargetsFile", () => {
     expect(checkTargetsFile(text, ["web"])).toEqual([
       ".gitlab/launchset-targets.yml doesn't define .launchset-web itself; it has to come from one of its includes.",
     ]);
+  });
+});
+
+const strings = (j: Job) => (j.script ?? []).filter((l): l is string => typeof l === "string");
+
+describe("renderChildPipeline: PowerShell targets (gitlab.shell)", () => {
+  const check = "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }";
+
+  it("writes launchset's lines in PowerShell, checking $LASTEXITCODE after each command", () => {
+    const { doc, text } = render({
+      plan: plan({ matrix: ["windows", "web"] }),
+      targets: { windows: { shell: "powershell" } },
+      currentSha: OTHER,
+    });
+    const windows = job(doc, "build-windows");
+    expect(strings(windows)).toEqual([
+      "Set-Location -LiteralPath $env:CI_PROJECT_DIR",
+      `if ($env:NPM_TOKEN -and -not (Get-Command launchset -ErrorAction SilentlyContinue)) { npm config set "//registry.npmjs.org/:_authToken" "$env:NPM_TOKEN"; ${check} }`,
+      `if (-not (Get-Command launchset -ErrorAction SilentlyContinue)) { npm install --global --no-fund --no-audit --loglevel=error "$env:LAUNCHSET_CLI"; ${check} }`,
+      'if (-not (Get-Command launchset -ErrorAction SilentlyContinue)) { $env:Path = "$(npm prefix --global);$env:Path" }',
+      `launchset --version; ${check}`,
+      `git checkout --quiet --detach ${SHA}; ${check}`,
+      `launchset stamp --target windows --plan '@plan.json' --ci; ${check}`,
+      ". ./launchset.ps1",
+      `launchset verify --target windows --plan '@plan.json' --ci; ${check}`,
+      ". ./launchset.ps1",
+      "if ($env:LAUNCHSET_ALREADY_PUBLISHED -eq 'true') { launchset mark --target windows --plan '@plan.json' --ci; exit $LASTEXITCODE }",
+      "Set-Location -LiteralPath $env:CI_PROJECT_DIR",
+      `launchset mark --target windows --plan '@plan.json' --ci; ${check}`,
+    ]);
+    expect(windows.script).toContainEqual(new GitLabReference([".launchset-windows", "script"]));
+    // No sh syntax in the PowerShell job.
+    const block = text.slice(text.indexOf("build-windows:"), text.indexOf("build-web:"));
+    expect(block).not.toMatch(
+      /\[ -n|command -v|\$\{|\. \.\/launchset\.sh|"\$CI_PROJECT_DIR"|@plan\.json(?!')/,
+    );
+    expect(block).toContain("# PowerShell (gitlab.shell)");
+    // Other targets keep sh.
+    expect(strings(job(doc, "build-web"))[0]).toBe('cd "$CI_PROJECT_DIR"');
+  });
+
+  it("previews: stamp only, in PowerShell too", () => {
+    const { doc } = render({
+      plan: plan({ mode: "preview", channel: "preview", matrix: ["windows"] }),
+      kind: "preview",
+      planJob: "launchset-preview-plan",
+      targets: { windows: { shell: "powershell" } },
+    });
+    const lines = strings(job(doc, "preview-windows"));
+    expect(lines).toContain(`launchset stamp --target windows --plan '@plan.json' --ci; ${check}`);
+    expect(lines.at(-1)).toBe(". ./launchset.ps1");
+    expect(lines.join("\n")).not.toContain("launchset mark");
+  });
+
+  it("quotes odd target names for PowerShell", () => {
+    const name = "we'b x’1";
+    const { doc } = render({
+      plan: plan({ matrix: [name] }),
+      targets: { [name]: { shell: "powershell" } },
+    });
+    expect(strings(job(doc, `build-${name}`))).toContain(
+      `launchset stamp --target 'we''b x’’1' --plan '@plan.json' --ci; ${check}`,
+    );
+  });
+});
+
+describe("renderChildPipeline: after", () => {
+  const after = { site: { after: ["windows", "appimage"] } };
+
+  it("needs the jobs of the targets it comes after, optional, with their artifacts", () => {
+    const { doc, text } = render({
+      plan: plan({ matrix: ["windows", "appimage", "site"] }),
+      targets: after,
+    });
+    expect(job(doc, "build-site").needs).toEqual([
+      fromParent("launchset-release"),
+      { job: "build-windows", artifacts: true, optional: true },
+      { job: "build-appimage", artifacts: true, optional: true },
+    ]);
+    expect(text).toContain("# after: windows, appimage.");
+    expect(job(doc, "build-windows").needs).toEqual([fromParent("launchset-release")]);
+  });
+
+  it("a retry that builds only the dependent target: no needs on jobs that aren't there", () => {
+    const { doc, text } = render({ plan: plan({ matrix: ["site"] }), targets: after });
+    expect(job(doc, "build-site").needs).toEqual([fromParent("launchset-release")]);
+    expect(text).toContain("# (windows isn't built in this pipeline.)");
+  });
+
+  it("previews need the preview jobs", () => {
+    const { doc } = render({
+      plan: plan({ mode: "preview", channel: "preview", matrix: ["windows", "site"] }),
+      kind: "preview",
+      planJob: "launchset-preview-plan",
+      targets: after,
+    });
+    expect(job(doc, "preview-site").needs).toEqual([
+      fromParent("launchset-preview-plan"),
+      { job: "preview-windows", artifacts: true, optional: true },
+    ]);
+  });
+});
+
+describe("renderChildPipeline: includes and interruptible", () => {
+  it("includes the gitlab.include files before the targets file", () => {
+    const { doc } = render({ includes: [".gitlab/ci-templates.yml"] });
+    expect(doc.include).toEqual([
+      { local: ".gitlab/ci-templates.yml" },
+      { local: ".gitlab/launchset-targets.yml" },
+    ]);
+  });
+
+  it("previews keep interruptible: false from the user's job; releases stay false", () => {
+    const preview = render({
+      plan: plan({ mode: "preview", channel: "preview", matrix: ["windows", "web"] }),
+      kind: "preview",
+      planJob: "launchset-preview-plan",
+      targets: { windows: { notInterruptible: true } },
+    }).doc;
+    expect(job(preview, "preview-windows").interruptible).toBe(false);
+    expect(job(preview, "preview-web").interruptible).toBe(true);
+    const release = render({ targets: { web: { notInterruptible: true } } }).doc;
+    expect(job(release, "build-web").interruptible).toBe(false);
+    expect(job(release, "build-api").interruptible).toBe(false);
+  });
+});
+
+describe("inspectTargetJobs", () => {
+  const templates = [
+    ".windows:",
+    "  tags: [windows]",
+    "  interruptible: false",
+    ".site:",
+    "  image: nginx:1",
+    "  rules:",
+    "    - if: $CI_COMMIT_TAG",
+    "variables:",
+    "  UV_VERSION: 1",
+    "default:",
+    "  retry: 1",
+  ].join("\n");
+  const targets = [
+    ".launchset-windows:",
+    "  extends: .windows",
+    "  script: [build]",
+    ".launchset-direct:",
+    "  interruptible: false",
+    "  script: [build]",
+    ".launchset-web:",
+    "  script: [build]",
+    ".launchset-site:",
+    "  extends: .site",
+    "  stage: deploy",
+    "  needs: [build-windows, build-appimage]",
+    "  script: [push]",
+  ].join("\n");
+  const inspect = (matrix: string[], kind: "release" | "preview" = "preview") =>
+    inspectTargetJobs({
+      targetsText: targets,
+      includes: [{ path: ".gitlab/ci-templates.yml", text: templates }],
+      matrix,
+      kind,
+    });
+
+  it("finds interruptible: false on the job itself and through extends", () => {
+    const { notInterruptible, warnings } = inspect(["windows", "direct", "web"]);
+    expect([...notInterruptible].sort()).toEqual(["direct", "windows"]);
+    expect(warnings).toEqual([]);
+  });
+
+  it("a default: interruptible: false of an included file counts", () => {
+    const { notInterruptible } = inspectTargetJobs({
+      targetsText: ".launchset-web:\n  script: [build]\n",
+      includes: [{ path: "t.yml", text: "default:\n  interruptible: false\n" }],
+      matrix: ["web"],
+      kind: "preview",
+    });
+    expect([...notInterruptible]).toEqual(["web"]);
+  });
+
+  it("warns about needs, rules and stage the child pipeline overrides or decides", () => {
+    const { warnings } = inspect(["site"], "release");
+    expect(warnings).toEqual([
+      expect.stringMatching(
+        /^\.launchset-site sets needs: build-site replaces it .*list them in "after" of the target/,
+      ),
+      expect.stringMatching(
+        /^\.site, which \.launchset-site extends, sets rules: the child pipeline decides when build-site runs/,
+      ),
+      expect.stringMatching(/^\.launchset-site sets stage: build-site runs in stage test/),
+    ]);
+  });
+
+  it("fails for a missing or unsafe include file", () => {
+    expect(() =>
+      inspectTargetJobs({
+        targetsText: targets,
+        includes: [{ path: ".gitlab/ci-templates.yml", text: undefined }],
+        matrix: ["web"],
+        kind: "release",
+      }),
+    ).toThrow(
+      expect.objectContaining({
+        code: "gitlab-include-missing",
+        message: ".gitlab/ci-templates.yml doesn't exist, so the child pipeline can't include it.",
+      }),
+    );
+    expect(() => checkTemplateFile("t.yml", "lint:\n  script: [x]\n.ok:\n  script: [y]\n")).toThrow(
+      expect.objectContaining({
+        code: "gitlab-include-unsafe",
+        message: expect.stringContaining('t.yml has "lint"'),
+      }),
+    );
+    expect(() => checkTemplateFile("t.yml", "include:\n  - local: x.yml\n")).toThrow(
+      expect.objectContaining({
+        hint: expect.stringContaining("list that file in gitlab.include"),
+      }),
+    );
+    expect(() => checkTemplateFile("t.yml", "a: [")).toThrow(/is not valid YAML/);
+    expect(checkTemplateFile("t.yml", templates)).toHaveProperty(".windows");
+  });
+
+  it("checks nothing when nothing is built", () => {
+    expect(
+      inspectTargetJobs({
+        targetsText: undefined,
+        includes: [{ path: "x.yml", text: undefined }],
+        matrix: [],
+        kind: "release",
+      }),
+    ).toEqual({ warnings: [], notInterruptible: new Set() });
   });
 });

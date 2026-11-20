@@ -5,7 +5,7 @@
  */
 
 import { loadConfig } from "../config/load.ts";
-import type { ResolvedConfig } from "../core/config/schema.ts";
+import { ConfigError, hostConfigIssues, type ResolvedConfig } from "../core/config/schema.ts";
 import { LaunchsetError } from "../core/errors.ts";
 import { forgeHints } from "../core/forge-hints.ts";
 import { type ForgeHost, forgeLinks } from "../core/forge-links.ts";
@@ -94,6 +94,12 @@ export async function createContext(options: ContextOptions): Promise<FlowContex
   const origin = () => (remote ??= originUrl(root));
   const detected = await detectHost(env, origin);
   const { host } = detected;
+  // Only a host known from the environment or the remote: a GitLab config in a repo without a
+  // remote (a local `launchset version`) still works.
+  if (detected.source !== "default") {
+    const issues = hostConfigIssues(config, host);
+    if (issues.length > 0) throw new ConfigError(issues, file);
+  }
   const ci = await readCiEnvironment(host, env);
   if (host === "gitlab" && !env.CI_SERVER_URL) {
     // Outside GitLab CI (a local `launchset status`), a self-managed server is the remote's.

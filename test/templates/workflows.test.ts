@@ -137,6 +137,18 @@ describe("renderWorkflows", () => {
     }
   });
 
+  it("rejects after (GitLab only): one matrix job can't order targets", () => {
+    const config = resolveConfig({
+      targets: { web: { type: "web" }, api: { type: "web", after: ["web"] } },
+    });
+    expect(() => renderWorkflows({ config })).toThrow(
+      expect.objectContaining({
+        code: "invalid-config",
+        message: expect.stringContaining("targets.api.after: is GitLab only"),
+      }),
+    );
+  });
+
   it("leaves the preview workflow out when previews are disabled", () => {
     const config = resolveConfig({ ...sampleInput, preview: false });
     expect(renderWorkflows({ config }).map((f) => f.path)).toEqual([

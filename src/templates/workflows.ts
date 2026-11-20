@@ -20,6 +20,7 @@ import type {
   ResolvedIosTarget,
   ResolvedTarget,
 } from "../core/config/schema.ts";
+import { ConfigError, hostConfigIssues } from "../core/config/schema.ts";
 import { LaunchsetError } from "../core/errors.ts";
 
 export interface WorkflowTemplateInput {
@@ -446,6 +447,8 @@ function checkParsable(file: RenderedFile): void {
 
 export function renderWorkflows(input: WorkflowTemplateInput): RenderedFile[] {
   const { config } = input;
+  const hostIssues = hostConfigIssues(config, "github");
+  if (hostIssues.length > 0) throw new ConfigError(hostIssues);
   const action = input.actionRef ?? DEFAULT_ACTION_REF;
   const files: RenderedFile[] = [];
 

@@ -128,11 +128,37 @@ export type FileEntry = z.output<typeof fileEntrySchema>;
 // ---------------------------------------------------------------------------
 // Targets (spec 6)
 
+/** The shells a GitLab target's build job can run in (`gitlab.shell`). */
+export const GITLAB_SHELLS = ["sh", "powershell"] as const;
+export type GitLabShell = (typeof GITLAB_SHELLS)[number];
+
+/** A target's GitLab settings (ignored on GitHub). */
+const targetGitLabSchema = z.strictObject({
+  /**
+   * The shell of the runner that runs this target's job: `sh` (default: POSIX sh, bash) or
+   * `powershell` (a Windows runner: Windows PowerShell 5.1 or PowerShell 7, `pwsh`). The child
+   * pipeline writes launchset's lines of the job in that shell.
+   */
+  shell: z
+    .enum(GITLAB_SHELLS, {
+      error:
+        'expected "sh" or "powershell" ("powershell" covers Windows PowerShell 5.1 and PowerShell 7, pwsh)',
+    })
+    .default("sh"),
+});
+
 const commonTargetFields = {
   /** `auto` (default): built by every release. `manual`: shipped on demand (spec 9.8). */
   release: z.enum(["auto", "manual"]).default("auto"),
   buildNumber: buildNumberOverrideSchema.optional(),
   files: z.array(fileEntrySchema).default([]),
+  /**
+   * Targets whose jobs must finish first, in the same pipeline (GitLab only): this target's job
+   * gets their artifacts. Validated: known names, no cycles, an auto target only after auto
+   * targets.
+   */
+  after: z.array(nonEmpty).optional(),
+  gitlab: targetGitLabSchema.optional(),
 };
 
 /** Placeholders a Docker tag template may use (spec 6.1). */
@@ -379,6 +405,38 @@ const changelogSchema = z
   })
   .transform(({ file, links, github }) => ({ file, links: links ?? github ?? true }));
 
+/** A literal repo-relative path of a `.yml` / `.yaml` file (for `gitlab.include`). */
+const localYamlPath = nonEmpty.superRefine((value, ctx) => {
+  if (value.includes("$") || /[*?[\]{}]/.test(value)) {
+    ctx.addIssue({
+      code: "custom",
+      message: `expected a literal path (no variables or wildcards: a generated child pipeline can't use them in include), got "${value}"`,
+    });
+  } else if (!/\.ya?ml$/i.test(value)) {
+    ctx.addIssue({ code: "custom", message: `expected a .yml or .yaml file, got "${value}"` });
+  } else if (/^[a-z][a-z0-9+.-]*:/i.test(value) || value.split(/[\\/]/).includes("..")) {
+    ctx.addIssue({
+      code: "custom",
+      message: `expected a path inside the repository, got "${value}"`,
+    });
+  }
+});
+
+/** GitLab settings (ignored on GitHub). */
+const gitlabSchema = z.strictObject({
+  /**
+   * Extra local files the child pipeline includes before the targets file: hidden job
+   * templates (names starting with `.`), `variables` and `default`, which the
+   * `.launchset-<target>` jobs extend. Checked when the child pipeline is written.
+   */
+  include: z.array(localYamlPath).default([]),
+  /**
+   * Let launchset's release and prerelease tags start tag pipelines. Default false: every tag
+   * launchset pushes on GitLab is pushed with `-o ci.skip` (marker and partial tags always).
+   */
+  tagPipelines: z.boolean().default(false),
+});
+
 export const configSchema = z.strictObject({
   version: z.strictObject({ file: nonEmpty.default("package.json") }).prefault({}),
   changelog: changelogSchema.prefault({}),
@@ -405,6 +463,7 @@ export const configSchema = z.strictObject({
       error: "expected false (to disable previews) or an object with preview settings",
     })
     .prefault({}),
+  gitlab: gitlabSchema.optional(),
   targets: z.record(z.string(), targetSchema),
 });
 
@@ -826,12 +885,101 @@ function semanticIssues(config: ResolvedConfig): ConfigIssue[] {
       }
     });
   };
+  issues.push(...afterIssues(config));
   checkTargetRefs(config.preview.targets, "preview.targets");
   config.preview.branches.forEach((entry, index) => {
     checkTargetRefs(entry.targets, `preview.branches.${index}.targets`);
   });
 
   return issues;
+}
+
+/**
+ * `after` of every target: known target names, not the target itself, no duplicates, no
+ * cycles, and an auto target only after auto targets (a release never builds a manual target,
+ * so the auto target would wait for nothing). A manual target may come after any target: the
+ * order applies when both are built in the same pipeline (a ship of several targets, previews).
+ */
+function afterIssues(config: ResolvedConfig): ConfigIssue[] {
+  const issues: ConfigIssue[] = [];
+  const valid = new Map<string, string[]>();
+  for (const target of Object.values(config.targets)) {
+    const list = target.after ?? [];
+    const base = `targets.${target.name}.after`;
+    const kept: string[] = [];
+    list.forEach((name, index) => {
+      const other = config.targets[name];
+      if (!other) {
+        issues.push({ path: `${base}.${index}`, message: `unknown target "${name}"` });
+      } else if (name === target.name) {
+        issues.push({ path: `${base}.${index}`, message: "a target can't come after itself" });
+      } else if (list.indexOf(name) !== index) {
+        issues.push({ path: `${base}.${index}`, message: `"${name}" is listed twice` });
+      } else if (target.release === "auto" && other.release === "manual") {
+        issues.push({
+          path: `${base}.${index}`,
+          message: `"${name}" is a manual target: a release doesn't build it, so the auto target ${target.name} can only come after auto targets`,
+        });
+      } else {
+        kept.push(name);
+      }
+    });
+    valid.set(target.name, kept);
+  }
+  // Cycles: depth-first, reporting each cycle once (at its first target in config order).
+  const state = new Map<string, "visiting" | "done">();
+  const reported = new Set<string>();
+  const visit = (name: string, path: string[]) => {
+    if (state.get(name) === "done") return;
+    if (state.get(name) === "visiting") {
+      const cycle = [...path.slice(path.indexOf(name)), name];
+      const key = [...cycle.slice(0, -1)].sort().join(",");
+      if (!reported.has(key)) {
+        reported.add(key);
+        issues.push({
+          path: `targets.${cycle[0]}.after`,
+          message: `targets can't wait for each other in a circle: ${cycle.join(" -> ")}`,
+        });
+      }
+      return;
+    }
+    state.set(name, "visiting");
+    for (const next of valid.get(name) ?? []) visit(next, [...path, name]);
+    state.set(name, "done");
+  };
+  for (const name of Object.keys(config.targets)) visit(name, []);
+  return issues;
+}
+
+/** The GitLab shell of a target's build job (default `sh`). */
+export function targetShell(target: ResolvedTarget): GitLabShell {
+  return target.gitlab?.shell ?? "sh";
+}
+
+/** The GitLab settings with their defaults. */
+export function gitlabSettings(config: Pick<ResolvedConfig, "gitlab">): {
+  include: string[];
+  tagPipelines: boolean;
+} {
+  return {
+    include: config.gitlab?.include ?? [],
+    tagPipelines: config.gitlab?.tagPipelines ?? false,
+  };
+}
+
+/**
+ * Settings the GitHub workflows can't follow, as config issues (empty on GitLab). GitHub's
+ * release workflow builds every target in one matrix job, so `after` can't order them there.
+ */
+export function hostConfigIssues(config: ResolvedConfig, host: "github" | "gitlab"): ConfigIssue[] {
+  if (host !== "github") return [];
+  return Object.values(config.targets)
+    .filter((t) => (t.after ?? []).length > 0)
+    .map((t) => ({
+      path: `targets.${t.name}.after`,
+      message:
+        'is GitLab only: the GitHub workflows build every target in one matrix job, which can\'t run one target after another. Remove "after" (or do the dependent steps in one target)',
+    }));
 }
 
 /** A top-level `$schema` key (for editor support in `launchset.config.json`) is allowed. */

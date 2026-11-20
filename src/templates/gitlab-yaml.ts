@@ -227,6 +227,49 @@ export const INSTALL_LINES = [
   "launchset --version",
 ];
 
+// ---------------------------------------------------------------------------
+// PowerShell (a Windows runner, `gitlab.shell: powershell`)
+
+/**
+ * After a native command (launchset, npm, git): stop the job with its exit code when it failed.
+ * GitLab's runner doesn't stop a PowerShell script for a failing native command on every
+ * PowerShell version, so launchset checks `$LASTEXITCODE` itself.
+ */
+export const PS_CHECK = "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }";
+
+/** A PowerShell command line followed by {@link PS_CHECK}. */
+export function psChecked(command: string): string {
+  return `${command}; ${PS_CHECK}`;
+}
+
+/**
+ * One PowerShell argument: bare when it can't be read as anything else, else single-quoted.
+ * PowerShell also takes the typographic single quotes (U+2018 to U+201B) as quotes: all of them
+ * are doubled inside the quotes.
+ */
+export function psWord(value: string): string {
+  if (/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(value)) return value;
+  return psQuote(value);
+}
+
+/** A single-quoted PowerShell string (no expansion); quote characters are doubled. */
+export function psQuote(value: string): string {
+  return `'${value.replace(/['\u2018-\u201B]/g, "$&$&")}'`;
+}
+
+const PS_FIND = "Get-Command launchset -ErrorAction SilentlyContinue";
+
+/**
+ * {@link INSTALL_LINES} for PowerShell. npm's global folder may be missing from the runner's
+ * PATH (a service account): then it is added for this job, so the new `launchset` is found.
+ */
+export const POWERSHELL_INSTALL_LINES = [
+  `if ($env:NPM_TOKEN -and -not (${PS_FIND})) { npm config set "//registry.npmjs.org/:_authToken" "$env:NPM_TOKEN"; ${PS_CHECK} }`,
+  `if (-not (${PS_FIND})) { npm install --global --no-fund --no-audit --loglevel=error "$env:LAUNCHSET_CLI"; ${PS_CHECK} }`,
+  `if (-not (${PS_FIND})) { $env:Path = "$(npm prefix --global);$env:Path" }`,
+  psChecked("launchset --version"),
+];
+
 /** {@link INSTALL_LINES} as YAML sequence items. */
 export function installItems(): string {
   return INSTALL_LINES.map((line) => `- ${yamlScalar(line)}`).join("\n");

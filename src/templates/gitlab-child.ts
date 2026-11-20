@@ -8,6 +8,7 @@
  * pipeline needs at least one job). Pure apart from reading the template files.
  */
 
+import type { GitLabShell } from "../core/config/schema.ts";
 import { LaunchsetError } from "../core/errors.ts";
 import type { Plan } from "../core/types.ts";
 import { packageVersion } from "../init/package-files.ts";
@@ -16,7 +17,11 @@ import {
   defaultCliSpec,
   INSTALL_LINES,
   installItems,
+  POWERSHELL_INSTALL_LINES,
   parseGitLabYaml,
+  psChecked,
+  psQuote,
+  psWord,
   shellWord,
   yamlFlowScalar,
   yamlScalar,
@@ -33,12 +38,29 @@ export const PLAN_JOBS = {
   preview: "launchset-preview-plan",
 } as const;
 
+/** What the child pipeline needs to know about one target (from the config and targets file). */
+export interface ChildTarget {
+  /** The runner's shell (`gitlab.shell`), default `sh`. */
+  shell?: GitLabShell;
+  /** Targets whose jobs this one waits for, with their artifacts (`after`). */
+  after?: readonly string[];
+  /**
+   * The user's `.launchset-<target>` job (with its `extends` and the included files' `default`)
+   * sets `interruptible: false`: preview jobs keep it. Release jobs are never interruptible.
+   */
+  notInterruptible?: boolean;
+}
+
 export interface ChildPipelineInput {
   /** The plan; `undefined` when there is none (a skipped preview). */
   plan: Plan | undefined;
   kind: "release" | "preview";
   /** The targets file to include, relative to the repository root. */
   targetsFile?: string;
+  /** Extra local files to include before the targets file (`gitlab.include`). */
+  includes?: readonly string[];
+  /** Per target: shell, `after`, interruptible (default: sh, none, interruptible previews). */
+  targets?: Readonly<Record<string, ChildTarget>>;
   /** The parent job that has plan.json as an artifact (the job writing this file). */
   planJob: string;
   /**
@@ -109,13 +131,84 @@ function checkoutSha(input: ChildPipelineInput): string | undefined {
   return sha;
 }
 
-function checkoutLines(sha: string | undefined): string[] {
+/** launchset's lines of a build job, in the runner's shell. */
+interface ShellLines {
+  cd: string;
+  install: readonly string[];
+  /** A launchset (or git) command that fails the job when it fails. */
+  run(command: string): string;
+  /** Load the variables the last `--ci` command wrote. */
+  load: string;
+  /** `--plan @plan.json --ci`. */
+  planArgs: string;
+  word(value: string): string;
+  /** Already published: run `mark`, then end the job with its exit code. */
+  alreadyPublished(mark: string): string;
+}
+
+const SH_LINES: ShellLines = {
+  cd: 'cd "$CI_PROJECT_DIR"',
+  install: INSTALL_LINES,
+  run: (command) => command,
+  load: ". ./launchset.sh",
+  planArgs: "--plan @plan.json --ci",
+  word: shellWord,
+  alreadyPublished: (mark) =>
+    `if [ "\${LAUNCHSET_ALREADY_PUBLISHED:-}" = "true" ]; then ${mark}; exit $?; fi`,
+};
+
+/**
+ * PowerShell: `$env:` variables, `'@plan.json'` quoted (a bare `@plan` is splatting), the
+ * launchset.ps1 variables file, and `$LASTEXITCODE` checked after every native command.
+ */
+const POWERSHELL_LINES: ShellLines = {
+  cd: "Set-Location -LiteralPath $env:CI_PROJECT_DIR",
+  install: POWERSHELL_INSTALL_LINES,
+  run: psChecked,
+  load: ". ./launchset.ps1",
+  planArgs: `--plan ${psQuote("@plan.json")} --ci`,
+  word: psWord,
+  alreadyPublished: (mark) =>
+    `if ($env:LAUNCHSET_ALREADY_PUBLISHED -eq 'true') { ${mark}; exit $LASTEXITCODE }`,
+};
+
+function shellLines(shell: GitLabShell | undefined): ShellLines {
+  return shell === "powershell" ? POWERSHELL_LINES : SH_LINES;
+}
+
+function checkoutLines(sha: string | undefined, lines: ShellLines = SH_LINES): string[] {
   if (!sha) return [];
   return [
     "# The plan builds another commit than this pipeline's (a retry of an unfinished release, or",
     "# a merged results pipeline): check it out first.",
-    item(`git checkout --quiet --detach ${sha}`),
+    item(lines.run(`git checkout --quiet --detach ${sha}`)),
   ];
+}
+
+/** `needs` entries for the targets this one comes after (`after`), with their artifacts. */
+function afterNeeds(
+  input: ChildPipelineInput,
+  target: string,
+  builds: readonly string[],
+): string[] {
+  const after = input.targets?.[target]?.after ?? [];
+  if (after.length === 0) return [];
+  const lines = [
+    `# after: ${after.join(", ")}. Optional: a retry that doesn't build one of them still starts, but`,
+    "# then its artifacts (from an earlier pipeline) aren't here.",
+  ];
+  for (const other of after) {
+    if (!builds.includes(other)) {
+      lines.push(`# (${other} isn't built in this pipeline.)`);
+      continue;
+    }
+    lines.push(
+      `- job: ${yamlScalar(childJobName(input.kind, other))}`,
+      "  artifacts: true",
+      "  optional: true",
+    );
+  }
+  return lines;
 }
 
 function buildJob(
@@ -123,28 +216,29 @@ function buildJob(
   target: string,
   cliSpec: string,
   sha: string | undefined,
+  builds: readonly string[],
 ): string {
   const release = input.kind === "release";
-  const t = shellWord(target);
-  const planArg = "--plan @plan.json --ci";
+  const options = input.targets?.[target] ?? {};
+  const sh = shellLines(options.shell);
+  const t = sh.word(target);
+  const command = (name: string) => `launchset ${name} --target ${t} ${sh.planArgs}`;
   const script = [
-    item('cd "$CI_PROJECT_DIR"'),
-    ...INSTALL_LINES.map(item),
-    ...checkoutLines(sha),
+    item(sh.cd),
+    ...sh.install.map(item),
+    ...checkoutLines(sha, sh),
     "# Writes the version and build number into the target's files (in this checkout only) and",
     "# sets LAUNCHSET_VERSION, LAUNCHSET_BUILD_NUMBER, LAUNCHSET_CHANNEL, ...",
-    item(`launchset stamp --target ${t} ${planArg}`),
-    item(". ./launchset.sh"),
+    item(sh.run(command("stamp"))),
+    item(sh.load),
   ];
   if (release) {
     script.push(
       "# Checks the store, registry or npm: is this version already published? Then your steps",
-      "# are skipped and only `mark` runs (`exit` ends the job's script successfully).",
-      item(`launchset verify --target ${t} ${planArg}`),
-      item(". ./launchset.sh"),
-      item(
-        `if [ "\${LAUNCHSET_ALREADY_PUBLISHED:-}" = "true" ]; then launchset mark --target ${t} ${planArg}; exit $?; fi`,
-      ),
+      "# are skipped and only `mark` runs (`exit` ends the job's script with mark's exit code).",
+      item(sh.run(command("verify"))),
+      item(sh.load),
+      item(sh.alreadyPublished(command("mark"))),
     );
   }
   script.push(
@@ -154,23 +248,30 @@ function buildJob(
   if (release) {
     script.push(
       "# Records that this target shipped (the marker tag).",
-      item('cd "$CI_PROJECT_DIR"'),
-      item(`launchset mark --target ${t} ${planArg}`),
+      item(sh.cd),
+      item(sh.run(command("mark"))),
     );
   }
-  // Prerelease previews reserved a tag: never cancel them halfway.
-  const interruptible = !release && input.plan?.channel !== "prerelease";
+  // Releases and prerelease previews (they reserved a tag) are never cancelled halfway; other
+  // previews are, unless the user's job says interruptible: false (a runner a cancel breaks).
+  const interruptible =
+    !release && input.plan?.channel !== "prerelease" && options.notInterruptible !== true;
   return fillTemplate(
     template("build.yml"),
     {
       job: yamlScalar(childJobName(input.kind, target)),
       extends: yamlScalar(targetJobName(target)),
       plan_job: yamlScalar(input.planJob),
+      after_needs: afterNeeds(input, target, builds).join("\n"),
       interruptible: String(interruptible),
       cli_spec: yamlScalar(cliSpec),
       git_depth: sha
         ? '# Full history, so the plan\'s commit is in the clone.\nGIT_DEPTH: "0"'
         : "",
+      shell_note:
+        options.shell === "powershell"
+          ? "# PowerShell (gitlab.shell): every native command checks $LASTEXITCODE, so a failure fails the job."
+          : "",
       script: script.join("\n"),
     },
     "child/build.yml",
@@ -205,10 +306,19 @@ export function renderChildPipeline(input: ChildPipelineInput): string {
     ),
   ];
   if (builds.length > 0) {
+    const includes = (input.includes ?? []).filter((path) => path !== targetsFile);
     parts.push(
       fillTemplate(
         template("include.yml"),
-        { targets_file: yamlScalar(targetsFile) },
+        {
+          templates: includes.length
+            ? [
+                "# Templates your .launchset-<target> jobs extend (gitlab.include in launchset.config).",
+                ...includes.map((path) => `- local: ${yamlScalar(path)}`),
+              ].join("\n")
+            : "",
+          targets_file: yamlScalar(targetsFile),
+        },
         "child/include.yml",
       ),
     );
@@ -222,7 +332,7 @@ export function renderChildPipeline(input: ChildPipelineInput): string {
       ),
     );
   }
-  for (const target of builds) parts.push(buildJob(input, target, cliSpec, sha));
+  for (const target of builds) parts.push(buildJob(input, target, cliSpec, sha, builds));
   if (finalize) {
     parts.push(
       fillTemplate(
@@ -317,4 +427,158 @@ export function checkTargetsFile(
     );
   }
   return warnings;
+}
+
+// ---------------------------------------------------------------------------
+// The included template files and what the target jobs inherit
+
+/** Top-level keys an included template file may have, besides hidden jobs. */
+const TEMPLATE_FILE_KEYS = new Set(["variables", "default"]);
+
+const includeHint = (path: string) =>
+  `${path} is in gitlab.include of launchset.config: the child pipeline includes it so the .launchset-<target> jobs can extend its templates. It may only hold hidden jobs (names starting with .), variables and default.`;
+
+/**
+ * Check one `gitlab.include` file: it must exist, parse, and hold only hidden jobs,
+ * `variables` and `default`. A visible job there would run in every child pipeline, and a
+ * `workflow`, `stages` or nested `include` would change the child pipeline itself. Returns the
+ * parsed file.
+ */
+export function checkTemplateFile(path: string, text: string | undefined): Record<string, unknown> {
+  if (text === undefined) {
+    throw new LaunchsetError(
+      "gitlab-include-missing",
+      `${path} doesn't exist, so the child pipeline can't include it.`,
+      { hint: `${includeHint(path)} Create it, or remove it from gitlab.include.` },
+    );
+  }
+  let doc: unknown;
+  try {
+    doc = parseGitLabYaml(text);
+  } catch (error) {
+    throw new LaunchsetError(
+      "gitlab-include-invalid",
+      `${path} is not valid YAML: ${(error as Error).message}`,
+      { hint: includeHint(path), cause: error },
+    );
+  }
+  if (doc === null || doc === undefined) return {};
+  if (!isRecord(doc)) {
+    throw new LaunchsetError("gitlab-include-invalid", `${path} is not a map of jobs.`, {
+      hint: includeHint(path),
+    });
+  }
+  const unsafe = Object.keys(doc).filter(
+    (key) => !key.startsWith(".") && !TEMPLATE_FILE_KEYS.has(key),
+  );
+  if (unsafe.length > 0) {
+    const nested = unsafe.includes("include")
+      ? " For an include of its own, list that file in gitlab.include instead."
+      : "";
+    throw new LaunchsetError(
+      "gitlab-include-unsafe",
+      `${path} has ${unsafe.map((k) => `"${k}"`).join(", ")}, which the child pipeline can't include: a visible job would run in every child pipeline, and workflow, stages or include would change the child pipeline itself.`,
+      {
+        hint: `Move ${unsafe.length === 1 ? "it" : "them"} to .gitlab-ci.yml, or hide a template by starting its name with a dot.${nested} ${includeHint(path)}`,
+      },
+    );
+  }
+  return doc;
+}
+
+const names = (value: unknown): string[] =>
+  typeof value === "string"
+    ? [value]
+    : Array.isArray(value)
+      ? value.filter((v): v is string => typeof v === "string")
+      : [];
+
+/**
+ * Where `key` of a job comes from, following `extends` like GitLab (the job's own value, else
+ * the last template in `extends` that has it, depth first). Undefined when nothing sets it.
+ */
+function inherited(
+  jobs: Record<string, unknown>,
+  name: string,
+  key: string,
+  seen = new Set<string>(),
+): { job: string; value: unknown } | undefined {
+  if (seen.has(name)) return undefined;
+  seen.add(name);
+  const job = jobs[name];
+  if (!isRecord(job)) return undefined;
+  if (job[key] !== undefined) return { job: name, value: job[key] };
+  for (const parent of [...names(job.extends)].reverse()) {
+    const found = inherited(jobs, parent, key, seen);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+/** Keys the child pipeline sets or decides itself, and why the user's value is a problem. */
+const CHILD_DECIDES: Record<string, (job: string, target: string) => string> = {
+  needs: (job, target) =>
+    `${job} replaces it with its own needs (the plan job), so it doesn't wait for those jobs or get their artifacts. To build ${target} after other targets, list them in "after" of the target in launchset.config`,
+  rules: (job) =>
+    `the child pipeline decides when ${job} runs: a rule that keeps it out leaves the target unbuilt (and a child pipeline whose jobs are all ruled out fails to start). Remove it`,
+  when: (job) =>
+    `the child pipeline decides when ${job} runs (a manual or delayed job holds up the release). Remove it`,
+  only: (job) => `the child pipeline decides when ${job} runs. Remove it`,
+  except: (job) => `the child pipeline decides when ${job} runs. Remove it`,
+  stage: (job) =>
+    `${job} runs in stage test (a child pipeline has GitLab's default stages), so it is ignored. Remove it`,
+};
+
+export interface TargetJobsInput {
+  /** The targets file's text (undefined when it doesn't exist). */
+  targetsText: string | undefined;
+  targetsPath?: string;
+  /** The `gitlab.include` files with their text (undefined when missing). */
+  includes?: readonly { path: string; text: string | undefined }[];
+  /** The targets the child pipeline builds. */
+  matrix: readonly string[];
+  kind: ChildPipelineInput["kind"];
+}
+
+/**
+ * Check the targets file and the `gitlab.include` files before the child pipeline is written
+ * (throws on a missing or unsafe file, like {@link checkTargetsFile}), and read what the
+ * `.launchset-<target>` jobs inherit. Warnings: keys the child pipeline overrides or decides
+ * (`needs`, `rules`, `when`, `only`, `except`, `stage`) set on a target's job or a template it
+ * extends.
+ */
+export function inspectTargetJobs(input: TargetJobsInput): {
+  warnings: string[];
+  /** Targets whose job ends up `interruptible: false`. */
+  notInterruptible: Set<string>;
+} {
+  const path = input.targetsPath ?? DEFAULT_TARGETS_FILE;
+  const warnings = checkTargetsFile(input.targetsText, input.matrix, path);
+  const notInterruptible = new Set<string>();
+  if (input.matrix.length === 0) return { warnings, notInterruptible };
+  const jobs: Record<string, unknown> = {};
+  let defaults: Record<string, unknown> = {};
+  for (const file of input.includes ?? []) {
+    const doc = checkTemplateFile(file.path, file.text);
+    Object.assign(jobs, doc);
+    if (isRecord(doc.default)) defaults = { ...defaults, ...doc.default };
+  }
+  const targets = parseGitLabYaml(input.targetsText ?? "");
+  if (isRecord(targets)) {
+    Object.assign(jobs, targets);
+    if (isRecord(targets.default)) defaults = { ...defaults, ...targets.default };
+  }
+  for (const target of input.matrix) {
+    const name = targetJobName(target);
+    const job = childJobName(input.kind, target);
+    for (const [key, why] of Object.entries(CHILD_DECIDES)) {
+      const found = inherited(jobs, name, key);
+      if (!found) continue;
+      const where = found.job === name ? name : `${found.job}, which ${name} extends,`;
+      warnings.push(`${where} sets ${key}: ${why(job, target)}.`);
+    }
+    const interruptible = inherited(jobs, name, "interruptible")?.value ?? defaults.interruptible;
+    if (interruptible === false) notInterruptible.add(target);
+  }
+  return { warnings, notInterruptible };
 }
