@@ -1,5 +1,7 @@
 /** The git layer on GitLab: auth user and scope, push failure hints, the commit identity. */
 
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   authConfigEnv,
@@ -8,7 +10,7 @@ import {
   parseRepoFromRemote,
   remoteAuthScope,
 } from "../../src/git/index.ts";
-import { initRepo } from "./helpers.ts";
+import { initRepo, repoWithRemote, sh } from "./helpers.ts";
 
 const b64 = (text: string) => Buffer.from(text).toString("base64");
 
@@ -148,6 +150,32 @@ describe("commit identity", () => {
     expect(calls).toBe(1);
     expect(repo.git("log", "-1", "--format=%an <%ae>|%cn <%ce>")).toBe(
       "launchset <project_1_bot_x@noreply.gitlab.com>|launchset <project_1_bot_x@noreply.gitlab.com>",
+    );
+  });
+});
+
+describe("push options", () => {
+  it("pushTag sends them (git push -o), and fails where the remote doesn't take them", async () => {
+    const { remote, repo } = repoWithRemote();
+    const git = new Git({ cwd: repo.dir });
+    await git.createTag("plain", repo.head());
+    await expect(git.pushTag("plain", { pushOptions: ["ci.skip"] })).rejects.toThrow(
+      /push options/,
+    );
+    // Like GitLab: the remote advertises push options; a hook records them.
+    sh(remote, "config", "receive.advertisePushOptions", "true");
+    const log = join(remote, "options.log");
+    writeFileSync(
+      join(remote, "hooks", "post-receive"),
+      `#!/bin/sh\nenv | sed -n 's/^GIT_PUSH_OPTION_[0-9]*=//p' >> '${log}'\n`,
+      { mode: 0o755 },
+    );
+    expect(await git.createAndPushTag("skipped", repo.head(), { pushOptions: ["ci.skip"] })).toBe(
+      "created",
+    );
+    expect(readFileSync(log, "utf8")).toBe("ci.skip\n");
+    await expect(git.pushTag("plain", { pushOptions: ["a\nb"] })).rejects.toThrow(
+      /Invalid push option/,
     );
   });
 });

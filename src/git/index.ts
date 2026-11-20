@@ -386,6 +386,23 @@ export function parseRepoFromRemote(
   return `${match[1]}/${match[2]}`;
 }
 
+export interface PushTagOptions {
+  /**
+   * `git push -o <option>` values, e.g. GitLab's `ci.skip` (no pipeline for this push). Only
+   * for remotes that accept push options: git fails the push when the server doesn't.
+   */
+  pushOptions?: readonly string[];
+}
+
+function pushOptionArgs(options: readonly string[] | undefined): string[] {
+  return (options ?? []).flatMap((option) => {
+    if (option === "" || /[\r\n\0]/.test(option)) {
+      throw new GitError(`Invalid push option ${JSON.stringify(option)}.`, "", "", undefined);
+    }
+    return [`--push-option=${option}`];
+  });
+}
+
 function assertRefName(kind: string, name: string): void {
   if (!name || name.startsWith("-") || /[\s~^:?*[\\]|\.\.|@\{/.test(name)) {
     throw new GitError(
@@ -984,10 +1001,11 @@ export class Git {
    * pushed it first); pointing to our object → `up-to-date`. Otherwise the push error is
    * thrown.
    */
-  async pushTag(name: string): Promise<PushResult> {
+  async pushTag(name: string, options: PushTagOptions = {}): Promise<PushResult> {
     assertRefName("tag", name);
     const ref = `refs/tags/${name}`;
-    const args = ["push", "--porcelain", this.remote, `${ref}:${ref}`];
+    const args = ["push", "--porcelain", ...pushOptionArgs(options.pushOptions)];
+    args.push(this.remote, `${ref}:${ref}`);
     // Hooks are off anyway (NO_HOOKS). This also tells git-lfs there's nothing to upload,
     // should its hook run: launchset's tags point at commits that are already on the remote.
     const result = await this.exec(args, { auth: true, env: { GIT_LFS_SKIP_PUSH: "1" } });
@@ -1027,10 +1045,14 @@ export class Git {
    * has it elsewhere). A failed push removes the local tag again, so it never lingers; when
    * that fails too, a {@link TagCleanupError} carries both errors.
    */
-  async createAndPushTag(name: string, sha: string): Promise<PushResult> {
+  async createAndPushTag(
+    name: string,
+    sha: string,
+    options: PushTagOptions = {},
+  ): Promise<PushResult> {
     await this.createTag(name, sha);
     try {
-      return await this.pushTag(name);
+      return await this.pushTag(name, options);
     } catch (error) {
       try {
         await this.deleteLocalTag(name);

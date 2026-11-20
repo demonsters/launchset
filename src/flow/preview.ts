@@ -56,6 +56,7 @@ import {
   rootVersionReader,
   syncTags,
 } from "./gather.ts";
+import { tagPushOptions } from "./git-ops.ts";
 
 /** Attempts to reserve a prerelease tag before giving up (spec 9.9: bounded retries). */
 export const MAX_RESERVATION_ATTEMPTS = 10;
@@ -251,7 +252,9 @@ async function tryReserve(context: FlowContext, tag: string, sha: string): Promi
   let pushed: PushResult;
   try {
     // A failed push removes the local tag again: it must not linger and count as taken.
-    pushed = await context.git.createAndPushTag(tag, sha);
+    pushed = await context.git.createAndPushTag(tag, sha, {
+      pushOptions: tagPushOptions(context, tag),
+    });
   } catch (error) {
     if (error instanceof TagCleanupError) {
       // A failing cleanup must not hide the push error.

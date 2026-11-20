@@ -9,6 +9,7 @@
  */
 
 import { execFileSync, spawn } from "node:child_process";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
@@ -164,6 +165,21 @@ export interface GitLabProject extends Project {
   cloneUrl: string;
   /** Point `refs/merge-requests/<iid>/head` on the remote at `sha` (GitLab keeps one per MR). */
   setMrHead(iid: number, sha: string): void;
+  /**
+   * Every ref the remote received, in order, with the push options (`git push -o`) of its push:
+   * `refs/tags/v1.5.0 ci.skip`. GitLab accepts push options; the bare repo advertises them.
+   */
+  pushes(): string[];
+}
+
+/** A post-receive hook that logs each pushed ref with the push's options to `log`. */
+function pushLogHook(log: string): string {
+  return [
+    "#!/bin/sh",
+    "opts=$(env | sed -n 's/^GIT_PUSH_OPTION_[0-9][0-9]*=/ /p' | tr -d '\\n')",
+    `while read -r old new ref; do echo "$ref$opts" >> '${log}'; done`,
+    "",
+  ].join("\n");
 }
 
 /**
@@ -179,6 +195,10 @@ export async function setupGitLabProject(
   const bare = join(root, "acme", "app.git");
   sh(root, "clone", "--quiet", "--bare", base.remote, bare);
   sh(bare, "config", "http.receivepack", "true");
+  // Like GitLab, which takes push options such as ci.skip.
+  sh(bare, "config", "receive.advertisePushOptions", "true");
+  const log = join(root, "push-log");
+  writeFileSync(join(bare, "hooks", "post-receive"), pushLogHook(log), { mode: 0o755 });
   base.repo.git("remote", "set-url", "origin", bare);
   const project = projectFor(base.repo, bare);
   const git = await gitServer(root);
@@ -190,6 +210,12 @@ export async function setupGitLabProject(
     setMrHead(iid, sha) {
       sh(bare, "update-ref", `refs/merge-requests/${iid}/head`, sha);
     },
+    pushes: () =>
+      existsSync(log)
+        ? readFileSync(log, "utf8")
+            .split("\n")
+            .filter((l) => l !== "")
+        : [],
   };
 }
 

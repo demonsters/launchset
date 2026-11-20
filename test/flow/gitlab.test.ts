@@ -383,6 +383,35 @@ describe("release on GitLab", () => {
     expect(body.description).not.toMatch(/\[![A-Z]+\]/);
     expect(execShow(p.remote, "v1.5.0", "CHANGELOG.md")).toContain("## 1.5.0");
     expectOauth2Only(p);
+    // launchset's tags start no tag pipeline (git push -o ci.skip); branch pushes are unchanged.
+    const pushes = p.pushes();
+    expect(pushes.filter((l) => l.startsWith("refs/tags/"))).toEqual([
+      "refs/tags/launchset/web@1.5.0 ci.skip",
+      "refs/tags/v1.5.0 ci.skip",
+    ]);
+    expect(pushes.filter((l) => l.startsWith("refs/heads/") && l.includes(" "))).toEqual([]);
+  });
+
+  it("gitlab.tagPipelines: the release tag starts its pipeline, the marker tag still doesn't", async () => {
+    const p = await project({
+      config: { gitlab: { tagPipelines: true }, targets: { web: { type: "web" } } },
+    });
+    const sha = p.push("Offline mode", minor);
+    new FakeGitLab();
+    await release(await gitlabContext(runnerCheckout(p, sha), pushEnv("main", sha)));
+    p.repo.checkout("main");
+    p.repo.git("fetch", "--quiet", "origin");
+    const merged = p.repo.merge("origin/launchset/release/main", "Merge the release MR");
+    p.repo.git("push", "--quiet", "origin", "main");
+    const ci = runnerCheckout(p, merged);
+    const env = pushEnv("main", merged);
+    const plan = (await release(await gitlabContext(ci, env))).outputs.plan ?? "";
+    await mark(await gitlabContext(ci, env), { target: "web", plan });
+    expect((await finalize(await gitlabContext(ci, env), { plan })).ok).toBe(true);
+    expect(p.pushes().filter((l) => l.startsWith("refs/tags/"))).toEqual([
+      "refs/tags/launchset/web@1.5.0 ci.skip",
+      "refs/tags/v1.5.0",
+    ]);
   });
 
   it("a superseded partial release: lowercase alert, created before the real release", async () => {
@@ -425,6 +454,7 @@ describe("release on GitLab", () => {
       .callsTo("POST", "/releases")
       .map((c) => c.body as Record<string, string>);
     expect(created.map((b) => b.tag_name)).toEqual(["launchset/partial/1.5.0", "v1.5.1"]);
+    expect(p.pushes()).toContain("refs/tags/launchset/partial/1.5.0 ci.skip");
     expect(created[0]?.name).toBe("v1.5.0 (partial, superseded by v1.5.1)");
     expect(created[0]?.description).toMatch(/^> \[!warning\]\n> v1\.5\.0 was never fully released/);
     expect(result.lines.join("\n")).not.toContain("pre-release");

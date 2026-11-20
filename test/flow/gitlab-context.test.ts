@@ -4,6 +4,7 @@ import { HttpResponse, http } from "msw";
 import { describe, expect, it } from "vitest";
 import { gitlabEnvironment, serverUrlFromRemote } from "../../src/flow/ci/index.ts";
 import { createContext, requireForge } from "../../src/flow/context.ts";
+import { tagPushOptions } from "../../src/flow/git-ops.ts";
 import { server } from "../forge/helpers.ts";
 import { repoWithRemote } from "../git/helpers.ts";
 
@@ -163,5 +164,43 @@ describe("after is GitLab only", () => {
     expect((await createContext({ cwd: gitlab.dir, env: {} })).host).toBe("gitlab");
     const local = withAfter("/tmp/nowhere.git");
     expect((await createContext({ cwd: local.dir, env: {} })).host).toBe("github");
+  });
+});
+
+describe("tagPushOptions", () => {
+  const context = async (remote: string, config: object) => {
+    const repo = project(remote);
+    repo.commit("config", { "launchset.config.json": JSON.stringify(config) });
+    return createContext({ cwd: repo.dir, env: {} });
+  };
+  const targets = { web: { type: "web" } };
+
+  it("GitLab: ci.skip for every launchset tag by default", async () => {
+    const gitlab = await context("git@gitlab.com:acme/app.git", { targets });
+    for (const tag of [
+      "launchset/web@1.5.0",
+      "launchset/partial/1.5.0",
+      "v1.5.0",
+      "v1.6.0-beta.0",
+    ]) {
+      expect(tagPushOptions(gitlab, tag)).toEqual(["ci.skip"]);
+    }
+  });
+
+  it("GitLab with tagPipelines: release and prerelease tags start pipelines, internal tags don't", async () => {
+    const gitlab = await context("git@gitlab.com:acme/app.git", {
+      gitlab: { tagPipelines: true },
+      targets,
+    });
+    expect(tagPushOptions(gitlab, "v1.5.0")).toEqual([]);
+    expect(tagPushOptions(gitlab, "v1.6.0-beta.0")).toEqual([]);
+    expect(tagPushOptions(gitlab, "launchset/web@1.5.0")).toEqual(["ci.skip"]);
+    expect(tagPushOptions(gitlab, "launchset/partial/1.5.0")).toEqual(["ci.skip"]);
+  });
+
+  it("GitHub: none", async () => {
+    const github = await context("https://github.com/acme/app.git", { targets });
+    expect(tagPushOptions(github, "launchset/web@1.5.0")).toEqual([]);
+    expect(tagPushOptions(github, "v1.5.0")).toEqual([]);
   });
 });
