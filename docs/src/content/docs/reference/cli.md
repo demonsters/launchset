@@ -332,7 +332,7 @@ Variables: LAUNCHSET_MATRIX, LAUNCHSET_VERSION, LAUNCHSET_BUILD_NUMBER, LAUNCHSE
 
 ### launchset preview-comment
 
-Posts the preview results: the sticky PR comment, or the prerelease notes on a prerelease branch. Pass the plan from `preview-plan`. An empty or missing plan means the preview was skipped, and nothing is posted.
+Posts the preview results: the sticky PR comment, or the prerelease notes on a prerelease branch. Pass the plan from `preview-plan`. An empty or missing plan means the preview was skipped, and nothing is posted. On GitLab it runs as the last job of the preview's child pipeline.
 
 ```text
 Usage: launchset preview-comment [options]

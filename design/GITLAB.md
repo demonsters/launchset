@@ -1,7 +1,8 @@
 # GitLab support: plan
 
 Status: implemented (all phases), plus the fixes from a trial adoption on GitLab (see
-"Trial fixes"); needs a trial on a real GitLab instance (see To verify). Last updated 2026-11-20.
+"Trial fixes") and from its first pipelines on GitLab.com (see "GitLab.com trial"); the rest of
+"Still needs a real GitLab instance" is open. Last updated 2026-11-24.
 
 launchset ran on GitHub only. This plan covers what it takes to also run on GitLab
 (gitlab.com and self-managed), in an order that keeps the GitHub path safe at every step.
@@ -160,8 +161,8 @@ Renderers, written by `init` (phase 5): `renderGitLabCi()` in `src/templates/git
   runs in the fork, `$CI_PROJECT_ID != $CI_MERGE_REQUEST_PROJECT_ID`, which has no `NPM_TOKEN`
   to install launchset with), `launchset-release` +
   `launchset-build` (trigger) on pushes and `web` / `api` pipelines of the base and maintenance
-  branches, `launchset-preview-plan` + `launchset-preview` (trigger) +
-  `launchset-preview-comment`. No top-level `workflow:` (it would override the project's).
+  branches, `launchset-preview-plan` + `launchset-preview` (trigger; the comment job is in the
+  child, see "GitLab.com trial"). No top-level `workflow:` (it would override the project's).
   launchset's jobs set `cache: []` and the release job `dependencies: []`: files a cache or an
   earlier stage's artifacts put in the checkout would count as uncommitted changes when the
   release branch is built. launchset's own `--ci` files (plan.json from a parent job's
@@ -248,6 +249,11 @@ Renderers, written by `init` (phase 5): `renderGitLabCi()` in `src/templates/git
   job. Never for fork MRs. Pushes to `preview.branches` build automatically.
 - `preview-comment --plan @plan.json` treats a missing file as "no plan" (a skipped preview
   writes none).
+- The preview child ends with `launchset-preview-comment` (`.launchset_cli`, `when: always`,
+  `needs` the parent's plan job and every `preview-<target>` with `artifacts: false`,
+  interruptible except for prereleases), whenever there is a plan, also with an empty matrix. A
+  skipped preview's child is only `launchset-nothing-to-build`. (Moved out of the parent after
+  the GitLab.com trial.)
 
 ### Phase 5: `init`, docs, skills (done)
 
@@ -292,6 +298,42 @@ gaps. Each is fixed; the details are in design/DECISIONS.md.
    templates the target jobs extend to `.gitlab/ci-templates.yml` and includes it from both.
 6. **Interruptible previews.** A preview job keeps `interruptible: false` from the user's job or
    the templates it extends.
+
+## GitLab.com trial (first pipelines, GitLab.com 19.7, launchset 1.1.0)
+
+The same project's first MR pipelines on GitLab.com confirmed `launchset-check`, the npm install
+with `NPM_TOKEN`, the sticky check note, and that notes posted by a project access token have
+`author.bot` unset: the `project_<id>_bot_` username match is what recognizes them.
+
+It also showed that the assumption about `needs` on an optional manual job was wrong for a
+`when: always` job. In an MR pipeline without the preview label, `launchset-preview-comment`
+(`needs: [launchset-preview-plan, launchset-preview]`, `when: always`) ran at once, while the plan
+job was still `manual`; the trigger job `launchset-preview` (default `when`) was `skipped`. GitLab
+counts a manual job that hasn't run as skipped and treats skipped as finished (its docs say so
+for stages: "Skipped jobs in earlier stages, for example manual jobs that have not been started,
+are considered successful"), and `when: always` doesn't care about the result. Playing the manual
+job later re-processes the skipped jobs after it (the trigger; still to confirm), but a job that
+already finished stays finished, so a preview started from the manual job never got its note,
+and every unlabeled MR pipeline paid for a comment job that reported nothing.
+
+Fix: the comment job moved into the generated child pipeline, as its last job. The child only
+exists once the plan job ran (labeled MR, played manual job, `LAUNCHSET_PREVIEW=true`, preview
+and prerelease branch pushes), so the comment can never run before the plan, and it lists its
+own pipeline's jobs. Alternatives weighed:
+
+- Keep it in the parent without `when: always`, and give the trigger `allow_failure: true` so a
+  failed child doesn't skip it: a failed preview would no longer fail the MR pipeline, and it
+  needs a new `.gitlab/launchset.yml` too.
+- Make the comment job manual where the plan job is: one more click, easy to forget.
+- The plan job posting a "pending" note itself: still nothing that runs after the builds.
+
+The child job needs no change to the parent file, so it reaches existing projects with a newer
+`LAUNCHSET_CLI`. Their parent still has the old `launchset-preview-comment` (init never rewrites
+`.gitlab/launchset.yml`): `preview-comment` recognizes it (GitLab CI, `CI_JOB_NAME` is
+`launchset-preview-comment`, `CI_PIPELINE_SOURCE` isn't `parent_pipeline`), posts nothing (the
+child's job already did) and logs that the job should be removed. One loss: when GitLab can't
+create the child pipeline at all, no job reports on the MR (the trigger job fails, the MR shows
+it).
 
 ## Decided (formerly open decisions)
 
@@ -364,10 +406,11 @@ Still needs a real GitLab instance:
   artifact-generated child (expected to work: includes merge before `!reference`).
 - Whether `launchset-release`'s dotenv variables reach child jobs through `needs: pipeline:`
   (harmless either way: launchset.sh is sourced after `stamp`).
-- That a job `needs`-ing an optional manual job (the MR preview plan job) is skipped until the
-  manual job runs, then runs (GitLab's 13.12 behaviour), also for the `when: always` comment job.
-- `author.bot` on notes isn't documented (the MR API has it since 19.5); launchset also matches
-  the `project_<id>_bot_` username. Check a note posted by a project access token.
+- That the skipped trigger job `launchset-preview` runs once the manual plan job is played (the
+  GitLab.com trial showed it `skipped` before; see "GitLab.com trial").
+- Whether retrying a failed job of a finished child pipeline runs its `when: always` job
+  (`launchset-preview-comment`, `launchset-finalize`) again, or only skipped jobs. launchset's
+  docs say to retry the comment job too if the note doesn't change.
 - `GET /user` with a project access token (expected: the bot user).
 - `$CI_PIPELINE_ID` in a trigger job's `variables` (the docs' own example; marked job-only in the
   variables table).

@@ -192,7 +192,12 @@ describe("renderChildPipeline", () => {
       kind: "preview",
       planJob: "launchset-preview-plan",
     });
-    expect(Object.keys(doc)).toEqual(["include", "preview-web"]);
+    expect(Object.keys(doc)).toEqual([
+      "include",
+      ".launchset_cli",
+      "preview-web",
+      "launchset-preview-comment",
+    ]);
     const web = job(doc, "preview-web");
     expect(web.needs).toEqual([fromParent("launchset-preview-plan")]);
     expect(web.interruptible).toBe(true);
@@ -203,6 +208,38 @@ describe("renderChildPipeline", () => {
     expect(text).toContain("for the preview 1.5.0-pr.3.17 (web)");
   });
 
+  it("preview: launchset-preview-comment last, always, after every preview job", () => {
+    const { doc } = render({
+      plan: plan({ mode: "preview", channel: "preview", matrix: ["api", "web"] }),
+      kind: "preview",
+      planJob: "launchset-preview-plan",
+    });
+    expect(Object.keys(doc).at(-1)).toBe("launchset-preview-comment");
+    const comment = job(doc, "launchset-preview-comment");
+    expect(comment.extends).toBe(".launchset_cli");
+    expect(comment.when).toBe("always");
+    expect(comment.interruptible).toBe(true);
+    expect(comment.needs).toEqual([
+      fromParent("launchset-preview-plan"),
+      { job: "preview-api", artifacts: false },
+      { job: "preview-web", artifacts: false },
+    ]);
+    expect(comment.script).toEqual(["launchset preview-comment --plan @plan.json --ci"]);
+    expect(job(doc, ".launchset_cli").variables?.GIT_DEPTH).toBe("0");
+  });
+
+  it("a preview plan without targets: only the comment job, which reports it", () => {
+    const { doc } = render({
+      plan: plan({ mode: "preview", channel: "preview", matrix: [] }),
+      kind: "preview",
+      planJob: "launchset-preview-plan",
+    });
+    expect(Object.keys(doc)).toEqual([".launchset_cli", "launchset-preview-comment"]);
+    expect(job(doc, "launchset-preview-comment").needs).toEqual([
+      fromParent("launchset-preview-plan"),
+    ]);
+  });
+
   it("prerelease previews are never interruptible (they reserved a tag)", () => {
     const { doc } = render({
       plan: plan({ mode: "preview", channel: "prerelease", matrix: ["web"] }),
@@ -210,9 +247,10 @@ describe("renderChildPipeline", () => {
       planJob: "launchset-preview-plan",
     });
     expect(job(doc, "preview-web").interruptible).toBe(false);
+    expect(job(doc, "launchset-preview-comment").interruptible).toBe(false);
   });
 
-  it("a skipped preview: nothing to build, with the reason", () => {
+  it("a skipped preview: nothing to build, with the reason, and no comment job", () => {
     const { doc } = render({
       plan: undefined,
       kind: "preview",

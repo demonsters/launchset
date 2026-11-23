@@ -230,7 +230,6 @@ describe("renderGitLabCi", () => {
       "launchset-build",
       "launchset-preview-plan",
       "launchset-preview",
-      "launchset-preview-comment",
       "launchset-preview-sweep",
     ]);
     expect(job(doc, "launchset-release").rules).toBeInstanceOf(GitLabReference);
@@ -359,26 +358,23 @@ describe("renderGitLabCi", () => {
     expect(plan.artifacts?.paths).toEqual(["plan.json", "launchset-child.yml"]);
   });
 
-  it("the preview trigger and comment follow the plan job; the comment runs always", () => {
+  it("the preview trigger follows the plan job; the comment is in the child pipeline", () => {
     const trigger = rulesOf(rendered.jobs.doc, "launchset-preview");
-    const comment = rulesOf(rendered.jobs.doc, "launchset-preview-comment");
     for (const vars of [mr("main"), push("develop"), push("next/x")]) {
       expect(when(trigger, vars)).toBe("on_success");
-      expect(when(comment, vars)).toBe("always");
     }
     const fork = mr("main", { CI_MERGE_REQUEST_SOURCE_PROJECT_ID: "2" });
     expect(when(trigger, fork)).toBe("never");
-    expect(when(comment, fork)).toBe("never");
-    expect(when(comment, push("release/1.4.x"))).toBe("never");
+    expect(when(trigger, push("release/1.4.x"))).toBe("never");
+    expect(job(rendered.jobs.doc, "launchset-preview").needs).toEqual(["launchset-preview-plan"]);
     expect(job(rendered.jobs.doc, "launchset-preview").trigger?.include).toEqual([
       { artifact: "launchset-child.yml", job: "launchset-preview-plan" },
     ]);
-    const commentJob = job(rendered.jobs.doc, "launchset-preview-comment");
-    expect(commentJob.needs).toEqual([
-      { job: "launchset-preview-plan" },
-      { job: "launchset-preview", artifacts: false },
-    ]);
-    expect(commentJob.script).toEqual(["launchset preview-comment --plan @plan.json --ci"]);
+    // A `when: always` job that needs the manual plan job would run before anyone played it
+    // (GitLab.com, the first trial), so the parent has none.
+    expect(rendered.jobs.doc["launchset-preview-comment"]).toBeUndefined();
+    expect(rendered.jobs.text).not.toContain("when: always");
+    expect(rendered.jobs.text).not.toContain("preview-comment --plan");
   });
 
   it("preview sweep: only in a schedule with LAUNCHSET_PREVIEW_SWEEP=true, shallow, interruptible", () => {

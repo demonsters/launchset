@@ -104,14 +104,14 @@ const FORK = `${MR} && $CI_MERGE_REQUEST_SOURCE_PROJECT_ID != $CI_MERGE_REQUEST_
 const MANUAL_PREVIEW =
   '$LAUNCHSET_PREVIEW == "true" && $CI_COMMIT_BRANCH && ($CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api")';
 
-type PreviewJob = "plan" | "trigger" | "comment";
+type PreviewJob = "plan" | "trigger";
 
 /**
- * The rules of the preview plan, trigger and comment jobs. They share the conditions; the plan
- * job is manual in MR pipelines without the label, the comment job runs `when: always`.
+ * The rules of the preview plan and trigger jobs. They share the conditions; the plan job is
+ * manual in MR pipelines without the label. (The comment job is in the child pipeline: a job
+ * here that `needs` the manual plan job with `when: always` would run before anyone played it.)
  */
 function previewRules(config: ResolvedConfig, job: PreviewJob): string {
-  const when = job === "comment" ? ["when: always"] : [];
   const lines: string[] = ["# Never for fork MRs.", ruleEntry(FORK, ["when: never"])];
   const manual = [
     "when: manual",
@@ -120,7 +120,7 @@ function previewRules(config: ResolvedConfig, job: PreviewJob): string {
     '  LAUNCHSET_PREVIEW_MANUAL: "true"',
   ];
   if (job !== "plan") {
-    lines.push("# Merge requests (the plan job decides whether one builds).", ruleEntry(MR, when));
+    lines.push("# Merge requests (the plan job decides whether one builds).", ruleEntry(MR));
   } else if (config.preview.rebuildOnPush) {
     lines.push(
       `# MRs with the ${config.preview.label} label: on every pipeline.`,
@@ -136,7 +136,7 @@ function previewRules(config: ResolvedConfig, job: PreviewJob): string {
   }
   lines.push(
     "# Run pipeline (or the API) with LAUNCHSET_PREVIEW=true: a preview of any branch.",
-    ruleEntry(MANUAL_PREVIEW, when),
+    ruleEntry(MANUAL_PREVIEW),
   );
   const globs = unique(config.preview.branches.map((b) => b.branch));
   if (globs.length > 0) {
@@ -147,7 +147,7 @@ function previewRules(config: ResolvedConfig, job: PreviewJob): string {
       ruleEntry(maintenanceCondition("$CI_COMMIT_BRANCH", config.maintenanceBranches), [
         "when: never",
       ]),
-      ...globs.map((glob) => ruleEntry(branchCondition("$CI_COMMIT_BRANCH", glob), when)),
+      ...globs.map((glob) => ruleEntry(branchCondition("$CI_COMMIT_BRANCH", glob))),
     );
   }
   return lines.join("\n");
@@ -187,7 +187,6 @@ function renderJobsFile(input: GitLabTemplateInput, stage: string, cliSpec: stri
               ].join("\n"),
           preview_plan_rules: previewRules(config, "plan"),
           preview_trigger_rules: previewRules(config, "trigger"),
-          preview_comment_rules: previewRules(config, "comment"),
         },
         "launchset-preview.yml",
       )
@@ -205,8 +204,9 @@ function renderJobsFile(input: GitLabTemplateInput, stage: string, cliSpec: stri
             "#   launchset-preview-plan     previews (MRs, preview and prerelease branches): decides the",
             "#                              version, build number and targets; writes the child pipeline",
             "#   launchset-preview          runs it: one preview-<target> job per target (stamp -> YOUR",
-            "#                              build and upload steps, to internal channels)",
-            "#   launchset-preview-comment  one sticky MR note with the result per target",
+            "#                              build and upload steps, to internal channels), then",
+            "#                              launchset-preview-comment (one sticky MR note with the",
+            "#                              result per target)",
             "#   launchset-preview-sweep    opt-in, in a pipeline schedule with LAUNCHSET_PREVIEW_SWEEP=true:",
             "#                              starts an MR pipeline for MRs that just got the preview label",
           ].join("\n")
