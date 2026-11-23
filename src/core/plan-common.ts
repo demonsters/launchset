@@ -9,6 +9,7 @@ import { ChangesetError, parseChangeset } from "./changesets.ts";
 import type { ResolvedConfig, ResolvedTarget } from "./config/schema.ts";
 import { dockerPlan } from "./docker-tags.ts";
 import { LaunchsetError } from "./errors.ts";
+import type { ForgeHost } from "./forge-links.ts";
 import { indexTags, markerTag, releasesAfter, type TagIndex } from "./tags.ts";
 import type { Changeset, Channel, Plan, RunInfo, TargetPlan } from "./types.ts";
 import { highestVersion, isPlainVersion, marketingVersion } from "./versions.ts";
@@ -50,7 +51,7 @@ export interface CommitInfo {
   subject: string;
 }
 
-/** A merged bot PR without a changeset (spec 9.4), like `github/bot-prs.BotPr`. */
+/** A merged bot PR without a changeset (spec 9.4), like `forge/bot-prs.BotPr`. */
 export interface BotPrInfo {
   number: number;
   title: string;
@@ -155,6 +156,8 @@ export function isoTime(now: Date | number): string {
 // Target plans
 
 export interface TargetPlanContext {
+  /** Code host, for messages; default `github`. */
+  host?: ForgeHost;
   channel: Channel;
   /** The run's version (release, preview or prerelease version). */
   version: string;
@@ -182,8 +185,10 @@ export function buildNumberContext(
   now: Date | number,
   version: string,
   run: RunInfo | undefined,
+  host?: ForgeHost,
 ): BuildNumberContext {
   const context: BuildNumberContext = { now, version };
+  if (host) context.host = host;
   if (run?.number !== undefined) context.runNumber = run.number;
   if (run?.attempt !== undefined) context.runAttempt = run.attempt;
   return context;
@@ -198,7 +203,7 @@ export function buildTargetPlan(target: ResolvedTarget, ctx: TargetPlanContext):
   const buildNumber =
     ctx.buildNumber !== undefined
       ? ctx.buildNumber
-      : targetBuildNumber(target, buildNumberContext(ctx.now, ctx.baseVersion, ctx.run));
+      : targetBuildNumber(target, buildNumberContext(ctx.now, ctx.baseVersion, ctx.run, ctx.host));
   const plan: TargetPlan = {
     name: target.name,
     type: target.type,
@@ -248,12 +253,12 @@ export function buildTargetPlans(
 export function planBuildNumber(
   config: Pick<ResolvedConfig, "buildNumber">,
   plan: Pick<Plan, "matrix" | "targets">,
-  ctx: { now: Date | number; version: string; run?: RunInfo },
+  ctx: { now: Date | number; version: string; run?: RunInfo; host?: ForgeHost },
 ): number | null {
   try {
     return computeBuildNumber(
       config.buildNumber,
-      buildNumberContext(ctx.now, ctx.version, ctx.run),
+      buildNumberContext(ctx.now, ctx.version, ctx.run, ctx.host),
     );
   } catch (error) {
     const first = plan.matrix[0];
@@ -336,27 +341,38 @@ export function firstLine(text: string): string {
   return text.trim().split(/\r?\n/)[0]?.trim() ?? "";
 }
 
-/** A GitHub markdown alert block: `> [!KIND]` then the text quoted line by line. */
-export function alert(kind: "NOTE" | "TIP" | "WARNING" | "CAUTION", text: string): string {
-  return `> [!${kind}]\n${text
+/**
+ * A markdown alert block: `> [!KIND]` then the text quoted line by line. GitLab renders alerts
+ * since 17.10 and documents them lowercase (`> [!note]`), so `host` `gitlab` writes them so.
+ */
+export function alert(
+  kind: "NOTE" | "TIP" | "WARNING" | "CAUTION",
+  text: string,
+  host?: ForgeHost,
+): string {
+  return `> [!${host === "gitlab" ? kind.toLowerCase() : kind}]\n${text
     .trimEnd()
     .split("\n")
     .map((l) => (l === "" ? ">" : `> ${l}`))
     .join("\n")}`;
 }
 
-/** A job summary: a heading, paragraphs, then `> [!WARNING]` / `> [!NOTE]` blocks. */
+/**
+ * A job summary: a heading, paragraphs, then `> [!WARNING]` / `> [!NOTE]` blocks (lowercase
+ * kinds with `host` `gitlab`, see {@link alert}).
+ */
 export function renderSummary(input: {
   title: string;
   paragraphs?: readonly string[];
   failures?: readonly string[];
   warnings?: readonly string[];
   notices?: readonly string[];
+  host?: ForgeHost;
 }): string {
   const blocks = [`## ${input.title}`];
   for (const p of input.paragraphs ?? []) if (p.trim() !== "") blocks.push(p.trimEnd());
-  for (const f of input.failures ?? []) blocks.push(alert("CAUTION", f));
-  for (const w of input.warnings ?? []) blocks.push(alert("WARNING", w));
-  for (const n of input.notices ?? []) blocks.push(alert("NOTE", n));
+  for (const f of input.failures ?? []) blocks.push(alert("CAUTION", f, input.host));
+  for (const w of input.warnings ?? []) blocks.push(alert("WARNING", w, input.host));
+  for (const n of input.notices ?? []) blocks.push(alert("NOTE", n, input.host));
   return `${blocks.join("\n\n")}\n`;
 }

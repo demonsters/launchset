@@ -15,8 +15,10 @@ export const CONFIG_DESCRIPTIONS: Record<string, string> = {
   changelog: "The changelog file.",
   "changelog.file":
     "The changelog, relative to the repo root. New sections are inserted before the first version heading.",
-  "changelog.github":
+  "changelog.links":
     "Add PR links and authors to changelog lines. Needs a token; without one, or when no PR is found, the links are left out.",
+  "changelog.github":
+    "Deprecated: the old name of `changelog.links`, still accepted. Giving both with different values is an error.",
   baseBranch: "The branch releases are made from.",
   maintenanceBranches:
     "Pattern of the maintenance branches used for hotfixes. The single `*` stands for `<major>.<minor>`. It must not match `baseBranch`.",
@@ -36,6 +38,11 @@ export const CONFIG_DESCRIPTIONS: Record<string, string> = {
   check: "The PR check.",
   "check.bots":
     "PR authors that pass the check without a changeset. Matched case-insensitively. Their merged PRs get a generated patch entry under Dependencies in the next release.",
+  gitlab: "GitLab settings. Ignored on GitHub.",
+  "gitlab.include":
+    "Local files launchset's child pipeline includes before `.gitlab/launchset-targets.yml`, so the `.launchset-<target>` jobs can extend their templates (`extends: .windows`). Literal repo-relative `.yml` paths. Each file may only hold hidden jobs (names starting with `.`), `variables` and `default`: the plan job checks this before it writes the child pipeline. `init` moves the templates your target jobs extend to `.gitlab/ci-templates.yml` and lists it here.",
+  "gitlab.tagPipelines":
+    "Let launchset's release and prerelease tags start tag pipelines. With `false`, every tag launchset pushes on GitLab is pushed with `git push -o ci.skip`, so none starts a pipeline; marker and partial tags never do.",
   "#Previews":
     "Set `preview: false` to switch off previews and prerelease branches. That is the only way to use the `semver` build-number strategy.",
   preview:
@@ -64,6 +71,11 @@ export const CONFIG_DESCRIPTIONS: Record<string, string> = {
   "targets[*].buildNumber.strategy": "See `buildNumber.strategy`.",
   "targets[*].buildNumber.epoch": "See `buildNumber.epoch`.",
   "targets[*].buildNumber.offset": "See `buildNumber.offset`.",
+  "targets[*].after":
+    "GitLab only (an error on GitHub). Targets whose jobs must finish first, in the same pipeline: this target's job gets their artifacts. In the child pipeline it `needs` their `build-<target>` (or `preview-<target>`) jobs as optional, so a retry that only builds this target still starts, without those artifacts. Names must exist, can't form a cycle, and an auto target can only come after auto targets.",
+  "targets[*].gitlab": "GitLab settings of this target. Ignored on GitHub.",
+  "targets[*].gitlab.shell":
+    "`sh` or `powershell`: the shell of the runner that runs this target's job. With `powershell` (Windows PowerShell 5.1 or PowerShell 7), launchset writes its lines of the job in PowerShell and checks `$LASTEXITCODE` after each command; the runner needs Node 24 or later, npm and git on its PATH.",
   "targets[*].files":
     "Extra files that get the version stamped, next to what the target type already stamps. Each entry has a `kind`.",
   "targets[*].files[][json].path": "File to edit, relative to the repo root.",

@@ -1,5 +1,5 @@
 /**
- * PR and author links for changelog entries (spec 12, `changelog.github`): the commit that
+ * PR and author links for changelog entries (spec 12, `changelog.links`): the commit that
  * added each changeset → its merged PR. Missing token or no match → no entry, never a failure.
  */
 
@@ -7,7 +7,7 @@ import { messageWithHint } from "../core/errors.ts";
 import type { Git } from "../git/index.ts";
 import { UPDATED_SINCE_MARGIN_MS } from "./bot-prs.ts";
 import { mapLimit } from "./concurrency.ts";
-import type { GitHub, Logger, PullRequest } from "./index.ts";
+import type { Forge, Logger, PullRequest } from "./types.ts";
 
 export interface ChangelogInfo {
   pr: number;
@@ -20,7 +20,7 @@ export interface ChangelogInfo {
 export interface ChangelogInfoOptions {
   git: Git;
   /** Undefined when there is no token: every lookup is skipped. */
-  github: GitHub | undefined;
+  forge: Forge | undefined;
   /**
    * The branch the changesets were merged into. Preferred when a commit belongs to several
    * PRs, and needed for the fallback off the default branch (where GitHub's commit → PR
@@ -55,13 +55,13 @@ export async function changelogInfoFor(
   changesetPaths: readonly string[],
   options: ChangelogInfoOptions,
 ): Promise<Map<string, ChangelogInfo>> {
-  const { git, github, branch } = options;
+  const { git, forge, branch } = options;
   const head = options.head ?? "HEAD";
   const concurrency = options.concurrency ?? 4;
   const debug = (m: string) => options.log?.debug?.(m);
   const warn = (m: string) => (options.log?.warn ?? options.log?.debug)?.(m);
   const result = new Map<string, ChangelogInfo>();
-  if (!github) {
+  if (!forge) {
     debug("changelog.github: no GitHub token, leaving PR links out of the changelog.");
     return result;
   }
@@ -80,7 +80,7 @@ export async function changelogInfoFor(
         debug(`changelog.github: no commit adds ${path} (uncommitted?), no PR link.`);
         return;
       }
-      const pr = pickPr(await github.pullRequestsForCommit(added), branch);
+      const pr = pickPr(await forge.pullRequestsForCommit(added), branch);
       if (pr) result.set(path, toInfo(pr));
       else misses.push({ path, added });
     } catch (error) {
@@ -103,7 +103,7 @@ export async function changelogInfoFor(
     const dates = await Promise.all(misses.map(({ added }) => git.commitDate(added)));
     const oldest = Math.min(...dates.map((d) => Date.parse(d)));
     const updatedSince = new Date(oldest - UPDATED_SINCE_MARGIN_MS).toISOString();
-    const listing = await github.closedPrsInto(branch, { updatedSince });
+    const listing = await forge.closedPrsInto(branch, { updatedSince });
     const byMergeCommit = new Map<string, PullRequest>();
     for (const pr of listing) if (pr.mergeCommitSha) byMergeCommit.set(pr.mergeCommitSha, pr);
     const firstParentChain = await git.firstParentLog(head);

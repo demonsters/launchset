@@ -9,6 +9,8 @@ This repo is released with launchset. One version drives every target (Docker im
 
 Commit messages don't matter. Release intent lives in changeset files only.
 
+On GitLab the same applies with "MR" for "PR": the release MR is `Release vX.Y.Z` on the branch `launchset/release/<branch>`. See [On GitLab](#on-gitlab).
+
 ## Every PR needs a changeset
 
 Before you open a PR, make sure it adds one. Create it with:
@@ -98,7 +100,7 @@ On a `release/X.Y.x` branch (a hotfix line; the pattern is `maintenanceBranches`
 
 ## Previews
 
-To get a test build of a PR (TestFlight, Play internal track, preview Docker tags), add the label `launchset:preview` to the PR (or whatever `preview.label` says in `launchset.config.*`). Previews have no side effects. PRs from forks don't get one.
+To get a test build of a PR (TestFlight, Play internal track, preview Docker tags), add the label `launchset:preview` to the PR (or whatever `preview.label` says in `launchset.config.*`). Previews have no side effects. PRs from forks don't get one. On GitLab, adding a label starts no pipeline: push a commit or start a new pipeline, or play the manual job `launchset-preview-plan` in the MR pipeline. If the project has the preview sweep schedule, the pipeline starts by itself within a few minutes (up to an hour on GitLab.com Free).
 
 ## Check the state
 
@@ -110,6 +112,20 @@ npx @demonsters/launchset status --json   # the same as JSON
 ## Manual targets
 
 A target with `release: "manual"` is stamped by every release but shipped on demand. **Never ship one unasked.** When `status` shows a manual target is behind (`ios: 1.3.0 (9 releases behind)`), tell the human. Say that it is shipped with the **Launchset release** workflow started by hand (`workflow_dispatch` with the `target` input, and optionally `version`), or by `launchset ship --target <name>` followed by `launchset mark`. Do not run those yourself without being asked.
+
+## On GitLab
+
+If the repo has a `.gitlab-ci.yml` and no `.github/workflows/launchset-*.yml`, it runs launchset on GitLab. The rules above hold. What differs:
+
+- **CI files.** launchset's jobs are in `.gitlab/launchset.yml` (included by `.gitlab-ci.yml`). The build and upload steps are in `.gitlab/launchset-targets.yml`: one hidden job `.launchset-<target>` per target. Edit build steps there, as plain GitLab CI YAML: no `rules`, `when`, `needs` or `stage`, one command per line (no `a && b`), no early `exit`. Don't edit `.gitlab/launchset.yml` or the generated `launchset-child.yml` unless asked.
+- **Order and templates.** A target that needs another target's output gets `after: ["other"]` in `launchset.config.*`, not `needs` in its job. Templates a target job extends (`extends: .windows`) must be in a file listed in `gitlab.include` (such as `.gitlab/ci-templates.yml`), which may only hold hidden jobs, `variables` and `default`; templates in `.gitlab-ci.yml` aren't visible to the child pipeline.
+- **PowerShell runners.** A target with `gitlab: { shell: "powershell" }` builds on a Windows runner: its steps in `.launchset-<target>` are PowerShell, and launchset's variables come from `. ./launchset.ps1` (`$env:LAUNCHSET_VERSION`).
+- **Tags start no pipelines.** launchset pushes its tags with `git push -o ci.skip` (unless `gitlab.tagPipelines: true`). Don't add tag-triggered jobs to build releases: releases build in launchset's child pipeline.
+- **Never hand-edit** the release MR, tags that start with `v` or `launchset/`, version numbers or `CHANGELOG.md`, as on GitHub.
+- **Tokens.** The CI/CD variable `LAUNCHSET_TOKEN` (a project or group access token) is created by a human. Never ask for, read or print its value.
+- **Manual targets.** Ship one with Run pipeline on the base branch and the variable `LAUNCHSET_TARGET` (optionally `LAUNCHSET_RELEASE_VERSION`), not with the GitHub workflow input. Never ship one unasked.
+- **Preview sweep.** Optional: a pipeline schedule with the variable `LAUNCHSET_PREVIEW_SWEEP=true` runs `launchset-preview-sweep`, which starts an MR pipeline for MRs that just got the preview label. A human creates the schedule (Build > Pipeline schedules). `npx @demonsters/launchset preview-sweep --dry-run` shows what it would do. When you add a job without `rules` to `.gitlab-ci.yml` in such a project, start its rules with `- if: $LAUNCHSET_PREVIEW_SWEEP == "true"` / `when: never` (then `- if: $CI_PIPELINE_SOURCE != "merge_request_event"`), or it runs on every schedule run.
+- **Debugging.** The plan job logs the child pipeline (collapsed section) and keeps `launchset-child.yml` as an artifact. `npx @demonsters/launchset plan --gitlab -` prints the child pipeline for the plan locally.
 
 ## If something looks wrong
 

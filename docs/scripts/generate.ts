@@ -5,7 +5,7 @@
  *   cli-commands      the CLI reference (the real `--help` output of every command)
  *   action-inputs     the action's inputs   (action/action.yml)
  *   action-outputs    the action's outputs  (action/action.yml)
- *   app-permissions   the GitHub App permissions (src/github/permissions.ts)
+ *   app-permissions   the GitHub App permissions (src/forge/github/permissions.ts)
  *
  * A page marks a block like this and the script rewrites what is between the markers:
  *
@@ -25,8 +25,8 @@ import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
 import { runCli } from "../../src/cli/program.ts";
 import { configJsonSchema } from "../../src/core/config/json-schema.ts";
-import { REQUIRED_APP_PERMISSIONS } from "../../src/github/permissions.ts";
-import { CLI_INTROS, COMMON_FLAGS_NOTE } from "./cli-intros.ts";
+import { REQUIRED_APP_PERMISSIONS } from "../../src/forge/github/permissions.ts";
+import { CI_OUTPUT_NOTE, CLI_INTROS, COMMON_FLAGS_NOTE } from "./cli-intros.ts";
 import { CONFIG_DESCRIPTIONS } from "./descriptions.ts";
 
 const docsRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -111,7 +111,7 @@ interface Section {
   rows: Row[];
 }
 
-const TARGET_COMMON = ["release", "buildNumber", "files"];
+const TARGET_COMMON = ["release", "buildNumber", "files", "after", "gitlab"];
 
 /** The `kind` constant of a union variant (`source.kind`, `files[].kind`), if it has one. */
 function kindOf(variant: Json): string | undefined {
@@ -225,8 +225,8 @@ function configSections(schema: Json): Section[] {
       required: false,
       default: defaultOf(prop),
     });
-    if (name === "buildNumber") {
-      flattenObject(prop, "targets[*].buildNumber", "targets.<name>.buildNumber", common);
+    if (name === "buildNumber" || name === "gitlab") {
+      flattenObject(prop, `targets[*].${name}`, `targets.<name>.${name}`, common);
     }
     if (name === "files") {
       descend(prop, "targets[*].files", "targets.<name>.files", common);
@@ -317,7 +317,7 @@ async function helpText(args: string[]): Promise<string> {
 async function renderCliCommands(): Promise<string> {
   const top = await helpText([]);
   // Command names from the top-level help ("Commands:" section).
-  const names = [...top.matchAll(/^ {2}([a-z]+)(?: \[options\])?(?: <[^>]+>)?\s{2,}\S/gm)]
+  const names = [...top.matchAll(/^ {2}([a-z][a-z-]*)(?: \[options\])?(?: <[^>]+>)?\s{2,}\S/gm)]
     .map((m) => m[1] as string)
     .filter((n) => n !== "help");
   const missing = names.filter((n) => CLI_INTROS[n] === undefined);
@@ -331,6 +331,7 @@ async function renderCliCommands(): Promise<string> {
     "### Help of the main command",
     ["```text", top, "```"].join("\n"),
     COMMON_FLAGS_NOTE,
+    CI_OUTPUT_NOTE,
   ];
   for (const name of names) {
     blocks.push(

@@ -6,6 +6,7 @@
 
 import semver from "semver";
 import { LaunchsetError } from "./errors.ts";
+import { type ForgeHost, forgeLinks, forgeWords } from "./forge-links.ts";
 import { detectEol } from "./text.ts";
 import type { Changeset } from "./types.ts";
 
@@ -27,8 +28,10 @@ export interface SectionInput {
   entries: ChangelogEntry[];
   /** `owner/repo`; without it PR numbers are written without links. */
   repository?: string;
-  /** Default `https://github.com`. */
+  /** Default the host's public server (`https://github.com`). */
   serverUrl?: string;
+  /** Code host for PR links and their text (`#12` or `!12`); default `github`. */
+  host?: ForgeHost;
 }
 
 const GROUPS = [
@@ -50,8 +53,16 @@ function entrySuffix(entry: ChangelogEntry, input: SectionInput): string {
   const pr = entry.pr ?? entry.changeset.pr;
   const parts: string[] = [];
   if (pr !== undefined) {
-    const server = (input.serverUrl ?? "https://github.com").replace(/\/+$/, "");
-    parts.push(input.repository ? `[#${pr}](${server}/${input.repository}/pull/${pr})` : `#${pr}`);
+    if (input.repository) {
+      const links = forgeLinks({
+        repository: input.repository,
+        ...(input.host ? { host: input.host } : {}),
+        ...(input.serverUrl !== undefined ? { serverUrl: input.serverUrl } : {}),
+      });
+      parts.push(`[${links.prText(pr)}](${links.prUrl(pr)})`);
+    } else {
+      parts.push(forgeWords(input.host).prText(pr));
+    }
   }
   // Bot entries (Dependencies) show only the PR, like the spec's example.
   if (entry.author && entry.changeset.source !== "bot") {

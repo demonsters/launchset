@@ -20,6 +20,7 @@ import type {
   ResolvedIosTarget,
   ResolvedTarget,
 } from "../core/config/schema.ts";
+import { ConfigError, hostConfigIssues } from "../core/config/schema.ts";
 import { LaunchsetError } from "../core/errors.ts";
 
 export interface WorkflowTemplateInput {
@@ -73,9 +74,14 @@ export function templatesDir(): string {
   );
 }
 
-function readTemplate(name: string): string {
-  const text = readFileSync(join(templatesDir(), "workflows", name), "utf8");
+/** A template file below `templates/<folder>/`, with CRLF and trailing newlines removed. */
+export function readTemplateFile(folder: string, name: string): string {
+  const text = readFileSync(join(templatesDir(), folder, name), "utf8");
   return text.replace(/\r\n/g, "\n").replace(/\n+$/, "");
+}
+
+function readTemplate(name: string): string {
+  return readTemplateFile("workflows", name);
 }
 
 // ---------------------------------------------------------------------------
@@ -123,7 +129,7 @@ const exprString = (value: string) => `'${value.replaceAll("'", "''")}'`;
 
 const yamlList = (items: string[]) => items.map((item) => `- ${quote(item)}`).join("\n");
 
-const unique = <T>(items: T[]): T[] => [...new Set(items)];
+export const unique = <T>(items: T[]): T[] => [...new Set(items)];
 
 /** A plain YAML scalar when that is safe, otherwise a quoted one. */
 function scalar(value: string): string {
@@ -174,7 +180,7 @@ function stepCondition(target: ResolvedTarget, mode: Mode): string {
   return condition;
 }
 
-function isNpmTarget(target: ResolvedTarget): target is ResolvedCustomTarget {
+export function isNpmTarget(target: ResolvedTarget): target is ResolvedCustomTarget {
   return target.type === "custom" && (target.verify.includes("npm") || target.npm !== undefined);
 }
 
@@ -182,7 +188,7 @@ const GITHUB_REGISTRY = "ghcr.io";
 const DOCKER_HUB_HOSTS = new Set(["docker.io", "index.docker.io", "registry-1.docker.io"]);
 
 /** Registry host of an image name; `docker.io` for Docker Hub names without a host. */
-function registryOf(image: string): string {
+export function registryOf(image: string): string {
   const first = image.split("/")[0] as string;
   const hasHost =
     image.includes("/") && (first.includes(".") || first.includes(":") || first === "localhost");
@@ -194,7 +200,7 @@ function dockerRegistries(target: ResolvedDockerTarget): string[] {
   return unique(target.image.map(registryOf));
 }
 
-function androidDir(target: ResolvedAndroidTarget): string {
+export function androidDir(target: ResolvedAndroidTarget): string {
   const source = target.source;
   switch (source.kind) {
     case "gradle": {
@@ -210,7 +216,7 @@ function androidDir(target: ResolvedAndroidTarget): string {
   }
 }
 
-function iosProject(target: ResolvedIosTarget): string {
+export function iosProject(target: ResolvedIosTarget): string {
   const source = target.source;
   switch (source.kind) {
     case "xcodeproj":
@@ -222,7 +228,7 @@ function iosProject(target: ResolvedIosTarget): string {
   }
 }
 
-function iosScheme(project: string): string {
+export function iosScheme(project: string): string {
   const base = posix.basename(project);
   return base.endsWith(".xcodeproj") ? base.slice(0, -".xcodeproj".length) : "App";
 }
@@ -441,6 +447,8 @@ function checkParsable(file: RenderedFile): void {
 
 export function renderWorkflows(input: WorkflowTemplateInput): RenderedFile[] {
   const { config } = input;
+  const hostIssues = hostConfigIssues(config, "github");
+  if (hostIssues.length > 0) throw new ConfigError(hostIssues);
   const action = input.actionRef ?? DEFAULT_ACTION_REF;
   const files: RenderedFile[] = [];
 

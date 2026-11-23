@@ -9,8 +9,10 @@ import { parse as parseYaml } from "yaml";
 import { CONFIG_FILE_NAMES } from "../config/load.ts";
 import { computeBuildNumber } from "../core/build-number.ts";
 import { DEFAULT_DOCKER_TAGS } from "../core/config/schema.ts";
+import { FORGE_HOSTS, type ForgeHost } from "../core/forge-links.ts";
 import { lineOf } from "../core/text.ts";
-import { Git } from "../git/index.ts";
+import { remoteHost, serverUrlFromRemote } from "../flow/ci/index.ts";
+import { Git, parseRepoFromRemote } from "../git/index.ts";
 import { expoAndroid, expoIos } from "../platforms/expo.ts";
 import { gradle } from "../platforms/gradle.ts";
 import { gradleProperties } from "../platforms/gradle-properties.ts";
@@ -33,6 +35,16 @@ import {
   readTextOrNull,
   statOrNull,
 } from "./fs.ts";
+import {
+  GITLAB_CI_FILE,
+  type GitLabCi,
+  type GitLabDockerBuild,
+  gitlabDockerBuilds,
+  readGitLabCi,
+  unruledJobs,
+  workflowTagRules,
+} from "./gitlab-scan.ts";
+import { dockerTargetJobs, gitlabJobTargets } from "./gitlab-targets.ts";
 import { detectHooks } from "./hooks.ts";
 import {
   detectMachinery,
@@ -65,6 +77,12 @@ export interface DetectContext {
   detection: Detection;
   workflows: Workflow[];
   dockerBuilds: DockerBuild[];
+  /** `.gitlab-ci.yml` with its local includes (`null` without one). */
+  gitlab: GitLabCi | null;
+  /** Docker builds in the GitLab jobs. */
+  gitlabBuilds: GitLabDockerBuild[];
+  /** Which code host the repo is on (the `host` decision). */
+  host: HostGuess;
   machinery: MachineryFinding[];
   /** Root package.json text (`null` when there is none). */
   packageJsonText: string | null;
@@ -80,7 +98,83 @@ export const GENERATED_FILES = [
   ".github/workflows/launchset-check.yml",
   ".github/workflows/launchset-release.yml",
   ".github/workflows/launchset-preview.yml",
+  ".gitlab/launchset.yml",
+  ".gitlab/launchset-targets.yml",
 ];
+
+/** The code host the repo is on, as far as detection can tell (the `host` decision). */
+export interface HostGuess {
+  host: ForgeHost;
+  evidence: Evidence[];
+  /** The signals disagree: ask the human. */
+  ask: boolean;
+  /** Anything points at GitLab: the `host` decision is shown. */
+  gitlabSignals: boolean;
+  /** The origin remote's host name. */
+  remoteHost?: string;
+  /** The GitLab project path from the origin remote (`group/sub/project`). */
+  gitlabProject?: string;
+}
+
+/**
+ * The code host: `LAUNCHSET_HOST`, else `GITLAB_CI=true`, else the origin remote's host (one
+ * containing `gitlab` is GitLab, github.com is GitHub), else `.gitlab-ci.yml` without GitHub
+ * workflows, else GitHub.
+ */
+export function guessHost(input: {
+  env: Record<string, string | undefined>;
+  remoteUrl?: string;
+  gitlabCi: boolean;
+  githubWorkflows: boolean;
+}): HostGuess {
+  const evidence: Evidence[] = [];
+  const host = input.remoteUrl ? remoteHost(input.remoteUrl) : undefined;
+  const remoteGitlab = host?.includes("gitlab") === true;
+  const explicit = input.env.LAUNCHSET_HOST?.trim().toLowerCase();
+  const fromEnv =
+    explicit && (FORGE_HOSTS as readonly string[]).includes(explicit)
+      ? (explicit as ForgeHost)
+      : undefined;
+  const ci = input.env.GITLAB_CI === "true";
+  if (fromEnv) evidence.push({ path: "LAUNCHSET_HOST", note: `LAUNCHSET_HOST=${fromEnv}` });
+  if (ci) evidence.push({ path: "GITLAB_CI", note: "GITLAB_CI=true: init runs in GitLab CI" });
+  if (host) evidence.push({ path: "origin", note: `the origin remote is on ${host}` });
+  if (input.gitlabCi) evidence.push({ path: GITLAB_CI_FILE, note: "GitLab CI configuration" });
+  if (input.githubWorkflows) {
+    evidence.push({ path: ".github/workflows", note: "GitHub Actions workflows" });
+  }
+  let guess: ForgeHost;
+  let ask = false;
+  if (fromEnv) guess = fromEnv;
+  else if (ci) guess = "gitlab";
+  else if (remoteGitlab) {
+    guess = "gitlab";
+    ask = input.githubWorkflows && !input.gitlabCi;
+  } else if (host === "github.com") {
+    guess = "github";
+    ask = input.gitlabCi && !input.githubWorkflows;
+  } else if (input.gitlabCi && !input.githubWorkflows) guess = "gitlab";
+  else {
+    guess = "github";
+    ask = input.gitlabCi;
+  }
+  const result: HostGuess = {
+    host: guess,
+    evidence,
+    ask,
+    gitlabSignals: fromEnv === "gitlab" || ci || remoteGitlab || input.gitlabCi,
+  };
+  if (host) result.remoteHost = host;
+  if (input.remoteUrl && (remoteGitlab || guess === "gitlab")) {
+    const project = parseRepoFromRemote(
+      input.remoteUrl,
+      serverUrlFromRemote(input.remoteUrl),
+      "gitlab",
+    );
+    if (project) result.gitlabProject = project;
+  }
+  return result;
+}
 
 const RELEASE_TOOL_CONFIGS = [
   ".releaserc",
@@ -545,34 +639,82 @@ function dockerName(dockerfile: string): string {
 // ---------------------------------------------------------------------------
 // detect(): one section per part of the Detection, in this order (notes are collected in it)
 
-export async function detect(root: string, options: { now?: Date } = {}): Promise<DetectContext> {
+export async function detect(
+  root: string,
+  options: { now?: Date; env?: Record<string, string | undefined> } = {},
+): Promise<DetectContext> {
   const now = options.now ?? new Date();
   const notes: Note[] = [];
 
-  const { gitInfo, tagNames } = await detectGit(root, notes);
+  const { gitInfo, tagNames, remoteUrl } = await detectGit(root, notes);
   const existingConfig = await findExistingConfig(root);
   const { pkg, packageJson } = await readRootPackage(root);
   const workspaces = await workspaceDirs(root, pkg?.tree, notes);
   const { tags, gitTagPrefix } = classifyTags(tagNames);
   const { workflows, builds } = await readWorkflows(root, gitInfo, gitTagPrefix, notes);
+  const gitlab = await readGitLabCi(root);
+  for (const n of gitlab?.notes ?? []) {
+    notes.push({
+      level: "warning",
+      path: n.path,
+      ...(n.line ? { line: n.line } : {}),
+      message: n.message,
+    });
+  }
+  if (gitlab) notes.push(...tagPipelineNotes(gitlab));
+  const host = guessHost({
+    env: options.env ?? process.env,
+    ...(remoteUrl !== undefined ? { remoteUrl } : {}),
+    gitlabCi: gitlab !== null,
+    githubWorkflows: (await globRel(root, [".github/workflows/*.{yml,yaml}"])).length > 0,
+  });
+  if (host.gitlabProject) gitInfo.gitlab = host.gitlabProject;
+  const gitlabBuilds = gitlab
+    ? gitlabDockerBuilds(gitlab, {
+        gitTagPrefix,
+        ...(host.gitlabProject
+          ? {
+              project: { path: host.gitlabProject, gitlabCom: host.remoteHost === "gitlab.com" },
+            }
+          : {}),
+      })
+    : [];
+  const sources = [...builds.map(githubBuildSource), ...gitlabBuilds.map(gitlabBuildSource)];
 
   /** Target names taken so far (Docker first, then native, then web). */
   const used = new Set<string>();
-  const targets = await detectDockerTargets(root, builds, used, notes);
+  const targets = await detectDockerTargets(root, sources, used, notes);
   const searchDirs = [...new Set([".", ...workspaces])];
-  const native = await detectNativeTargets(root, searchDirs, workflows, used, notes);
+  const native = await detectNativeTargets(root, searchDirs, workflows, gitlab, used, notes);
   targets.push(...native.targets);
+  if (gitlab) {
+    const dockerfiles = new Set(
+      targets.flatMap((t) => (t.docker && t.proposed !== "none" ? [t.docker.dockerfile] : [])),
+    );
+    targets.push(
+      ...gitlabJobTargets(gitlab, {
+        skipJobs: dockerTargetJobs(gitlab, gitlabBuilds, dockerfiles),
+        name: (base) => uniqueName(slug(base), used),
+      }),
+    );
+  }
   if (pkg) targets.push(webTarget(targets, used));
 
   const versions = await collectVersions(root, packageJson, targets, tags);
   const canonical = pickCanonical(versions);
   const buildNumbers = buildNumberInfo(targets, now);
-  const imagePins = await detectImagePins(root, targets, notes);
+  const imagePins = await detectImagePins(
+    root,
+    targets,
+    (gitlab?.files ?? []).map((f) => f.path),
+    notes,
+  );
   const machinery = await detectProjectMachinery(root, {
     searchDirs,
     workflows,
     builds,
-    gitlabText: native.gitlabText,
+    gitlab,
+    gitlabBuilds,
     tags,
     targets,
   });
@@ -586,7 +728,7 @@ export async function detect(root: string, options: { now?: Date } = {}): Promis
     tags,
     canonical,
     targets,
-    workflows: workflowSummaries(native.ciFiles, native.signals, builds),
+    workflows: workflowSummaries(native.ciFiles, native.signals, sources),
     machinery: machinery.map((m) => m.item),
     imagePins,
     buildNumbers,
@@ -601,18 +743,42 @@ export async function detect(root: string, options: { now?: Date } = {}): Promis
     detection,
     workflows,
     dockerBuilds: builds,
+    gitlab,
+    gitlabBuilds,
+    host,
     machinery,
     packageJsonText: pkg?.text ?? null,
     tagNames,
   };
 }
 
+/**
+ * A note per `workflow: rules` entry that starts tag pipelines: which of launchset's tags would
+ * start one, and what to change. init never edits `workflow:` (it decides every pipeline).
+ */
+export function tagPipelineNotes(ci: GitLabCi): Note[] {
+  const jobs = unruledJobs(ci).map((j) => j.name);
+  const shown = jobs.length > 6 ? [...jobs.slice(0, 5), `${jobs.length - 5} more`] : jobs;
+  const everyJob =
+    jobs.length > 0
+      ? `every job without rules (${shown.join(", ")})`
+      : "every job whose rules allow tags";
+  return workflowTagRules(ci).map((rule) => ({
+    level: "info",
+    manual: true,
+    path: rule.path,
+    line: rule.line,
+    message: `workflow: rules start a pipeline for every tag push (- if: ${rule.condition}), which runs ${everyJob}. On GitLab launchset pushes all its tags (the markers launchset/<target>@<version>, partial tags, v<version> and prerelease tags) with git push -o ci.skip, so they start none (gitlab.tagPipelines: true in launchset.config lets the release and prerelease tags start one). Other tag pushes still do, e.g. init's baseline tag if you push it. If the rule was only there for the release jobs launchset replaces, remove it; init doesn't edit workflow:.`,
+  }));
+}
+
 /** The repo: HEAD, branch, GitHub repository and tag names. */
 async function detectGit(
   root: string,
   notes: Note[],
-): Promise<{ gitInfo: Detection["git"]; tagNames: string[] }> {
+): Promise<{ gitInfo: Detection["git"]; tagNames: string[]; remoteUrl?: string }> {
   const git = new Git({ cwd: root });
+  let remoteUrl: string | undefined;
   const inside = await git.exec(["rev-parse", "--is-inside-work-tree"]);
   const gitInfo: Detection["git"] = { repo: inside.code === 0 && inside.stdout.trim() === "true" };
   let tagNames: string[] = [];
@@ -624,13 +790,14 @@ async function detectGit(
     const github = await git.repoFromRemote();
     if (github) gitInfo.github = github;
     tagNames = (await git.tags()).map((t) => t.name);
+    if (await git.hasRemote()) remoteUrl = await git.remoteUrl();
   } else {
     notes.push({
       level: "warning",
       message: "not a git repository: tags can't be read and no baseline tag can be created",
     });
   }
-  return { gitInfo, tagNames };
+  return { gitInfo, tagNames, ...(remoteUrl !== undefined ? { remoteUrl } : {}) };
 }
 
 /** The launchset config file already in `root`, if any. */
@@ -709,10 +876,61 @@ async function readWorkflows(
   return { workflows, builds };
 }
 
+/** A Docker build in a GitHub workflow or a GitLab job, as Docker target detection reads it. */
+interface BuildSource {
+  path: string;
+  line: number;
+  /** `step "Build"`, `job "build"`. */
+  label: string;
+  file: string;
+  context: string;
+  images: string[];
+  unresolved: string[];
+  tags: string[];
+  platforms?: string;
+  /** Tags start it: its tags are the release tags. */
+  release: boolean;
+  gitlab: boolean;
+}
+
+function githubBuildSource(b: DockerBuild): BuildSource {
+  const s: BuildSource = {
+    path: b.workflow.path,
+    line: b.line,
+    label: b.step.label,
+    file: b.file,
+    context: b.context,
+    images: b.images,
+    unresolved: b.unresolved,
+    tags: b.tags,
+    release: b.workflow.triggers.tagPatterns.length > 0,
+    gitlab: false,
+  };
+  if (b.platforms) s.platforms = b.platforms;
+  return s;
+}
+
+function gitlabBuildSource(b: GitLabDockerBuild): BuildSource {
+  const s: BuildSource = {
+    path: b.path,
+    line: b.line,
+    label: b.label,
+    file: b.file,
+    context: b.context,
+    images: b.images,
+    unresolved: b.unresolved,
+    tags: b.tags,
+    release: b.release,
+    gitlab: true,
+  };
+  if (b.platforms) s.platforms = b.platforms;
+  return s;
+}
+
 /** A Docker target per Dockerfile, with what the workflows' builds say about it. */
 async function detectDockerTargets(
   root: string,
-  builds: readonly DockerBuild[],
+  builds: readonly BuildSource[],
   used: Set<string>,
   notes: Note[],
 ): Promise<DetectedTarget[]> {
@@ -728,8 +946,8 @@ async function detectDockerTargets(
     });
   }
   const targets: DetectedTarget[] = [];
-  const matchedBuilds = new Set<DockerBuild>();
-  const buildsFor = new Map<string, DockerBuild[]>();
+  const matchedBuilds = new Set<BuildSource>();
+  const buildsFor = new Map<string, BuildSource[]>();
   for (const dockerfile of dockerfiles) {
     const list = builds.filter((b) => b.file === dockerfile);
     for (const b of list) matchedBuilds.add(b);
@@ -754,12 +972,12 @@ async function detectDockerTargets(
   for (const dockerfile of dockerfiles) {
     const all = buildsFor.get(dockerfile) ?? [];
     // Builds in tag-triggered workflows are the release builds: they define the tags.
-    const releaseBuilds = all.filter((b) => b.workflow.triggers.tagPatterns.length > 0);
+    const releaseBuilds = all.filter((b) => b.release);
     const list = releaseBuilds.length > 0 ? releaseBuilds : all;
     const evidence: Evidence[] = [...list, ...all.filter((b) => !list.includes(b))].map((b) => ({
-      path: b.workflow.path,
+      path: b.path,
       line: b.line,
-      note: `${b.step.label} builds ${dockerfile}${b.images.length ? ` as ${b.images.join(", ")}` : ""}`,
+      note: `${b.label} builds ${dockerfile}${b.images.length ? ` as ${b.images.join(", ")}` : ""}`,
     }));
     const docker: DetectedDocker = {
       dockerfile,
@@ -776,7 +994,7 @@ async function detectDockerTargets(
     if (!image && unresolved) {
       notes.push({
         level: "warning",
-        path: list[0]?.workflow.path,
+        path: list[0]?.path,
         line: list[0]?.line,
         message: `can't resolve the image name ${unresolved}`,
       });
@@ -803,7 +1021,9 @@ async function detectDockerTargets(
     let ask = false;
     if (built) {
       proposed = "auto";
-      reason = "an existing workflow builds and pushes this image";
+      reason = all.every((b) => b.gitlab)
+        ? "an existing GitLab CI job builds this image"
+        : "an existing workflow builds and pushes this image";
     } else if (dev) {
       proposed = "none";
       reason = "looks like a development Dockerfile";
@@ -842,20 +1062,25 @@ async function detectNativeTargets(
   root: string,
   searchDirs: readonly string[],
   workflows: readonly Workflow[],
+  gitlab: GitLabCi | null,
   used: Set<string>,
   notes: Note[],
 ): Promise<{
   targets: DetectedTarget[];
   ciFiles: { path: string; text: string }[];
   signals: Map<string, ReturnType<typeof platformBuildSignals>>;
-  gitlabText: string | null;
 }> {
   const native: NativeFound["targets"] = [];
   for (const dir of searchDirs) native.push(...(await detectNative(root, dir, notes)).targets);
   const signals = new Map<string, ReturnType<typeof platformBuildSignals>>();
   const ciFiles = [...workflows.map((w) => ({ path: w.path, text: w.text }))];
-  const gitlabText = await readTextOrNull(absolute(root, ".gitlab-ci.yml"));
-  if (gitlabText !== null) ciFiles.push({ path: ".gitlab-ci.yml", text: gitlabText });
+  if (gitlab && gitlab.files.length > 0) {
+    ciFiles.push(...gitlab.files.map((f) => ({ path: f.path, text: f.text })));
+  } else if (gitlab) {
+    // A .gitlab-ci.yml that doesn't parse: its lines still show what it builds.
+    const text = await readTextOrNull(absolute(root, GITLAB_CI_FILE));
+    if (text !== null) ciFiles.push({ path: GITLAB_CI_FILE, text });
+  }
   for (const f of ciFiles) signals.set(f.path, platformBuildSignals(f.text));
   const count = (type: string) => native.filter((t) => t.type === type).length;
   const targets: DetectedTarget[] = [];
@@ -879,7 +1104,7 @@ async function detectNativeTargets(
         : 'no workflow builds it, so it\'s shipped on demand (release: "manual")',
     });
   }
-  return { targets, ciFiles, signals, gitlabText };
+  return { targets, ciFiles, signals };
 }
 
 /** The web target of a repo with a package.json: `auto` unless another target ships it. */
@@ -1047,7 +1272,8 @@ async function detectProjectMachinery(
     searchDirs: readonly string[];
     workflows: Workflow[];
     builds: DockerBuild[];
-    gitlabText: string | null;
+    gitlab: GitLabCi | null;
+    gitlabBuilds: GitLabDockerBuild[];
     tags: readonly FoundTag[];
     targets: readonly DetectedTarget[];
   },
@@ -1099,13 +1325,13 @@ async function detectProjectMachinery(
   )) {
     docs.push({ path, text: (await readTextOrNull(absolute(root, path))) ?? "" });
   }
-  const { gitlabText, tags } = input;
+  const { gitlab, tags } = input;
   return detectMachinery({
     workflows: input.workflows,
     dockerBuilds: input.builds,
     packages,
     scriptFiles,
-    ...(gitlabText !== null ? { gitlab: { path: ".gitlab-ci.yml", text: gitlabText } } : {}),
+    ...(gitlab ? { gitlabCi: gitlab, gitlabBuilds: input.gitlabBuilds } : {}),
     fastfiles,
     docs,
     samples: sampleTags(
@@ -1157,14 +1383,14 @@ async function existingGeneratedFiles(root: string): Promise<string[]> {
 function workflowSummaries(
   ciFiles: readonly { path: string; text: string }[],
   signals: ReadonlyMap<string, ReturnType<typeof platformBuildSignals>>,
-  builds: readonly DockerBuild[],
+  builds: readonly BuildSource[],
 ): Detection["workflows"] {
   return ciFiles.map((f) => ({
     path: f.path,
     builds: [
       ...(signals.get(f.path) ?? []),
       ...builds
-        .filter((b) => b.workflow.path === f.path)
+        .filter((b) => b.path === f.path)
         .map((b) => ({
           platform: "docker" as const,
           line: b.line,
@@ -1189,6 +1415,7 @@ export function evidenceOf(v: FoundVersion, note: string): Evidence {
 async function detectImagePins(
   root: string,
   targets: DetectedTarget[],
+  ciFiles: readonly string[],
   notes: Note[],
 ): Promise<ImagePin[]> {
   const images = targets.flatMap((t) =>
@@ -1199,6 +1426,8 @@ async function detectImagePins(
     ignore: [
       ".github/**",
       ".gitlab-ci.yml",
+      ".gitlab/**",
+      ...ciFiles,
       "**/pnpm-lock.yaml",
       "**/Chart.lock",
       "**/.changeset/**",

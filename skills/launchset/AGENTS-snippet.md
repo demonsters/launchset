@@ -20,3 +20,4 @@ This repo is released with [launchset](https://demonsters.github.io/launchset/):
 - On a `release/X.Y.x` branch (or what `maintenanceBranches` sets) only `patch` or `none` is allowed.
 - Add the label `launchset:preview` (or whatever `preview.label` sets) to a PR to get a preview build.
 - Manual targets (`release: "manual"`) are shipped on demand. Never ship one unasked. If `status` shows one is behind, tell the human.
+- On GitLab (`.gitlab-ci.yml`, `.gitlab/launchset.yml`) read "MR" for "PR". Build steps live in `.gitlab/launchset-targets.yml` (one hidden `.launchset-<target>` job per target, no `rules`/`when`/`needs`/`stage`, one command per line, no early `exit`). A preview there needs a new pipeline after the label is added, or the manual `launchset-preview-plan` job. Never ask for or print `LAUNCHSET_TOKEN`.

@@ -9,6 +9,8 @@ A **prerelease branch** is a preview of a long-lived branch that gets a real ver
 
 Both run in `launchset-preview.yml`.
 
+On GitLab? See [Previews on GitLab](/gitlab/previews/): there are no label events, so the label starts a preview on the next pipeline, and an MR without it gets a manual job.
+
 ## Preview a PR
 
 Add the label `launchset:preview` to a PR. The workflow builds the PR's head commit.

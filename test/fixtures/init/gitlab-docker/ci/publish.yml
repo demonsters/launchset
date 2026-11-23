@@ -1,0 +1,13 @@
+# Publishing, included from .gitlab-ci.yml.
+.publish-base:
+  image: node:24
+  before_script:
+    - npm ci
+  script:
+    - npx changeset publish
+
+publish:
+  extends: .publish-base
+  stage: deploy
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH

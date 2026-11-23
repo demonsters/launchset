@@ -18,7 +18,7 @@ description: The three workflows launchset generates, step by step.
 The check passes when:
 
 - the PR adds or changes at least one valid changeset, **or**
-- the PR author is in `check.bots` (default `dependabot[bot]` and `renovate[bot]`), **or**
+- the PR author is in `check.bots` (default `dependabot[bot]`, `renovate[bot]` and `renovate-bot`, Renovate's username on gitlab.com), **or**
 - the PR is the release PR (head branch `launchset/release/*`, from the same repo, not a fork).
 
 It fails on invalid changesets anywhere in `.launchset/`, on `minor` or `major` changesets in a PR to a maintenance branch, and when a version file disagrees with the root version.

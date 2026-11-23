@@ -1,21 +1,54 @@
 /**
- * Git and GitHub operations the flow commands share: idempotent tag creation, rebuilding a
+ * Git and forge operations the flow commands share: idempotent tag creation, rebuilding a
  * branch and restoring the original checkout, fetching a remote branch, and creating or
  * updating a PR by its head branch.
  */
 
+import { gitlabSettings } from "../core/config/schema.ts";
 import { errorMessage, LaunchsetError } from "../core/errors.ts";
+import { forgeHints } from "../core/forge-hints.ts";
+import { indexTags } from "../core/tags.ts";
+import type { Forge, PullRequest } from "../forge/types.ts";
 import {
   type Git,
   LeaseError,
   type PushResult,
+  type PushTagOptions,
   TagCleanupError,
   TagExistsError,
 } from "../git/index.ts";
-import type { GitHub, PullRequest } from "../github/index.ts";
 import type { FlowContext } from "./context.ts";
 
 export type TagResult = "created" | "exists";
+
+/** GitLab's push option that creates no pipeline for the push. */
+export const GITLAB_SKIP_CI = "ci.skip";
+
+/**
+ * The push options for one of launchset's tags. GitLab: `ci.skip`, so a tag push starts no tag
+ * pipeline (which would run every job without rules): always for marker and partial tags (only
+ * launchset reads them), and for release and prerelease tags unless `gitlab.tagPipelines` is
+ * true. GitHub: none (its tag pushes stay as they were).
+ */
+export function tagPushOptions(context: FlowContext, name: string): string[] {
+  if (context.host !== "gitlab") return [];
+  const index = indexTags([name], { tags: context.config.tags, targets: context.config.targets });
+  const internal = index.partials.size > 0 || index.markerTags.length > 0;
+  if (internal || !gitlabSettings(context.config).tagPipelines) return [GITLAB_SKIP_CI];
+  return [];
+}
+
+/** {@link tagPushOptions} for `Git.pushTag`, warning when the remote doesn't take them. */
+export function tagPushOptionsFor(context: FlowContext, name: string): PushTagOptions {
+  const pushOptions = tagPushOptions(context, name);
+  return {
+    pushOptions,
+    onUnsupported: () =>
+      context.log.warn(
+        `The remote doesn't take push options, so ${name} was pushed without ${pushOptions.join(", ")}: it may start a tag pipeline.`,
+      ),
+  };
+}
 
 /**
  * Create tag `name` at `sha` and push it (when a remote exists). Idempotent: a tag that
@@ -39,8 +72,11 @@ export async function ensureTag(
   try {
     // A tag that only exists locally must not linger: a later ship, mark or finalize would
     // take it for shipped. createAndPushTag removes it again when the push fails.
+    const options = tagPushOptionsFor(context, name);
     pushed =
-      existing === undefined ? await git.createAndPushTag(name, sha) : await git.pushTag(name);
+      existing === undefined
+        ? await git.createAndPushTag(name, sha, options)
+        : await git.pushTag(name, options);
   } catch (error) {
     if (error instanceof TagCleanupError) {
       throw new LaunchsetError(
@@ -196,15 +232,15 @@ export interface UpsertPrResult {
 
 /** Create the PR for `head`, or update the open one (title and body). */
 export async function upsertPr(
-  github: GitHub,
+  forge: Forge,
   input: { head: string; base: string; title: string; body: string },
 ): Promise<UpsertPrResult> {
-  const existing = await github.findOpenPrByHead(input.head);
-  if (!existing) return { pr: await github.createPr(input), action: "created" };
+  const existing = await forge.findOpenPrByHead(input.head);
+  if (!existing) return { pr: await forge.createPr(input), action: "created" };
   if (existing.title === input.title && existing.body === input.body) {
     return { pr: existing, action: "unchanged" };
   }
-  const pr = await github.updatePr(existing.number, { title: input.title, body: input.body });
+  const pr = await forge.updatePr(existing.number, { title: input.title, body: input.body });
   return { pr, action: "updated" };
 }
 
@@ -221,13 +257,9 @@ export async function sameCommitContent(
   return left.tree === right.tree && left.parents.join(" ") === right.parents.join(" ");
 }
 
-const CHECKOUT_HINT =
-  // biome-ignore lint/suspicious/noTemplateCurlyInString: a GitHub Actions expression, not a JS template.
-  "Check out the plan's commit in this job: actions/checkout with ref: ${{ needs.launchset.outputs.release-sha }} (and fetch-depth: 0).";
-
-/** True when running in GitHub Actions. */
+/** True when running in CI (GitHub Actions, GitLab CI). */
 export function inActions(context: FlowContext): boolean {
-  return context.env.GITHUB_ACTIONS === "true";
+  return context.ci.inCi;
 }
 
 /**
@@ -245,7 +277,9 @@ export async function checkHeadAtPlan(
   if (head === plan.releaseSha) return undefined;
   const message = `${command} runs at ${head.slice(0, 7)}, but the plan builds ${plan.version} from ${plan.releaseSha.slice(0, 7)} (release-sha)`;
   if (inActions(context)) {
-    throw new LaunchsetError("wrong-checkout", message, { hint: CHECKOUT_HINT });
+    throw new LaunchsetError("wrong-checkout", message, {
+      hint: forgeHints(context.host).planCheckout,
+    });
   }
   return `${message}. In CI this is an error: build jobs must check out release-sha.`;
 }

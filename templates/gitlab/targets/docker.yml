@@ -1,0 +1,23 @@
+
+# --- @@target@@ (docker) ---
+.launchset-@@target@@:
+  # Docker-in-Docker. The docker image is Alpine: the before_script adds Node and git for launchset.
+  image: docker:@@docker_version@@
+  services:
+    - docker:@@docker_version@@-dind
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+    @@registry_variables@@
+  before_script:
+    - apk add --no-cache nodejs-current npm git
+    # Log in before `verify`: for a private image the registry check needs read access. The
+    # login also covers the push below.
+    @@login_lines@@
+  script:
+    # The tags and labels come from launchset and follow the `tags` config of this target: one
+    # image ref (image:tag) per line in LAUNCHSET_DOCKER_TAGS, one key=value per line in
+    # LAUNCHSET_DOCKER_LABELS.
+    - DOCKER_TAG_ARGS=$(printf ' --tag %s' $LAUNCHSET_DOCKER_TAGS)
+    - DOCKER_LABEL_ARGS=$(printf ' --label %s' $LAUNCHSET_DOCKER_LABELS)
+    @@platform_lines@@
+    - docker buildx build $DOCKER_TAG_ARGS $DOCKER_LABEL_ARGS@@build_flags@@ --push @@context@@

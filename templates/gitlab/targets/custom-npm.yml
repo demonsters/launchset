@@ -1,0 +1,15 @@
+
+# --- @@target@@ (npm package) ---
+# Publishes releases (skipped when `verify` finds this version on the registry) and prereleases.
+# MR and branch previews are not published to npm.
+.launchset-@@target@@:
+  image: node:24
+  @@npm_variables@@
+  script:
+    # - npm ci          # build first, if the package needs it
+    # - npm run build
+    # NPM_TOKEN is a CI/CD variable (masked) that may publish the package.
+    - npm config set "//registry.npmjs.org/:_authToken" "$NPM_TOKEN"
+    # The dist-tag is `latest` for base-branch releases, so a hotfix on a maintenance branch does
+    # not move `latest`. Add --access public for a public scoped package.
+    - if [ "$LAUNCHSET_CHANNEL" != "preview" ]; then npm publish --tag "$LAUNCHSET_DIST_TAG"; fi

@@ -3,7 +3,7 @@ title: GitHub Action reference
 description: The inputs, outputs and commands of demonsters/launchset-action.
 ---
 
-The action is public: any repo in any org can use it.
+The action is public: any repo in any org can use it. GitLab has no action: CI jobs run the CLI, see [launchset on GitLab](/gitlab/getting-started/).
 
 ```yaml
 - uses: demonsters/launchset-action@v1

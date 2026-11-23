@@ -8,6 +8,7 @@ import semver from "semver";
 import { extractSection, extractSectionWithHeading, insertSectionSorted } from "./changelog.ts";
 import type { ResolvedConfig } from "./config/schema.ts";
 import { LaunchsetError } from "./errors.ts";
+import { type ForgeHost, forgeWords } from "./forge-links.ts";
 import {
   code,
   highestVersion,
@@ -78,6 +79,8 @@ export interface FinalizeInput {
   /** Existing GitHub Releases by tag name: `v{version}`, partial tags, older release tags. */
   releases: ReadonlyMap<string, ExistingRelease>;
   now: Date | number;
+  /** Code host, for what releases are called in messages; default `github`. */
+  host?: ForgeHost;
 }
 
 export type FinalizeAction =
@@ -288,6 +291,7 @@ export function planFinalize(input: FinalizeInput): FinalizeResult {
 
 function finalizePublish(input: FinalizeInput): FinalizeResult {
   const { config, plan, tags } = input;
+  const { releaseName } = forgeWords(input.host);
   const version = plan.version;
   const tag = releaseTag(config.tags, version);
   const tagActions: FinalizeAction[] = [];
@@ -317,7 +321,7 @@ function finalizePublish(input: FinalizeInput): FinalizeResult {
       notices,
       summary: "",
     };
-    result.summary = renderFinalizeSummary(result);
+    result.summary = renderFinalizeSummary(result, input.host);
     return result;
   }
 
@@ -361,7 +365,7 @@ function finalizePublish(input: FinalizeInput): FinalizeResult {
     }
     const section = input.changelog === null ? null : extractSection(input.changelog, v);
     if (section === null) {
-      warnings.push(`${changelogFile} has no section for ${v}: the GitHub Release has no notes.`);
+      warnings.push(`${changelogFile} has no section for ${v}: the ${releaseName} has no notes.`);
     }
     const existing = input.releases.get(vTag);
     const body = renderReleaseBody({
@@ -369,6 +373,7 @@ function finalizePublish(input: FinalizeInput): FinalizeResult {
       section,
       changelogFile,
       manualTargets: manualEntries(config, tags, v, existing?.body),
+      ...(input.host ? { host: input.host } : {}),
     });
     const action = releaseAction({
       tag: vTag,
@@ -432,6 +437,7 @@ function finalizePublish(input: FinalizeInput): FinalizeResult {
           missing: notShipped,
           section: input.changelog === null ? null : extractSection(input.changelog, u.version),
           changelogFile,
+          ...(input.host ? { host: input.host } : {}),
         }),
         prerelease: true,
         makeLatest: false,
@@ -454,7 +460,7 @@ function finalizePublish(input: FinalizeInput): FinalizeResult {
     notices,
     summary: "",
   };
-  result.summary = renderFinalizeSummary(result);
+  result.summary = renderFinalizeSummary(result, input.host);
   return result;
 }
 
@@ -504,6 +510,7 @@ function planBackport(
 
 function finalizeShip(input: FinalizeInput): FinalizeResult {
   const { config, plan, tags } = input;
+  const { releaseName } = forgeWords(input.host);
   const version = plan.version;
   const tag = releaseTag(config.tags, version);
   const target = plan.matrix[0];
@@ -531,7 +538,7 @@ function finalizeShip(input: FinalizeInput): FinalizeResult {
     };
     const entries = manualEntries(config, tags, version, existing?.body, update);
     if (existing) {
-      const body = upsertManualTargets(existing.body, entries, version);
+      const body = upsertManualTargets(existing.body, entries, version, input.host);
       const action = releaseAction({
         tag,
         name: existing.name || tag,
@@ -542,10 +549,13 @@ function finalizeShip(input: FinalizeInput): FinalizeResult {
         updateLatest: false,
       });
       if (action) actions.push(action);
-      else notices.push(`The ${tag} Release already lists ${target} as shipped.`);
+      else
+        notices.push(
+          `The ${tag} ${input.host === "gitlab" ? releaseName : "Release"} already lists ${target} as shipped.`,
+        );
     } else {
       const section = input.changelog === null ? null : extractSection(input.changelog, version);
-      notices.push(`${tag} had no GitHub Release: creating it.`);
+      notices.push(`${tag} had no ${releaseName}: creating it.`);
       actions.push({
         kind: "create-release",
         tag,
@@ -555,6 +565,7 @@ function finalizeShip(input: FinalizeInput): FinalizeResult {
           section,
           changelogFile: config.changelog.file,
           manualTargets: entries,
+          ...(input.host ? { host: input.host } : {}),
         }),
         prerelease: false,
         makeLatest: !plan.maintenance && isHighestRelease(tags, version),
@@ -575,24 +586,29 @@ function finalizeShip(input: FinalizeInput): FinalizeResult {
     notices,
     summary: "",
   };
-  result.summary = renderFinalizeSummary(result, target);
+  result.summary = renderFinalizeSummary(result, input.host, target);
   return result;
 }
 
-function describeAction(action: FinalizeAction): string {
+function describeAction(action: FinalizeAction, releaseName: string): string {
   switch (action.kind) {
     case "create-tag":
       return `Create tag ${code(action.tag)} at ${code(action.sha.slice(0, 7))}`;
     case "create-release":
-      return `Create ${action.prerelease ? "pre-release" : "GitHub Release"} ${code(action.name)}${action.makeLatest ? " (latest)" : ""}`;
+      return `Create ${action.prerelease ? "pre-release" : releaseName} ${code(action.name)}${action.makeLatest ? " (latest)" : ""}`;
     case "update-release":
-      return `Update GitHub Release ${code(action.name)}`;
+      return `Update ${releaseName} ${code(action.name)}`;
     case "backport-changelog":
       return `Open the changelog backport PR ${code(action.title)} to ${code(action.base)}`;
   }
 }
 
-function renderFinalizeSummary(result: FinalizeResult, shipTarget?: string): string {
+function renderFinalizeSummary(
+  result: FinalizeResult,
+  host: ForgeHost | undefined,
+  shipTarget?: string,
+): string {
+  const { releaseName } = forgeWords(host);
   const paragraphs: string[] = [];
   switch (result.status) {
     case "released":
@@ -617,9 +633,13 @@ function renderFinalizeSummary(result: FinalizeResult, shipTarget?: string): str
     );
   }
   if (result.actions.length > 0) {
-    paragraphs.push(result.actions.map((a) => `- ${describeAction(a)}`).join("\n"));
+    paragraphs.push(result.actions.map((a) => `- ${describeAction(a, releaseName)}`).join("\n"));
   } else {
-    paragraphs.push("Nothing to change: tags and Releases are up to date.");
+    paragraphs.push(
+      host === "gitlab"
+        ? "Nothing to change: tags and releases are up to date."
+        : "Nothing to change: tags and Releases are up to date.",
+    );
   }
   return renderSummary({
     title: "launchset: finalize",
@@ -627,5 +647,6 @@ function renderFinalizeSummary(result: FinalizeResult, shipTarget?: string): str
     failures: result.failures,
     warnings: result.warnings,
     notices: result.notices,
+    ...(host ? { host } : {}),
   });
 }

@@ -15,6 +15,7 @@ import { previewPlan } from "../../src/flow/preview.ts";
 import { release } from "../../src/flow/release.ts";
 import { stamp } from "../../src/flow/stamp.ts";
 import { Git } from "../../src/git/index.ts";
+import { cli } from "../cli/helpers.ts";
 import { cloneRepo, initRepo, sh, TestRepo, tempDir } from "../git/helpers.ts";
 import {
   changesetText,
@@ -26,6 +27,7 @@ import {
   pkg,
   projectFor,
   setupProject,
+  TOKEN,
   versionFiles,
 } from "./helpers.ts";
 
@@ -200,7 +202,7 @@ describe("failures and re-runs", () => {
     const github = new FakeGitHub(project.remote);
     const context = await contextFor(project.repo);
     await expect(
-      context.github?.createPr({ head: "nope", base: "main", title: "x", body: "" }),
+      context.forge?.createPr({ head: "nope", base: "main", title: "x", body: "" }),
     ).rejects.toMatchObject({ status: 422 });
     expect(github.prs).toEqual([]);
   });
@@ -298,6 +300,37 @@ describe("CI-like checkouts", () => {
     expect(rerun.ok).toBe(true);
     expect(project.remoteBranch("launchset/changelog/v1.4.1")).toBe(backport);
     expect(github.openPrs()).toHaveLength(1);
+  });
+
+  it("finalize --ci opens the backport with plan.json (an artifact) in the checkout", async () => {
+    // On GitLab the child's finalize job gets plan.json as an artifact: an untracked file that
+    // must not count as an uncommitted change when the backport branch is built.
+    const project = setupProject();
+    const { repo } = project;
+    releaseCommit(project, "1.5.0", SECTION_150);
+    repo.git("tag", "v1.5.0");
+    repo.git("push", "--quiet", "origin", "v1.5.0");
+    const github = new FakeGitHub(project.remote);
+    await hotfix(await contextFor(repo), { line: "1.4" });
+    repo.checkout("release/1.4.x");
+    const sha = releaseCommit(
+      project,
+      "1.4.1",
+      "## 1.4.1 (2026-11-18)\n\n### Patch changes\n- Fix.\n",
+    );
+    const plan = await publishPlan(project);
+    const ci = ciClone(project);
+    ci.git("checkout", "--quiet", "--detach", sha);
+    await markAll(ci, plan, ["docker-api", "web", "android"]);
+    writeFileSync(join(ci.dir, "plan.json"), plan);
+    const r = await cli(
+      ["finalize", "--plan", "@plan.json", "--ci", "--repo", "acme/app", "--token", TOKEN],
+      { cwd: ci.dir },
+    );
+    expect(r.stderr).not.toContain("clean working tree");
+    expect(r.code).toBe(0);
+    expect(project.remoteBranch("launchset/changelog/v1.4.1")).toBeDefined();
+    expect(github.openPrs().map((p) => p.title)).toEqual(["Changelog: v1.4.1"]);
   });
 
   it("marks from a shallow clone of the release commit", async () => {

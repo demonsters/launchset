@@ -1,0 +1,117 @@
+# A Rust + Python desktop app's CI:
+# Linux jobs on a Docker runner, Windows jobs on a PowerShell runner, release packages and a
+# site image built on tags.
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH
+    - if: $CI_COMMIT_TAG
+
+default:
+  interruptible: true
+
+variables:
+  UV_VERSION: "0.13.6"
+
+# ----------------------------------------------------------------- Linux ---
+
+.linux:
+  tags: [docker]
+  image: rust:1-trixie
+  before_script:
+    - apt-get update -qq
+    - curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" | env UV_UNMANAGED_INSTALL=/usr/local/bin sh
+
+lint:
+  extends: .linux
+  script:
+    - cargo fmt --all --check
+    - uv run --locked --only-group dev ruff check .
+
+test:linux:
+  extends: .linux
+  parallel:
+    matrix:
+      - UV_PYTHON: ["3.12", "3.14"]
+  script:
+    - uv run --locked pytest -v -n 8
+
+# --------------------------------------------------------------- Windows ---
+
+# Shared Windows setup: Rust (rustup) and uv, installed per job.
+.windows:
+  tags: [windows]   # Windows 11 VM: PowerShell
+  # Never cancelled by a newer push: a cancel hangs the runner's PowerShell.
+  interruptible: false
+  variables:
+    GIT_CLEAN_FLAGS: -ffdx -e target/ -e models/ -e .ffmpeg/
+  hooks:
+    pre_get_sources_script:
+      - |
+        $dir = ($env:CI_PROJECT_DIR -replace '/', '\').ToLower()
+        Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.ToLower().Contains($dir) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+  before_script:
+    - $ProgressPreference = "SilentlyContinue"
+    - $env:Path = "$env:USERPROFILE\.cargo\bin;$env:USERPROFILE\.uv-bin;$env:Path"
+
+test:windows:
+  extends: .windows
+  script:
+    - uv run --locked pytest -v -n 4
+
+# Windows release build: runs on tags, and by hand for a trial build.
+package:windows:
+  extends: .windows
+  rules:
+    - if: $CI_COMMIT_TAG
+    - when: manual
+      allow_failure: true   # a not-yet-started manual job must not block the pipeline
+  timeout: 40m
+  script:
+    - choco install innosetup -y --no-progress
+    - uv run --locked --group package scripts/build_app.py --clean --installer
+    - $p = Start-Process -FilePath "dist\app\Acme\Acme.exe" -ArgumentList "--quit-after","3000" -PassThru
+  artifacts:
+    paths: [dist/Acme-*-setup.exe, dist/Acme-*-windows-x64.zip, dist/platform-*.json]
+
+package:appimage:
+  tags: [docker]
+  image: ubuntu:22.04   # old on purpose: its glibc is the AppImage's minimum
+  rules:
+    - if: $CI_COMMIT_TAG
+    - when: manual
+      allow_failure: true
+  script:
+    - uv run --locked --group package scripts/build_app.py --clean --appimage
+  artifacts:
+    paths: [dist/Acme-*-x86_64.AppImage, dist/platform-*.json]
+
+# ------------------------------------------------------------------ the site ---
+
+# The site image: nginx with the downloads, built with crane.
+.site:
+  tags: [docker]
+  image: nginx:1.30.7-alpine
+  resource_group: site-image
+  variables:
+    SITE_IMAGE: $CI_REGISTRY_IMAGE/site
+
+site:release:
+  extends: .site
+  rules:
+    - if: $CI_COMMIT_TAG
+  needs: [package:windows, package:appimage]   # needs both packages' artifacts
+  script:
+    - python3 hosting/build_image.py --packages dist --previous "$SITE_IMAGE:latest"
+      --push "$SITE_IMAGE:$CI_COMMIT_TAG" "$SITE_IMAGE:latest"
+
+site:refresh:
+  extends: .site
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      changes: [hosting/**/*]
+  script:
+    - python3 hosting/build_image.py --previous "$SITE_IMAGE:latest" --push "$SITE_IMAGE:latest"

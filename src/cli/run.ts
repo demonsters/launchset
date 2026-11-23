@@ -8,10 +8,13 @@ import { LaunchsetError } from "../core/errors.ts";
 import {
   type ContextOptions,
   createContext,
+  detectHost,
   type FlowContext,
   type FlowResult,
   type Logger,
 } from "../flow/index.ts";
+import { Git } from "../git/index.ts";
+import { ciEnabled, ciFilePaths } from "./ci-files.ts";
 import { UsageError } from "./errors.ts";
 import type { CliIo } from "./io.ts";
 
@@ -22,6 +25,7 @@ export interface GlobalOpts {
   token?: string;
   repo?: string;
   yes?: boolean;
+  ci?: boolean;
 }
 
 /** The directory with the launchset config: `--cwd`, else the nearest parent that has one. */
@@ -48,43 +52,64 @@ export function cliLogger(io: CliIo): Logger {
   };
 }
 
+/** `owner/repo`. */
 const REPO = /^[^/\s]+\/[^/\s]+$/;
+/** A nested GitLab path (`group/sub/project`), which only GitLab accepts. */
+const NESTED_REPO = /^[^/\s]+(?:\/[^/\s]+){2,}$/;
+
+/** True when `repo` is a valid `--repo` for the host (detected like `createContext` does). */
+async function validRepo(io: CliIo, root: string, repo: string): Promise<boolean> {
+  if (REPO.test(repo)) return true;
+  if (!NESTED_REPO.test(repo)) return false;
+  const { host } = await detectHost(io.env, () => new Git({ cwd: root }).remoteUrl());
+  return host === "gitlab";
+}
 
 export async function makeContext(
   io: CliIo,
   opts: GlobalOpts,
   extra: Pick<ContextOptions, "run"> = {},
 ): Promise<FlowContext> {
-  if (opts.repo !== undefined && !REPO.test(opts.repo)) {
+  const root = resolveRoot(io, opts);
+  if (opts.repo !== undefined && !(await validRepo(io, root, opts.repo))) {
     throw new UsageError(
       `--repo ${opts.repo} is not owner/repo`,
       "Pass the repository as --repo demonsters/my-app.",
     );
   }
   return createContext({
-    cwd: resolveRoot(io, opts),
+    cwd: root,
     env: io.env,
     log: cliLogger(io),
     ...(opts.token ? { token: opts.token } : {}),
     ...(opts.repo ? { repository: opts.repo } : {}),
     ...(io.now ? { now: io.now } : {}),
+    // plan.json from a parent job's artifacts (finalize) and the files earlier commands of the
+    // job wrote must not count as uncommitted changes (the changelog backport needs a clean tree).
+    ...(ciEnabled(io, opts) ? { ownFiles: ciFilePaths(io) } : {}),
     ...extra,
   });
 }
 
 /**
  * The plan JSON text: `--plan '<json>'`, `--plan @file.json`, else `LAUNCHSET_PLAN` (unless
- * `useEnv` is false, e.g. explicit `--version` flags were given).
+ * `useEnv` is false, e.g. explicit `--version` flags were given). With `missingFile: "none"`, a
+ * `@file` that doesn't exist means "no plan" (`preview-comment`: a skipped preview writes none).
  */
 export async function readPlanInput(
   io: CliIo,
   value: string | undefined,
   useEnv = true,
+  options: { missingFile?: "error" | "none"; log?: Logger } = {},
 ): Promise<string | undefined> {
   const raw = value ?? (useEnv ? io.env.LAUNCHSET_PLAN : undefined);
   if (raw === undefined || raw.trim() === "") return undefined;
   if (!raw.startsWith("@")) return raw;
   const file = resolve(io.cwd, raw.slice(1));
+  if (options.missingFile === "none" && !existsSync(file)) {
+    options.log?.info(`No plan file ${file}: no plan to report (the preview was skipped).`);
+    return undefined;
+  }
   try {
     return await readFile(file, "utf8");
   } catch (error) {

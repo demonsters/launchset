@@ -12,7 +12,7 @@ import {
   LAUNCHSET_IDENTITY,
   LeaseError,
   normalizeServerUrl,
-  parseGitHubRepo,
+  parseRepoFromRemote,
   TagExistsError,
 } from "../../src/git/index.ts";
 import { cloneRepo, initRepo, repoWithRemote, sh, tempDir } from "./helpers.ts";
@@ -218,6 +218,19 @@ describe("refs and history", () => {
     expect(await git.isClean()).toBe(true);
     repo.write("untracked.txt", "x");
     expect(await git.isClean()).toBe(false);
+  });
+
+  it("doesn't count launchset's own files (the --ci files), wherever git runs", async () => {
+    const repo = initRepo();
+    repo.commit("a", { "a.txt": "a", "app/b.txt": "b" });
+    repo.write("plan.json", "{}");
+    repo.write("launchset.env", "X=1\n");
+    const own = [join(repo.dir, "plan.json"), join(repo.dir, "launchset.env"), "/elsewhere/x"];
+    expect(await new Git({ cwd: repo.dir, ownFiles: own }).isClean()).toBe(true);
+    expect(await new Git({ cwd: join(repo.dir, "app"), ownFiles: own }).isClean()).toBe(true);
+    expect(await new Git({ cwd: repo.dir }).isClean()).toBe(false);
+    repo.write("other.txt", "x");
+    expect(await new Git({ cwd: repo.dir, ownFiles: own }).isClean()).toBe(false);
   });
 });
 
@@ -524,15 +537,48 @@ describe("remote", () => {
     ["https://gitlab.com/acme/app.git", undefined],
     ["/tmp/remote.git", undefined],
     ["https://github.com/acme", undefined],
-  ])("parseGitHubRepo(%s)", (url, expected) => {
-    expect(parseGitHubRepo(url)).toBe(expected);
+  ])("parseRepoFromRemote(%s)", (url, expected) => {
+    expect(parseRepoFromRemote(url)).toBe(expected);
+  });
+
+  it.each([
+    ["https://gitlab.com/acme/app.git", "acme/app"],
+    ["https://gitlab.com/group/sub/deep/project", "group/sub/deep/project"],
+    ["https://gitlab.com/group/sub/project/", "group/sub/project"],
+    ["https://gitlab-ci-token:glcbt-secret@gitlab.com/group/sub/project.git", "group/sub/project"],
+    ["http://gitlab.com/group/project.git", "group/project"],
+    ["ssh://git@gitlab.com:2222/group/sub/project.git", "group/sub/project"],
+    ["ssh://git@gitlab.com/group/project.git", "group/project"],
+    ["git@gitlab.com:group/sub/project.git", "group/sub/project"],
+    ["https://gitlab.com/project", undefined],
+    ["https://gitlab.com/", undefined],
+    ["https://github.com/acme/app.git", undefined],
+    ["/tmp/remote.git", undefined],
+  ])("parseRepoFromRemote(%s) on GitLab", (url, expected) => {
+    expect(parseRepoFromRemote(url, undefined, "gitlab")).toBe(expected);
+  });
+
+  it("recognises a self-managed GitLab server, with ports", () => {
+    const server = "https://git.acme.dev:8443/";
+    const parse = (url: string) => parseRepoFromRemote(url, server, "gitlab");
+    expect(parse("https://oauth2:tok@git.acme.dev:8443/a/b/c.git")).toBe("a/b/c");
+    expect(parse("ssh://git@git.acme.dev:2222/a/b/c.git")).toBe("a/b/c");
+    expect(parse("git@git.acme.dev:a/b/c.git")).toBe("a/b/c");
+    expect(parse("git@other.dev:a/b/c.git")).toBeUndefined();
+  });
+
+  it("reads a nested repository from a GitLab remote", async () => {
+    const repo = initRepo();
+    repo.git("remote", "add", "origin", "https://gitlab-ci-token:secret@gitlab.com/g/s/app.git");
+    expect(await new Git({ cwd: repo.dir, host: "gitlab" }).repoFromRemote()).toBe("g/s/app");
+    expect(await new Git({ cwd: repo.dir }).repoFromRemote()).toBeUndefined();
   });
 
   it("recognises the GitHub Enterprise server host", () => {
-    expect(parseGitHubRepo("https://ghe.acme.com/team/app.git", "https://ghe.acme.com")).toBe(
+    expect(parseRepoFromRemote("https://ghe.acme.com/team/app.git", "https://ghe.acme.com")).toBe(
       "team/app",
     );
-    expect(parseGitHubRepo("git@ghe.acme.com:team/app.git", "https://ghe.acme.com/")).toBe(
+    expect(parseRepoFromRemote("git@ghe.acme.com:team/app.git", "https://ghe.acme.com/")).toBe(
       "team/app",
     );
   });

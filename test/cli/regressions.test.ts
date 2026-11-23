@@ -4,8 +4,8 @@ import { describe, expect, it } from "vitest";
 import { exitCodeFor, reportError, UsageError } from "../../src/cli/errors.ts";
 import type { CliIo } from "../../src/cli/io.ts";
 import { LaunchsetError } from "../../src/core/errors.ts";
+import { GitHubError } from "../../src/forge/github/errors.ts";
 import { GitError } from "../../src/git/index.ts";
-import { GitHubError } from "../../src/github/errors.ts";
 import { VerifyError } from "../../src/verify/types.ts";
 import { cli, fixtureRepo } from "./helpers.ts";
 

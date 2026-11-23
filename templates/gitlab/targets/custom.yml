@@ -1,0 +1,23 @@
+
+# --- @@target@@ (custom): your build and publish steps ---
+.launchset-@@target@@:
+  image: node:24
+  script:
+    # Remove this line once you've added the build and publish steps below: it stops the release
+    # from marking @@target@@ as shipped while nothing builds it.
+    - echo "No build steps for @@target@@ yet. Add them to .gitlab/launchset-targets.yml and remove this line."; exit 1
+    # `stamp` wrote the version into this target's `files`, if it has any. Example, for an npm
+    # package (and add `verify: ["npm"]` to the target to skip it when the version exists):
+    # - npm config set "//registry.npmjs.org/:_authToken" "$NPM_TOKEN"
+    # - npm publish --tag "$LAUNCHSET_DIST_TAG"
+    #
+    # Output another target needs ("after" in launchset.config): its job gets this job's
+    # artifacts, but a retry that only builds that target has none (they were in the earlier
+    # pipeline). Upload them somewhere durable too, e.g. GitLab's generic package registry:
+    # - 'curl --fail --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file dist/app.zip "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/@@target@@/$LAUNCHSET_VERSION/app.zip"'
+    # The waiting target then fetches it from there when the artifact is missing:
+    # - '[ -f dist/app.zip ] || curl --fail --create-dirs --header "JOB-TOKEN: $CI_JOB_TOKEN" --output dist/app.zip "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/@@target@@/$LAUNCHSET_VERSION/app.zip"'
+    # On a PowerShell runner (gitlab.shell: "powershell"):
+    # - 'Invoke-RestMethod -Method Put -Headers @{ "JOB-TOKEN" = $env:CI_JOB_TOKEN } -InFile dist\app.zip -Uri "$env:CI_API_V4_URL/projects/$env:CI_PROJECT_ID/packages/generic/@@target@@/$env:LAUNCHSET_VERSION/app.zip"'
+    # - 'if (-not (Test-Path dist\app.zip)) { New-Item -ItemType Directory -Force dist | Out-Null; Invoke-RestMethod -Headers @{ "JOB-TOKEN" = $env:CI_JOB_TOKEN } -OutFile dist\app.zip -Uri "$env:CI_API_V4_URL/projects/$env:CI_PROJECT_ID/packages/generic/@@target@@/$env:LAUNCHSET_VERSION/app.zip" }'
+    # (The path has LAUNCHSET_VERSION, so previews and releases never share a file.)

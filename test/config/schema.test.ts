@@ -4,7 +4,10 @@ import {
   ConfigError,
   type ConfigIssue,
   defineConfig,
+  gitlabSettings,
+  hostConfigIssues,
   resolveConfig,
+  targetShell,
   UNKNOWN_KEY_MESSAGE,
 } from "../../src/core/config/schema.ts";
 import { LaunchsetError } from "../../src/core/errors.ts";
@@ -26,7 +29,7 @@ describe("resolveConfig: defaults and normalization", () => {
     const config = resolveConfig({ targets: { web } });
     expect(config).toMatchObject({
       version: { file: "package.json" },
-      changelog: { file: "CHANGELOG.md", github: true },
+      changelog: { file: "CHANGELOG.md", links: true },
       baseBranch: "main",
       maintenanceBranches: "release/*.x",
       tags: {
@@ -35,7 +38,7 @@ describe("resolveConfig: defaults and normalization", () => {
         partial: "launchset/partial/{version}",
       },
       buildNumber: { strategy: "timestamp", epoch: "2020-01-01T00:00:00Z", offset: 0 },
-      check: { bots: ["dependabot[bot]", "renovate[bot]"] },
+      check: { bots: ["dependabot[bot]", "renovate[bot]", "renovate-bot"] },
       preview: {
         enabled: true,
         label: "launchset:preview",
@@ -633,6 +636,39 @@ describe("review regressions", () => {
   });
 });
 
+describe("changelog.github (deprecated alias of changelog.links)", () => {
+  const changelog = (input: Record<string, unknown>) =>
+    resolveConfig({ changelog: input, targets: { web } }).changelog;
+
+  it("maps github onto links", () => {
+    expect(changelog({ github: false })).toEqual({ file: "CHANGELOG.md", links: false });
+    expect(changelog({ github: true })).toEqual({ file: "CHANGELOG.md", links: true });
+    expect(changelog({ links: false })).toEqual({ file: "CHANGELOG.md", links: false });
+    expect(changelog({ links: false, github: false })).toEqual({
+      file: "CHANGELOG.md",
+      links: false,
+    });
+  });
+
+  it("rejects both with different values", () => {
+    expect(issues({ changelog: { links: true, github: false }, targets: { web } })).toEqual([
+      {
+        path: "changelog.github",
+        message: '"github" is the old name of "links", which is set to true: keep only "links"',
+      },
+    ]);
+  });
+
+  it("stays valid in the JSON Schema, marked deprecated", () => {
+    const schema = configJsonSchema() as {
+      properties: { changelog: { properties: Record<string, Record<string, unknown>> } };
+    };
+    const props = schema.properties.changelog.properties;
+    expect(props.links).toMatchObject({ type: "boolean", default: true });
+    expect(props.github).toMatchObject({ type: "boolean", deprecated: true });
+  });
+});
+
 describe("configJsonSchema", () => {
   it("generates the input JSON Schema with $schema allowed", () => {
     const schema = configJsonSchema();
@@ -644,5 +680,111 @@ describe("configJsonSchema", () => {
     );
     expect(schema.additionalProperties).toBe(false);
     expect(schema.required).toEqual(["targets"]);
+  });
+});
+
+describe("GitLab settings: after, gitlab.shell, gitlab.include, gitlab.tagPipelines", () => {
+  const custom = { type: "custom" } as const;
+
+  it("resolves them, with defaults when they're left out", () => {
+    const config = resolveConfig({
+      gitlab: { include: [".gitlab/ci-templates.yml"], tagPipelines: true },
+      targets: {
+        windows: { ...custom, gitlab: { shell: "powershell" } },
+        appimage: custom,
+        site: { ...custom, after: ["windows", "appimage"] },
+      },
+    });
+    expect(targetShell(config.targets.windows as never)).toBe("powershell");
+    expect(targetShell(config.targets.appimage as never)).toBe("sh");
+    expect(config.targets.site?.after).toEqual(["windows", "appimage"]);
+    expect(gitlabSettings(config)).toEqual({
+      include: [".gitlab/ci-templates.yml"],
+      tagPipelines: true,
+    });
+    const plain = resolveConfig({ targets: { web } });
+    expect(gitlabSettings(plain)).toEqual({ include: [], tagPipelines: false });
+    expect(plain.targets.web).not.toHaveProperty("after");
+    expect(plain).not.toHaveProperty("gitlab");
+  });
+
+  it("checks after: known, not itself, once, no cycles, auto only after auto", () => {
+    expect(
+      issues({
+        targets: {
+          a: { ...custom, after: ["b", "nope", "a", "b"] },
+          b: { ...custom, after: ["c"] },
+          c: { ...custom, after: ["a"] },
+          m: { ...custom, release: "manual", after: ["a"] },
+          d: { ...custom, after: ["m"] },
+        },
+      }),
+    ).toEqual([
+      { path: "targets.a.after.1", message: 'unknown target "nope"' },
+      { path: "targets.a.after.2", message: "a target can't come after itself" },
+      { path: "targets.a.after.3", message: '"b" is listed twice' },
+      {
+        path: "targets.d.after.0",
+        message:
+          '"m" is a manual target: a release doesn\'t build it, so the auto target d can only come after auto targets',
+      },
+      {
+        path: "targets.a.after",
+        message: "targets can't wait for each other in a circle: a -> b -> c -> a",
+      },
+    ]);
+  });
+
+  it("gives clear messages for bad shells and include paths, and unknown keys", () => {
+    expect(issues({ targets: { w: { ...custom, gitlab: { shell: "pwsh" } } } })).toEqual([
+      {
+        path: "targets.w.gitlab.shell",
+        message:
+          'expected "sh" or "powershell" ("powershell" covers Windows PowerShell 5.1 and PowerShell 7, pwsh)',
+      },
+    ]);
+    expect(
+      issues({
+        gitlab: { include: ["ci/$X.yml", "ci/*.yml", "ci/a.txt", "../x.yml", "https://x/y.yml"] },
+        targets: { web },
+      }).map((i) => [i.path, i.message.split(",")[0]]),
+    ).toEqual([
+      [
+        "gitlab.include.0",
+        "expected a literal path (no variables or wildcards: a generated child pipeline can't use them in include)",
+      ],
+      [
+        "gitlab.include.1",
+        "expected a literal path (no variables or wildcards: a generated child pipeline can't use them in include)",
+      ],
+      ["gitlab.include.2", "expected a .yml or .yaml file"],
+      ["gitlab.include.3", "expected a path inside the repository"],
+      ["gitlab.include.4", "expected a path inside the repository"],
+    ]);
+    expect(issues({ gitlab: { tagPipeline: true }, targets: { web } })).toEqual([
+      { path: "gitlab.tagPipeline", message: UNKNOWN_KEY_MESSAGE },
+    ]);
+  });
+
+  it("after is GitLab only: an issue on GitHub", () => {
+    const config = resolveConfig({ targets: { a: custom, b: { ...custom, after: ["a"] } } });
+    expect(hostConfigIssues(config, "gitlab")).toEqual([]);
+    expect(hostConfigIssues(config, "github")).toEqual([
+      {
+        path: "targets.b.after",
+        message: expect.stringMatching(
+          /^is GitLab only: the GitHub workflows build every target in one matrix job/,
+        ),
+      },
+    ]);
+    expect(hostConfigIssues(resolveConfig({ targets: { web } }), "github")).toEqual([]);
+  });
+
+  it("is in the JSON Schema", () => {
+    const schema = configJsonSchema() as { properties: Record<string, { properties?: object }> };
+    expect(Object.keys(schema.properties.gitlab?.properties ?? {})).toEqual([
+      "include",
+      "tagPipelines",
+    ]);
   });
 });

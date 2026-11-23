@@ -4,6 +4,7 @@
  * or update the release PR. Closes an open release PR when nothing is pending anymore.
  */
 
+import { forgeWords } from "../core/forge-links.ts";
 import { actionOutputs } from "../core/outputs.ts";
 import type { ReleaseDecision, ReleaseEvent } from "../core/release.ts";
 import { planRelease } from "../core/release.ts";
@@ -16,7 +17,7 @@ import {
 import type { Plan } from "../core/types.ts";
 import { releaseBump } from "../core/versions.ts";
 import { planReleaseChanges, writePlannedChanges } from "./apply.ts";
-import { type FlowContext, type FlowResult, requireGitHub } from "./context.ts";
+import { type FlowContext, type FlowResult, requireForge } from "./context.ts";
 import {
   changelogOrigins,
   changesetWarnings,
@@ -104,7 +105,8 @@ export async function release(
     warnings,
   };
   const outputs = actionOutputs(plan);
-  let summary = appendAlerts(decision.summary, "WARNING", fileWarnings);
+  let summary = appendAlerts(decision.summary, "WARNING", fileWarnings, context.host);
+  const words = forgeWords(context.host);
   const lines = [`mode: ${plan.mode}`];
   if (plan.mode !== "none") lines.push(`version: ${plan.version}`);
   if (plan.mode === "publish" || plan.mode === "ship") {
@@ -123,39 +125,39 @@ export async function release(
       ? await baseMovedOn(context, plan.branch, state.headSha)
       : undefined;
   if (movedOn) {
-    const reason = `${plan.branch} has moved on to ${movedOn.slice(0, 7)}: the run for that commit updates the release PR.`;
+    const reason = `${plan.branch} has moved on to ${movedOn.slice(0, 7)}: the run for that commit updates the release ${words.prName}.`;
     if (plan.mode === "release-pr") data.releasePrSkipped = reason;
     summary = appendParagraphs(summary, [reason]);
-    lines.push(`release PR left alone: ${reason}`);
+    lines.push(`release ${words.prName} left alone: ${reason}`);
   } else if (!options.dryRun && plan.mode === "release-pr") {
     const pr = await openReleasePr(context, state, decision);
     if ("skipped" in pr) {
       data.releasePrSkipped = pr.reason;
       summary = appendParagraphs(summary, [pr.reason]);
-      lines.push(`release PR left alone: ${pr.reason}`);
+      lines.push(`release ${words.prName} left alone: ${pr.reason}`);
     } else {
       data.releasePr = pr;
       outputs["pr-number"] = String(pr.number);
       summary = appendParagraphs(summary, [
-        `Release PR [#${pr.number}](${pr.url}) ${pr.action}${pr.pushed ? "" : " (branch already up to date)"}.`,
+        `Release ${words.prName} [${words.prText(pr.number)}](${pr.url}) ${pr.action}${pr.pushed ? "" : " (branch already up to date)"}.`,
       ]);
-      lines.push(`release PR #${pr.number} ${pr.action}: ${pr.url}`);
+      lines.push(`release ${words.prName} ${words.prText(pr.number)} ${pr.action}: ${pr.url}`);
     }
   }
   const nothingPending =
     releaseBump(state.changesets) === null &&
     state.botPrs.length === 0 &&
     state.invalidChangesets.length === 0;
-  if (!options.dryRun && !movedOn && plan.mode === "none" && nothingPending && context.github) {
+  if (!options.dryRun && !movedOn && plan.mode === "none" && nothingPending && context.forge) {
     const branch = releasePrBranch(plan.branch);
-    const open = await context.github.findOpenPrByHead(branch);
+    const open = await context.forge.findOpenPrByHead(branch);
     if (open) {
-      await context.github.closePr(open.number, releasePrCloseComment(plan.branch));
+      await context.forge.closePr(open.number, releasePrCloseComment(plan.branch, context.host));
       data.closedPr = { number: open.number, url: open.url };
       summary = appendParagraphs(summary, [
-        `Closed the release PR [#${open.number}](${open.url}): nothing is pending anymore.`,
+        `Closed the release ${words.prName} [${words.prText(open.number)}](${open.url}): nothing is pending anymore.`,
       ]);
-      lines.push(`closed release PR #${open.number}: nothing is pending`);
+      lines.push(`closed release ${words.prName} ${words.prText(open.number)}: nothing is pending`);
     }
   }
   lines.push(...noteLines(warnings, decision.notices));
@@ -186,13 +188,14 @@ async function openReleasePr(
   state: ReleaseState,
   decision: ReleaseDecision,
 ): Promise<ReleasePrResult | ReleasePrSkipped> {
-  const github = requireGitHub(context, "The release PR");
+  const PR = forgeWords(context.host).prName;
+  const forge = requireForge(context, `The release ${PR}`);
   const content = await releasePrContent(context, state, decision);
   const { commit, pushed, superseded } = await rebuildBranch(context, {
     branch: content.branch,
     from: state.headSha,
     message: content.commitMessage,
-    what: "Building the release PR",
+    what: `Building the release ${PR}`,
     write: async () => {
       const changes = await planReleaseChanges(context, content);
       await writePlannedChanges(changes);
@@ -202,10 +205,10 @@ async function openReleasePr(
   if (superseded) {
     return {
       skipped: true,
-      reason: `${content.branch} was pushed by another run while this one built it: that run updates the release PR.`,
+      reason: `${content.branch} was pushed by another run while this one built it: that run updates the release ${PR}.`,
     };
   }
-  const { pr, action } = await upsertPr(github, {
+  const { pr, action } = await upsertPr(forge, {
     head: content.branch,
     base: content.base,
     title: content.title,
@@ -234,5 +237,6 @@ export async function releasePrContent(
     tags: state.tags,
     now: context.now,
     serverUrl: context.serverUrl,
+    host: context.host,
   });
 }

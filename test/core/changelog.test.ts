@@ -133,6 +133,22 @@ describe("renderSection", () => {
     ).toContain("- A. ([#7](https://github.example.com/org/repo/pull/7))");
   });
 
+  it("writes GitLab merge request links for host gitlab", () => {
+    const entries = [{ changeset: { bump: "patch" as const, summary: "A.", pr: 7 } }];
+    expect(
+      renderSection({
+        version: "1.0.0",
+        date: "2026-11-18",
+        repository: "org/sub/repo",
+        host: "gitlab",
+        entries,
+      }),
+    ).toContain("- A. ([!7](https://gitlab.com/org/sub/repo/-/merge_requests/7))");
+    expect(
+      renderSection({ version: "1.0.0", date: "2026-11-18", host: "gitlab", entries }),
+    ).toContain("- A. (!7)");
+  });
+
   it("rejects a malformed date string", () => {
     expect(() => renderSection({ version: "1.0.0", date: "18-11-2026", entries: [] })).toThrow(
       /expected a date like 2026-11-18/,

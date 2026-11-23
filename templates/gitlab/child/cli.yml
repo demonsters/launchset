@@ -1,0 +1,13 @@
+
+# The launchset CLI (Node 24 or later with npm). An underscore in the name: target names can't
+# have one, so it never clashes with a .launchset-<target> job.
+.launchset_cli:
+  image: node:24
+  # A child pipeline has GitLab's default stages (not the parent's), so `test` always exists.
+  stage: test
+  variables:
+    # Full history and tags: finalize pushes the release tag and reads the history.
+    GIT_DEPTH: "0"
+    LAUNCHSET_CLI: @@cli_spec@@
+  before_script:
+    @@install@@

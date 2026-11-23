@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { errorSummary, errorText, formatError } from "../../action/src/errors.ts";
 import { LaunchsetError } from "../../src/core/errors.ts";
+import { GitHubError } from "../../src/forge/github/errors.ts";
 import { GitError } from "../../src/git/index.ts";
-import { GitHubError } from "../../src/github/errors.ts";
 
 describe("formatError", () => {
   it("returns the hint of a LaunchsetError, which keeps it apart from the message", () => {

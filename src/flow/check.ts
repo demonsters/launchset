@@ -3,6 +3,7 @@
  * sticky comment, and the pre-push warning for repos that push straight to the base branch.
  */
 
+import { isChangesetPath } from "../core/changesets.ts";
 import {
   CHECK_COMMENT_ID,
   type CheckResult,
@@ -10,11 +11,14 @@ import {
   evaluatePushCheck,
   type PushCheckResult,
 } from "../core/check.ts";
-import { LaunchsetError } from "../core/errors.ts";
-import { renderSummary } from "../core/plan-common.ts";
-import { GitHubError } from "../github/index.ts";
+import { errorMessage, LaunchsetError } from "../core/errors.ts";
+import { forgeHints } from "../core/forge-hints.ts";
+import { forgeWords } from "../core/forge-links.ts";
+import { type ChangesetFile, renderSummary } from "../core/plan-common.ts";
+import { ForgeError } from "../forge/errors.ts";
+import type { ChangedFile } from "../git/index.ts";
 import { checkConsistency, readRootVersion } from "../platforms/index.ts";
-import { branchFromRef, eventInfo, type FlowContext, type FlowResult } from "./context.ts";
+import { branchFromRef, type FlowContext, type FlowResult } from "./context.ts";
 import {
   allInOrder,
   baseBranchRef,
@@ -24,6 +28,7 @@ import {
   reachableReleaseVersions,
   readChangesetFiles,
   readTagSnapshot,
+  rootVersionReader,
   syncTags,
   tryResolveBranch,
 } from "./gather.ts";
@@ -84,7 +89,8 @@ async function tryCommit(context: FlowContext, ref: string): Promise<string | un
 /**
  * The PR's head commit (`pull_request.head.sha`): `actions/checkout` checks out the merge
  * commit, whose second parent it is, so it's there with `fetch-depth: 0`. Otherwise it is
- * fetched from `refs/pull/<n>/head`.
+ * fetched from the host's PR head ref (`refs/pull/<n>/head`, GitLab
+ * `refs/merge-requests/<n>/head`).
  */
 async function resolveHead(context: FlowContext, ref: string, prNumber: number): Promise<string> {
   const { git } = context;
@@ -92,13 +98,13 @@ async function resolveHead(context: FlowContext, ref: string, prNumber: number):
   if (local) return local;
   if (prNumber > 0 && (await git.hasRemote())) {
     const tracking = `refs/remotes/${git.remote}/pr/${prNumber}`;
-    if (await git.fetchRef(`refs/pull/${prNumber}/head`, tracking)) {
+    if (await git.fetchRef(forgeWords(context.host).prRef(prNumber), tracking)) {
       const sha = (await tryCommit(context, ref)) ?? (await tryCommit(context, tracking));
       if (sha) return sha;
     }
   }
   throw new LaunchsetError("commit-not-found", `the PR head commit ${ref} isn't in this checkout`, {
-    hint: "Check out with fetch-depth: 0 (actions/checkout) so the PR head is available.",
+    hint: forgeHints(context.host).prHeadMissing,
   });
 }
 
@@ -124,7 +130,7 @@ async function baseTip(
   const found = await tryCommit(context, await baseBranchRef(context, baseBranch));
   if (found) return found;
   throw new LaunchsetError("unknown-base", `the base branch ${baseBranch} isn't available`, {
-    hint: "Check out with fetch-depth: 0 so the base branch is present, or pass --base <ref>.",
+    hint: forgeHints(context.host).baseMissing,
   });
 }
 
@@ -135,7 +141,7 @@ async function mergeBase(context: FlowContext, base: string, head: string): Prom
   throw new LaunchsetError(
     "no-merge-base",
     `the PR head ${head.slice(0, 7)} and the base ${base.slice(0, 7)} have no common commit in this checkout`,
-    { hint: "Check out with fetch-depth: 0 (a shallow clone cuts the history the check needs)." },
+    { hint: forgeHints(context.host).noMergeBase },
   );
 }
 
@@ -155,7 +161,7 @@ export async function check(
   if (options.push) return pushCheck(context, options);
   const { config } = context;
   await syncTags(context, options.fetch ?? true);
-  const payload = eventInfo(context)?.pr;
+  const payload = context.ci.event?.pr;
   const baseBranch =
     options.pr?.baseBranch ??
     payload?.baseRef ??
@@ -189,7 +195,7 @@ export async function check(
   const base = await mergeBase(context, tip, headSha);
   const pr = {
     number: prNumber,
-    author: options.pr?.author ?? payload?.author ?? "",
+    author: options.pr?.author ?? payload?.author ?? (await fetchAuthor(context, prNumber)),
     headBranch:
       options.pr?.headBranch ?? payload?.headRef ?? (await tryResolveBranch(context)) ?? "",
     baseBranch,
@@ -197,9 +203,12 @@ export async function check(
   };
   // Pending changesets, the version and the consistency check all describe the checked-out
   // commit: in Actions that's the merge commit, i.e. what the base branch will contain after
-  // the merge (a changeset the base already released is gone there). Which changesets the PR
-  // itself adds comes from the diff.
-  const [changedFiles, changesets, mismatches, version, tags, dir] = await allInOrder([
+  // the merge (a changeset the base already released is gone there); the same in GitLab's
+  // merged results pipelines. Which changesets the PR itself adds comes from the diff.
+  // A plain GitLab MR pipeline checks out the MR's head instead: see `headOnlyCheckout`.
+  const headOnly =
+    !options.base && !options.head && (await headOnlyCheckout(context, tip, headSha));
+  const [changedFiles, headChangesets, mismatches, headVersion, tags, dir] = await allInOrder([
     context.git.changedFiles(base, headSha),
     readChangesetFiles(context, { ref: "HEAD" }),
     checkConsistency(config, context.cwd),
@@ -207,6 +216,15 @@ export async function check(
     readTagSnapshot(context),
     changesetDir(context),
   ]);
+  let changesets = headChangesets;
+  let version = headVersion;
+  if (headOnly) {
+    context.log.debug(
+      `HEAD is the MR head, not a merge with ${baseBranch}: reading the pending changesets and the version as merged into ${tip.slice(0, 7)}`,
+    );
+    changesets = await mergedChangesets(context, { tip, head: headSha, changedFiles, dir });
+    version = (await (await rootVersionReader(context))(tip)) ?? headVersion;
+  }
   const result = evaluateCheck({
     config,
     pr,
@@ -217,25 +235,33 @@ export async function check(
     tags,
     changesetDir: dir,
     ...(options.docsUrl ? { docsUrl: options.docsUrl } : {}),
+    ...(context.host !== "github" ? { host: context.host } : {}),
   });
 
   const data: CheckData = { result };
   let summary = result.summary;
-  if ((options.comment ?? true) && context.github && pr.number > 0) {
+  if ((options.comment ?? true) && context.forge && pr.number > 0) {
+    const words = forgeWords(context.host);
     try {
-      data.comment = await context.github.upsertStickyComment(
+      data.comment = await context.forge.upsertStickyComment(
         pr.number,
         CHECK_COMMENT_ID,
         result.comment,
       );
     } catch (error) {
-      if (error instanceof GitHubError && error.status === 403 && pr.fork) {
-        data.commentWarning = `Couldn't post the check comment on #${pr.number}: the token is read-only here (PRs from forks get a read-only GITHUB_TOKEN). The check result above still counts.`;
+      const gitlab = gitlabCommentFailure(context, error, pr);
+      if (gitlab?.warning) {
+        data.commentWarning = gitlab.warning;
+        summary = appendAlerts(summary, "WARNING", [data.commentWarning], context.host);
+      } else if (gitlab?.error) {
+        throw gitlab.error;
+      } else if (error instanceof ForgeError && error.status === 403 && pr.fork) {
+        data.commentWarning = `Couldn't post the check comment on ${words.prText(pr.number)}: the token is read-only here (PRs from forks get a read-only GITHUB_TOKEN). The check result above still counts.`;
         summary = appendAlerts(summary, "WARNING", [data.commentWarning]);
-      } else if (error instanceof GitHubError && error.status === 403) {
+      } else if (error instanceof ForgeError && error.status === 403) {
         throw new LaunchsetError(
           "comment-forbidden",
-          `the token may not comment on PR #${pr.number}: ${error.message.split("\n")[0]}`,
+          `the token may not comment on ${words.prName} ${words.prText(pr.number)}: ${error.message.split("\n")[0]}`,
           {
             hint: "Give the check workflow `permissions: pull-requests: write` (with GITHUB_TOKEN), or use the GitHub App token.",
             cause: error,
@@ -254,6 +280,106 @@ export async function check(
   if (result.nextVersion) lines.push(`  next version: ${result.nextVersion} (${result.bump})`);
   if (data.commentWarning) lines.push(`  warning: ${data.commentWarning}`);
   return { ok: result.ok, outputs: {}, summary, lines, data };
+}
+
+/**
+ * GitLab's check note failures: a warning (the check still counts) when no token of ours can
+ * write notes here, i.e. only `CI_JOB_TOKEN` (no `LAUNCHSET_TOKEN`), or an MR from a fork
+ * (its pipelines run in the fork, without the project's variables); an error with a GitLab
+ * hint for a 403 with a real token. Undefined on GitHub and for other errors.
+ */
+function gitlabCommentFailure(
+  context: FlowContext,
+  error: unknown,
+  pr: { number: number; fork: boolean },
+): { warning?: string; error?: LaunchsetError } | undefined {
+  if (context.host !== "gitlab" || !(error instanceof ForgeError)) return undefined;
+  const mr = forgeWords("gitlab").prText(pr.number);
+  const denied = error.status === 401 || error.status === 403 || error.status === 404;
+  if (pr.fork && (denied || !context.token)) {
+    return {
+      warning: `Couldn't post the check note on ${mr}: it comes from a fork, and pipelines for fork MRs run without LAUNCHSET_TOKEN (${error.message.split("\n")[0]}). The check result above still counts.`,
+    };
+  }
+  if (!context.token && denied) {
+    return {
+      warning: `Couldn't post the check note on ${mr}: CI_JOB_TOKEN can't write notes; set LAUNCHSET_TOKEN (a project or group access token with the api scope) to get the note. The check result above still counts.`,
+    };
+  }
+  if (error.status === 403) {
+    return {
+      error: new LaunchsetError(
+        "comment-forbidden",
+        `the token may not write notes on MR ${mr}: ${error.message.split("\n")[0]}`,
+        {
+          hint: "LAUNCHSET_TOKEN needs the api scope and at least the Developer role in the project to write MR notes.",
+          cause: error,
+        },
+      ),
+    };
+  }
+  return undefined;
+}
+
+/**
+ * The MR author on GitLab, which isn't in the environment: one API call (a job token can read
+ * MRs), so bot MRs (`check.bots`) are recognised. `""` when it can't be read (logged).
+ */
+async function fetchAuthor(context: FlowContext, number: number): Promise<string> {
+  if (context.host !== "gitlab" || !context.forge || number <= 0) return "";
+  try {
+    return (await context.forge.getPr(number)).author;
+  } catch (error) {
+    context.log.debug(`Couldn't read the author of MR !${number}: ${errorMessage(error)}`);
+    return "";
+  }
+}
+
+/**
+ * True when HEAD is the MR's head commit and not a merge with the target branch: a GitLab
+ * merge request pipeline without merged results (`CI_MERGE_REQUEST_EVENT_TYPE` `detached`)
+ * checks out the source branch as it is. When the target branch is already in the head, the
+ * head is what a merge would give, so that counts as merged. GitHub (and GitLab merged results
+ * pipelines) check out the merge commit: always false there.
+ */
+async function headOnlyCheckout(
+  context: FlowContext,
+  tip: string,
+  headSha: string,
+): Promise<boolean> {
+  if (context.host !== "gitlab" || context.ci.event?.kind !== "pr") return false;
+  if ((await context.git.headSha()) !== headSha) return false;
+  return !(await context.git.isAncestor(tip, headSha));
+}
+
+/**
+ * The changeset files the target branch will have after merging the MR, without a merge
+ * commit: those at the target's tip, with the MR's own changes to the folder applied (its
+ * added and modified files from the head, its deletions and renames). Like a merge where the
+ * MR wins on conflicts. A changeset the target already released (deleted) since the MR
+ * branched off is gone, one added to the target meanwhile is there.
+ */
+async function mergedChangesets(
+  context: FlowContext,
+  input: { tip: string; head: string; changedFiles: readonly ChangedFile[]; dir: string },
+): Promise<ChangesetFile[]> {
+  const [atTip, atHead] = await allInOrder([
+    readChangesetFiles(context, { ref: input.tip }),
+    readChangesetFiles(context, { ref: input.head }),
+  ]);
+  const fromHead = new Map(atHead.map((file) => [file.path, file]));
+  const merged = new Map(atTip.map((file) => [file.path, file]));
+  for (const file of input.changedFiles) {
+    if (file.status === "R" && file.oldPath !== undefined) merged.delete(file.oldPath);
+    if (!isChangesetPath(file.path, input.dir)) continue;
+    if (file.status === "D") {
+      merged.delete(file.path);
+      continue;
+    }
+    const head = fromHead.get(file.path);
+    if (head) merged.set(file.path, head);
+  }
+  return [...merged.values()].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 }
 
 /** `check --push` (spec 11): warns, never fails. */

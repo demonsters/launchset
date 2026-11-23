@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { dispatch, type Flows, outputsFor } from "../../action/src/commands.ts";
 import { COMMANDS, type Inputs, readInputs } from "../../action/src/inputs.ts";
 import { LaunchsetError } from "../../src/core/errors.ts";
-import type { FlowContext, FlowResult } from "../../src/flow/index.ts";
+import { type FlowContext, type FlowResult, parseEvent } from "../../src/flow/index.ts";
 
 const ok = (overrides: Partial<FlowResult> = {}): FlowResult => ({
   ok: true,
@@ -30,7 +30,7 @@ function mockFlows() {
   return flows as unknown as Flows & typeof flows;
 }
 
-const context = { event: undefined } as unknown as FlowContext;
+const context = { ci: {} } as unknown as FlowContext;
 
 function inputs(overrides: Partial<Inputs> & { command: Inputs["command"] }): Inputs {
   return {
@@ -203,7 +203,9 @@ describe("outputsFor", () => {
 
   it("check: pr-number from the pull_request event", () => {
     const withPr = {
-      event: { name: "pull_request", payload: { pull_request: { number: 12 } } },
+      ci: {
+        event: parseEvent({ name: "pull_request", payload: { pull_request: { number: 12 } } }),
+      },
     } as unknown as FlowContext;
     expect(outputsFor("check", ok(), withPr)["pr-number"]).toBe("12");
     expect(outputsFor("check", ok(), context)["pr-number"]).toBe("");

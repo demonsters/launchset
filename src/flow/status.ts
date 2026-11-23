@@ -77,7 +77,7 @@ export async function status(
     branch,
     ...(options.fetch !== undefined ? { fetch: options.fetch } : {}),
   });
-  const wantBots = options.botPrs ?? context.github !== undefined;
+  const wantBots = options.botPrs ?? context.forge !== undefined;
   let botPrs: StatusData["botPrs"] = [];
   if (wantBots) {
     const releaseCommit = await findReleaseCommitFor(context, repo.tags, repo.version);
@@ -111,7 +111,7 @@ export async function status(
         : `Error: no changeset added or changed compared with ${since}. Add one with: launchset add`,
     );
   }
-  const text = renderStatus(data);
+  const text = renderStatus(data, context.host);
   const lines = [
     ...text.replace(/\n$/, "").split("\n"),
     ...(extra.length > 0 ? ["", ...extra] : []),

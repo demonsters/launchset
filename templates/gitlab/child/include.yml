@@ -1,0 +1,6 @@
+
+# The hidden .launchset-<target> jobs with your build steps. (Literal paths: a generated child
+# pipeline can't use variables in `include`.)
+include:
+  @@templates@@
+  - local: @@targets_file@@

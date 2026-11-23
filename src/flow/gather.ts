@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { CHANGESET_DIR, isChangesetPath } from "../core/changesets.ts";
 import { LaunchsetError } from "../core/errors.ts";
 import { finalizeCandidates, type UnfinishedVersion } from "../core/finalize.ts";
+import { forgeHints } from "../core/forge-hints.ts";
 import {
   type BotPrInfo,
   type ChangesetFile,
@@ -27,6 +28,8 @@ import type { ReleaseEvent, ReleaseInput } from "../core/release.ts";
 import type { ChangesetOrigin } from "../core/release-pr.ts";
 import { lastReleaseTag, versionTagShas } from "../core/tags.ts";
 import type { Changeset } from "../core/types.ts";
+import { findBotPrsWithoutChangeset } from "../forge/bot-prs.ts";
+import { changelogInfoFor } from "../forge/changelog-info.ts";
 import type { TagRef } from "../git/index.ts";
 import {
   findReleaseCommit,
@@ -34,10 +37,8 @@ import {
   type ReadVersion,
   versionReader,
 } from "../git/release-commit.ts";
-import { findBotPrsWithoutChangeset } from "../github/bot-prs.ts";
-import { changelogInfoFor } from "../github/changelog-info.ts";
 import { readRootVersion } from "../platforms/index.ts";
-import { branchFromRef, eventInfo, type FlowContext } from "./context.ts";
+import { branchFromRef, type FlowContext } from "./context.ts";
 
 // ---------------------------------------------------------------------------
 // Remote and tags
@@ -186,20 +187,18 @@ export function changesetWarnings(files: readonly ChangesetFile[]): string[] {
 // Branch, event and versions
 
 /**
- * The branch this run is on: `explicit`, else the Actions ref (`GITHUB_REF` when it's a
- * branch), else git's current branch. Throws `no-branch` on a detached HEAD without either.
+ * The branch this run is on: `explicit`, else the CI ref (`GITHUB_REF` when it's a
+ * branch, outside PR runs), else git's current branch. Throws `no-branch` on a detached HEAD without either.
  */
 export async function resolveBranch(context: FlowContext, explicit?: string): Promise<string> {
   if (explicit) return explicit;
-  const fromEnv = branchFromRef(context.env.GITHUB_REF);
-  if (fromEnv && context.event?.name !== "pull_request") return fromEnv;
+  const fromEnv = branchFromRef(context.ci.ref);
+  if (fromEnv && context.ci.event?.kind !== "pr") return fromEnv;
   const current = await context.git.currentBranch();
   if (current) return current;
-  throw new LaunchsetError(
-    "no-branch",
-    "can't tell which branch this is: HEAD is detached and GITHUB_REF isn't a branch",
-    { hint: "Check out the branch (`launchset plan` also takes --branch)." },
-  );
+  throw new LaunchsetError("no-branch", forgeHints(context.host).noBranch, {
+    hint: "Check out the branch (`launchset plan` also takes --branch).",
+  });
 }
 
 /** The branch name, or undefined on a detached HEAD outside Actions. */
@@ -229,9 +228,9 @@ export function releaseEventFor(
   options: ReleaseEventOptions = {},
 ): ReleaseEvent {
   if (options.event) return options.event;
-  const dispatch = context.event?.name === "workflow_dispatch";
+  const dispatch = context.ci.event?.kind === "dispatch";
   if (!dispatch && !options.target) return { kind: "push" };
-  const inputs = dispatch ? (eventInfo(context)?.inputs ?? {}) : {};
+  const inputs = dispatch ? (context.ci.event?.inputs ?? {}) : {};
   const event: ReleaseEvent = { kind: "dispatch" };
   const target = options.target || inputs.target;
   const version = options.version || inputs.version;
@@ -292,16 +291,16 @@ export async function commitsSince(
   return log.map((entry) => ({ sha: entry.sha, subject: entry.subject }));
 }
 
-/** Merged bot PRs since `since` without a changeset (spec 9.4); empty without a GitHub client. */
+/** Merged bot PRs since `since` without a changeset (spec 9.4); empty without a forge client. */
 export async function botPrsSince(
   context: FlowContext,
   branch: string,
   since: string | undefined,
 ): Promise<BotPrInfo[]> {
-  if (!context.github) return [];
+  if (!context.forge) return [];
   const prs = await findBotPrsWithoutChangeset({
     git: context.git,
-    github: context.github,
+    forge: context.forge,
     ...(since ? { since } : {}),
     head: "HEAD",
     branch,
@@ -311,17 +310,17 @@ export async function botPrsSince(
   return prs.map((pr) => ({ number: pr.number, title: pr.title, author: pr.author }));
 }
 
-/** PR and author per changeset path (spec 12), when `changelog.github` and a client exist. */
+/** PR and author per changeset path (spec 12), when `changelog.links` and a client exist. */
 export async function changelogOrigins(
   context: FlowContext,
   paths: readonly string[],
   branch: string,
 ): Promise<Map<string, ChangesetOrigin>> {
   const origins = new Map<string, ChangesetOrigin>();
-  if (!context.config.changelog.github || !context.github || paths.length === 0) return origins;
+  if (!context.config.changelog.links || !context.forge || paths.length === 0) return origins;
   const info = await changelogInfoFor(paths, {
     git: context.git,
-    github: context.github,
+    forge: context.forge,
     branch,
     head: "HEAD",
     log: context.log,
@@ -464,7 +463,7 @@ export async function gatherReleaseState(
     (await findReleaseCommit(context.git, "HEAD", reader, {
       paths: [await versionFilePath(context)],
     }));
-  const wantBots = options.botPrs ?? context.github !== undefined;
+  const wantBots = options.botPrs ?? context.forge !== undefined;
   const since = releaseCommit ?? repo.lastReleaseTag ?? undefined;
   const botPrs = wantBots ? await botPrsSince(context, repo.branch, since) : [];
   const state: ReleaseState = {
@@ -511,6 +510,7 @@ export function releaseInputFor(
     now: context.now,
   };
   if (state.releaseCommit) input.releaseCommit = state.releaseCommit;
+  if (context.host !== "github") input.host = context.host;
   if (context.run) input.run = context.run;
   if (context.repository) input.repository = context.repository;
   return input;

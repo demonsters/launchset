@@ -48,7 +48,7 @@ The text under the frontmatter becomes the changelog entry. Write it for the peo
 
 - Say what changed for the user, not how you did it.
 - One line is best. Keep tense consistent with the other entries.
-- Don't add a PR number or your name. launchset adds the PR link and author (`changelog.github` is on by default and needs a token).
+- Don't add a PR number or your name. launchset adds the PR link and author (`changelog.links` is on by default and needs a token).
 - Markdown works. With several lines, the first line is the bullet and the rest is indented under it.
 
 Good:

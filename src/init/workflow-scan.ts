@@ -415,7 +415,7 @@ export function tagTemplate(
       if (/sha/i.test(name) && !/version|tag/i.test(name)) {
         return /::?7|:0:7|short/i.test(`${name}${mods ?? ""}`) ? "{shortSha}" : "{sha}";
       }
-      if (/ref_name|github\.ref$|GITHUB_REF/i.test(name)) {
+      if (/ref_name|github\.ref$|GITHUB_REF|CI_COMMIT_TAG|CI_COMMIT_REF_NAME/i.test(name)) {
         // The pushed git tag; `${GITHUB_REF#refs/tags/v}` strips the prefix.
         // The pushed git tag, but only when tags start the workflow (else it's a branch name).
         if (tagPrefix === null) {
@@ -613,7 +613,8 @@ export function tokens(command: string): string[] {
   );
 }
 
-function parseDockerCommands(command: string): {
+/** The `docker build` (file, context, tags) and pushed refs (`push`, `tag` targets) of a command. */
+export function parseDockerCommands(command: string): {
   build?: { tags: string[]; file?: string; context: string };
   push?: string[];
 } {

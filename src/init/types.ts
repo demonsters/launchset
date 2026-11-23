@@ -50,7 +50,8 @@ export interface FoundTag {
   counted: boolean;
 }
 
-export type DetectedPlatform = "docker" | "android" | "ios" | "web";
+/** `custom`: a GitLab job that runs on tags and builds or publishes something, or a target declared with `--decide target.<name>=custom`. */
+export type DetectedPlatform = "docker" | "android" | "ios" | "web" | "custom";
 
 /** A file a target stamps, with the values found in it. */
 export interface DetectedFile {
@@ -100,6 +101,24 @@ export interface DetectedTarget {
   /** True when `proposed` is a guess the human should confirm. */
   ask?: boolean;
   docker?: DetectedDocker;
+  /** A custom target from an existing GitLab job. */
+  gitlab?: DetectedGitLabJob;
+  /** Declared with `--decide target.<name>=custom` (nothing detected it). */
+  declared?: boolean;
+}
+
+/** The GitLab job a custom target comes from (it runs on tags and builds or publishes). */
+export interface DetectedGitLabJob {
+  job: string;
+  path: string;
+  line: number;
+  /** The shell its runner uses: `powershell` when its scripts or runner tags say so. */
+  shell: "sh" | "powershell";
+  shellEvidence: Evidence[];
+  /** Targets from other such jobs that this one needs: `after` in the config. */
+  after: string[];
+  /** Hidden templates it extends or `!reference`s (nearest first), and where they're defined. */
+  templates: { name: string; path: string; line: number }[];
 }
 
 export type MachineryKind =
@@ -111,7 +130,9 @@ export type MachineryKind =
   | "docker-latest"
   | "version-writer"
   | "changesets-write"
-  | "release-docs";
+  | "release-docs"
+  /** GitLab: `npm publish` / `pnpm publish` / `yarn npm publish` outside Changesets. */
+  | "package-publish";
 
 export type MachineryAction = "remove" | "disable" | "keep";
 
@@ -131,6 +152,11 @@ export interface MachineryItem {
   /** What each action changes, e.g. `{ disable: "removes the tags trigger" }`. */
   effects: Partial<Record<MachineryAction, string>>;
   evidence: Evidence[];
+  /**
+   * Decision ids whose jobs need this one: its `disable` removes the job, which only works when
+   * those jobs go too (answered `disable` or `remove`). Without them, only `keep` is left.
+   */
+  requires?: string[];
 }
 
 /** A deploy manifest pinning a docker target's image (offered as a `kind: "image"` entry). */
@@ -169,6 +195,8 @@ export interface Detection {
     branch?: string;
     /** `owner/repo` from the `origin` remote, when it's GitHub. */
     github?: string;
+    /** The project path (`group/sub/project`) from the `origin` remote, when it's GitLab. */
+    gitlab?: string;
   };
   /** An existing `launchset.config.*`: init won't overwrite it. */
   existingConfig?: string;

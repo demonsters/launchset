@@ -7,6 +7,7 @@ import { LaunchsetError } from "../core/errors.ts";
 import type { Answers } from "./decisions.ts";
 import { parseImages, parseTagList } from "./decisions.ts";
 import type { DetectContext } from "./detect.ts";
+import { planTemplates, TEMPLATES_FILE } from "./gitlab-targets.ts";
 import type { DetectedTarget } from "./types.ts";
 
 export interface ConfigPlan {
@@ -93,6 +94,38 @@ export function buildConfig(ctx: DetectContext, answers: Answers): ConfigPlan {
       hints[t.name] = hint;
     } else if (t.source) {
       entry.source = t.source;
+    } else if (t.type === "custom" && t.gitlab) {
+      const job = t.gitlab;
+      notes.push(
+        `The build steps of GitLab job "${job.job}" (${job.path}:${job.line}), in .gitlab/launchset-targets.yml. Add "files" for the files that hold the version, so stamp writes it in CI.`,
+      );
+      if ((answers[`gitlab.${t.name}.shell`] ?? job.shell) === "powershell") {
+        entry.gitlab = { shell: "powershell" };
+        notes.push("Its runner uses PowerShell: launchset's lines of the job are PowerShell.");
+      }
+      const after: string[] = [];
+      for (const other of job.after) {
+        const otherRelease =
+          answers[`target.${other}`] ?? d.targets.find((o) => o.name === other)?.proposed;
+        if (otherRelease === undefined || otherRelease === "none") continue;
+        if (release === "auto" && otherRelease === "manual") {
+          notes.push(
+            `"${job.job}" needed ${other}'s job, but ${other} is manual (a release doesn't build it), so it isn't in "after".`,
+          );
+          continue;
+        }
+        after.push(other);
+      }
+      if (after.length > 0) {
+        entry.after = after;
+        notes.push(
+          `Built after ${after.join(" and ")}, with their artifacts ("${job.job}" needed their jobs).`,
+        );
+      }
+    } else if (t.type === "custom") {
+      notes.push(
+        `Declared with --decide: add its build steps to the CI files, and "files" for the files that hold the version.`,
+      );
     }
     if (release === "manual") {
       entry.release = "manual";
@@ -106,9 +139,11 @@ export function buildConfig(ctx: DetectContext, answers: Answers): ConfigPlan {
   if (included.length === 0) {
     throw new LaunchsetError(
       "no-targets",
-      "No targets: every detected platform was decided as none.",
+      d.targets.length === 0
+        ? "No targets: init detected nothing to release (no Dockerfile, app project, package.json or CI job that builds on tags)."
+        : "No targets: every detected platform was decided as none.",
       {
-        hint: `Decide at least one target as auto, e.g. --decide target.${d.targets[0]?.name ?? "web"}=auto.`,
+        hint: `${d.targets.length > 0 ? `Decide at least one target as auto, e.g. --decide target.${d.targets[0]?.name ?? "web"}=auto, or declare` : "Declare"} a custom target with --decide target.<name>=custom (e.g. --decide target.app=custom); its build steps go in the CI files.`,
       },
     );
   }
@@ -118,6 +153,23 @@ export function buildConfig(ctx: DetectContext, answers: Answers): ConfigPlan {
       'At least one target must have release: "auto", otherwise no release ever completes.',
       { hint: `Decide one of them as auto, e.g. --decide target.${included[0]?.name}=auto.` },
     );
+  }
+  const host = answers.host ?? ctx.host.host;
+  if (host === "gitlab" && ctx.gitlab) {
+    const plan = planTemplates(
+      ctx.gitlab,
+      included.filter((t) => t.gitlab),
+    );
+    const include = [
+      ...(answers["gitlab.templates"] === "move" && plan.move.length > 0 ? [TEMPLATES_FILE] : []),
+      ...plan.include,
+    ];
+    if (include.length > 0) {
+      config.gitlab = { include };
+      comments.set("gitlab", [
+        "The child pipeline includes these files, so the target jobs can extend their templates.",
+      ]);
+    }
   }
   config.targets = targets;
   return { config, comments, hints, targets: included };

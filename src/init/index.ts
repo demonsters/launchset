@@ -13,11 +13,11 @@ import { dirname, resolve } from "node:path";
 import { applyEdits, modify, parseTree } from "jsonc-parser";
 import semver from "semver";
 import { CHANGELOG_TITLE } from "../core/changelog.ts";
-import { resolveConfig } from "../core/config/schema.ts";
+import { resolveConfig, TARGET_NAME } from "../core/config/schema.ts";
 import { LaunchsetError } from "../core/errors.ts";
 import { renderTag } from "../core/tags.ts";
+import { REQUIRED_APP_PERMISSIONS } from "../forge/github/permissions.ts";
 import { Git } from "../git/index.ts";
-import { REQUIRED_APP_PERMISSIONS } from "../github/permissions.ts";
 import { stampForRelease, writeChanges } from "../platforms/index.ts";
 import { renderWorkflows } from "../templates/workflows.ts";
 import { installSkill } from "./agents.ts";
@@ -34,6 +34,17 @@ import { type Answers, resolveDecisions } from "./decisions.ts";
 import { type DetectContext, detect } from "./detect.ts";
 import { INIT_FLAGS } from "./flags.ts";
 import { absolute, readTextOrNull } from "./fs.ts";
+import { pickStage } from "./gitlab-edit.ts";
+import { gitlabStages, hasWorkflowRules } from "./gitlab-scan.ts";
+import {
+  type GitLabPlan,
+  gitlabManualSteps,
+  gitlabSweepStep,
+  planGitLab,
+  writeGitLabRoot,
+  writeTargetsFile,
+  writeTemplatesFile,
+} from "./gitlab-write.ts";
 import { installHook } from "./hooks.ts";
 import { readPackageFile } from "./package-files.ts";
 import { clackPrompter } from "./prompter.ts";
@@ -91,6 +102,52 @@ function explicitAnswers(options: InitOptions, ctx: DetectContext): Answers {
   return answers;
 }
 
+/**
+ * `--decide target.<name>=custom` declares a custom target (released automatically) that
+ * detection didn't find, so a project init detects nothing in can be set up; its build steps go
+ * in the CI files by hand. For a custom target init did detect, `custom` means `auto`.
+ */
+function declareTargets(ctx: DetectContext, answers: Answers): Answers {
+  const out = { ...answers };
+  for (const [id, value] of Object.entries(answers)) {
+    const name = /^target\.(.+)$/.exec(id)?.[1];
+    if (name === undefined || value !== "custom") continue;
+    const found = ctx.detection.targets.find((t) => t.name === name);
+    if (found && found.type !== "custom") {
+      throw new LaunchsetError(
+        "invalid-decision",
+        `--decide ${id}=custom: ${name} is a detected ${found.type} target.`,
+        {
+          hint: `Answer auto, manual or none for it, or declare the custom target under another name.`,
+        },
+      );
+    }
+    if (!found) {
+      if (!TARGET_NAME.test(name)) {
+        throw new LaunchsetError(
+          "invalid-decision",
+          `--decide ${id}=custom: "${name}" isn't a valid target name.`,
+          {
+            hint: "Target names are lowercase letters, digits and dashes, starting with a letter or digit.",
+          },
+        );
+      }
+      ctx.detection.targets.push({
+        name,
+        type: "custom",
+        dir: ".",
+        files: [],
+        builtBy: [],
+        proposed: "auto",
+        reason: `declared with --decide ${id}=custom`,
+        declared: true,
+      });
+    }
+    out[id] = "auto";
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // Output
 
@@ -106,9 +163,30 @@ function at(path: string, line?: number): string {
   return line ? `${path}:${line}` : path;
 }
 
+/** The host line and the GitLab CI summary (only when something points at GitLab). */
+function describeHost(ctx: DetectContext): string[] {
+  if (!ctx.host.gitlabSignals) return [];
+  const out = [
+    `Host: ${ctx.host.host} (${ctx.host.evidence.map((e) => e.note).join("; ")})${ctx.host.ask ? " (check this)" : ""}`,
+  ];
+  const ci = ctx.gitlab;
+  if (ci && ci.files.length > 0) {
+    const stages = gitlabStages(ci);
+    const stage = stages ? pickStage(stages.stages) : undefined;
+    out.push(
+      `GitLab CI: ${ci.files.map((f) => f.path).join(", ")}; ${stages ? `stages ${stages.stages.join(", ")} (launchset's jobs would go in ${stage ?? "test"})` : "no stages: (launchset's jobs go in test)"}; ${hasWorkflowRules(ci) ? "has workflow: rules" : "no workflow: rules (init prints the recommended ones)"}`,
+    );
+  }
+  return out;
+}
+
 /** Human-readable summary of the detection (detect mode and the start of interactive mode). */
-export function describeDetection(d: Detection, decisions: Decision[]): string[] {
-  const out: string[] = [];
+export function describeDetection(
+  d: Detection,
+  decisions: Decision[],
+  ctx?: DetectContext,
+): string[] {
+  const out: string[] = ctx ? describeHost(ctx) : [];
   out.push("Versions found:");
   if (d.versions.length === 0) out.push("  (none)");
   for (const v of d.versions.filter((x) => x.source !== "tag")) {
@@ -179,13 +257,13 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
   if (options.convertOnly) return convertOnly(root, options, { log, warn, out, lines, warnings });
 
   const ctx = await detect(root, options.now ? { now: options.now } : {});
-  const explicit = explicitAnswers(options, ctx);
+  const explicit = declareTargets(ctx, explicitAnswers(options, ctx));
 
   if (options.detect) {
     const { decisions, answers } = await resolveDecisions(ctx, { explicit });
     const json: InitDetectJson = { schemaVersion: 1, detection: ctx.detection, decisions };
     if (options.json) out.json(json);
-    else for (const line of describeDetection(ctx.detection, decisions)) log(line);
+    else for (const line of describeDetection(ctx.detection, decisions, ctx)) log(line);
     return { mode: "detect", detect: json, answers, changes: [], warnings, manualSteps: [], lines };
   }
 
@@ -203,7 +281,7 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
   const prompter = interactive ? (options.prompter ?? clackPrompter()) : undefined;
   if (prompter?.note) {
     prompter.note(
-      describeDetection(ctx.detection, []).join("\n"),
+      describeDetection(ctx.detection, [], ctx).join("\n"),
       "launchset init: what was found",
     );
   }
@@ -300,11 +378,18 @@ async function writeAll(
   const resolved = resolveConfig(plan.config, { file: CONFIG_FILE });
   const configSource = renderConfigSource(plan);
   const conversions = await planConversion(root, d.changesets);
-  const workflows = renderWorkflows({
-    config: resolved,
-    hints: plan.hints,
-    ...(options.actionRef ? { actionRef: options.actionRef } : {}),
-  });
+  const host = answers.host ?? ctx.host.host;
+  const gitlab: GitLabPlan | undefined =
+    host === "gitlab"
+      ? planGitLab(ctx, resolved, plan, { moveTemplates: answers["gitlab.templates"] === "move" })
+      : undefined;
+  const workflows = gitlab
+    ? []
+    : renderWorkflows({
+        config: resolved,
+        hints: plan.hints,
+        ...(options.actionRef ? { actionRef: options.actionRef } : {}),
+      });
   const readme = readPackageFile("templates", "launchset-readme.md");
   const chosen = ctx.machinery
     .filter((m) => m.item.actions.length > 1)
@@ -312,7 +397,11 @@ async function writeAll(
       finding: m,
       action: (answers[m.item.id] ?? "keep") as "remove" | "disable" | "keep",
     }));
-  await applyRetirement(root, chosen, { write: false });
+  // Moving the templates the target jobs extend: removed from their files with the retirement.
+  const moves = gitlab?.templates
+    ? [{ finding: gitlab.templates.finding, action: "remove" as const }]
+    : [];
+  await applyRetirement(root, [...chosen, ...moves], { write: false });
   const overwrite = (path: string) => answers[`file.${path}`] !== "keep";
 
   for (const v of d.versions) {
@@ -395,6 +484,7 @@ async function writeAll(
   const generated = [
     { path: ".launchset/README.md", content: readme, summary: "explains the folder" },
     ...workflows.map((w) => ({ path: w.path, content: w.content, summary: "launchset workflow" })),
+    ...(gitlab ? [gitlab.jobs] : []),
   ];
   for (const g of generated) {
     if (!overwrite(g.path)) {
@@ -409,6 +499,21 @@ async function writeAll(
     const c = await writeText(root, g.path, g.content, g.summary);
     if (c) changes.push(c);
   }
+  const writeIo = {
+    warn: io.warn,
+    writeText: (path: string, text: string, summary: string) =>
+      writeText(root, path, text, summary),
+  };
+  if (gitlab) {
+    const t = await writeTargetsFile(
+      root,
+      gitlab,
+      answers[`file.${gitlab.targets.path}`] === "overwrite",
+      writeIo,
+    );
+    changes.push(...t.changes);
+    manualSteps.push(...t.manualSteps);
+  }
   const changelogPath = resolved.changelog.file;
   if ((await readTextOrNull(absolute(root, changelogPath))) === null) {
     const c = await writeText(root, changelogPath, `${CHANGELOG_TITLE}\n`, "new changelog");
@@ -416,8 +521,20 @@ async function writeAll(
   }
 
   // --- Retire conflicting machinery
-  const retired = await applyRetirement(root, chosen, { write: true });
+  const retired = await applyRetirement(root, [...chosen, ...moves], { write: true });
+  if (gitlab) changes.push(...(await writeTemplatesFile(root, gitlab, writeIo)));
   changes.push(...retired.changes);
+  // .gitlab-ci.yml after retirement: its edits were computed on the original text.
+  const gitlabRootSteps: string[] = [];
+  if (gitlab) {
+    const r = await writeGitLabRoot(root, gitlab, writeIo);
+    gitlabRootSteps.push(...r.manualSteps);
+    if (r.change) {
+      const earlier = changes.find((c) => c.path === r.change?.path);
+      if (earlier) earlier.summary = [earlier.summary, r.change.summary].filter(Boolean).join("; ");
+      else changes.push(r.change);
+    }
+  }
 
   // --- Convert Changesets files
   if (d.changesets.preMode) io.warn(PRE_MODE_WARNING);
@@ -473,39 +590,63 @@ async function writeAll(
   }
 
   // --- Manual steps
-  manualSteps.push(
-    `Create the launchset GitHub App for your org if it doesn't exist (${REQUIRED_APP_PERMISSIONS.map((p) => `${p.name}: ${p.access}`).join(", ")}), install it on this repo, and add the secrets LAUNCHSET_APP_ID and LAUNCHSET_APP_PRIVATE_KEY. See "GitHub App setup" in the docs.`,
-  );
   const buildTargets = plan.targets.map((t) => t.name);
-  manualSteps.push(
-    `Add your build and upload steps for ${buildTargets.join(", ")} to .github/workflows/launchset-release.yml (and launchset-preview.yml for previews).`,
-  );
   const retiredPaths = chosen.filter((c) => c.action !== "keep").map((c) => c.finding.item.path);
-  const retiredWorkflows = [
-    ...new Set(retiredPaths.filter((p) => p.startsWith(".github/workflows/"))),
-  ];
-  if (retiredWorkflows.length > 0) {
+  const secret = gitlab ? "CI/CD variable" : "secret";
+  const secrets = gitlab ? "CI/CD variables" : "secrets";
+  if (gitlab) {
     manualSteps.push(
-      `Move the build steps you still need from ${retiredWorkflows.join(", ")} into launchset-release.yml, then check what's left in those files.`,
+      ...gitlabManualSteps(resolved, buildTargets, gitlab.prefilled),
+      ...gitlabRootSteps,
     );
+    const ciFiles = new Set((ctx.gitlab?.files ?? []).map((f) => f.path));
+    const retiredCi = [
+      ...new Set(retiredPaths.filter((p) => ciFiles.has(p) || p.startsWith(".github/workflows/"))),
+    ];
+    if (retiredCi.length > 0) {
+      const copied = plan.targets.flatMap((t) => (t.gitlab ? [`"${t.gitlab.job}"`] : []));
+      manualSteps.push(
+        copied.length > 0
+          ? `Check what's left in ${retiredCi.join(", ")}: init copied the steps of ${copied.join(", ")} into .gitlab/launchset-targets.yml; move any other build steps you still need there too.`
+          : `Move the build steps you still need from ${retiredCi.join(", ")} into .gitlab/launchset-targets.yml (the comments there name the jobs that built each image), then check what's left in those files.`,
+      );
+    }
+  } else {
+    manualSteps.push(
+      `Create the launchset GitHub App for your org if it doesn't exist (${REQUIRED_APP_PERMISSIONS.map((p) => `${p.name}: ${p.access}`).join(", ")}), install it on this repo, and add the secrets LAUNCHSET_APP_ID and LAUNCHSET_APP_PRIVATE_KEY. See "GitHub App setup" in the docs.`,
+    );
+    manualSteps.push(
+      `Add your build and upload steps for ${buildTargets.join(", ")} to .github/workflows/launchset-release.yml (and launchset-preview.yml for previews).`,
+    );
+    const retiredWorkflows = [
+      ...new Set(retiredPaths.filter((p) => p.startsWith(".github/workflows/"))),
+    ];
+    if (retiredWorkflows.length > 0) {
+      manualSteps.push(
+        `Move the build steps you still need from ${retiredWorkflows.join(", ")} into launchset-release.yml, then check what's left in those files.`,
+      );
+    }
   }
   manualSteps.push(...retired.followUps);
   const android = plan.targets.filter((t) => t.type === "android").map((t) => t.name);
   if (android.length > 0) {
     manualSteps.push(
-      `Optional: to check build numbers against Google Play (${android.join(", ")}), set store.packageName and verify: ["store"] on the target and add the secret LAUNCHSET_PLAY_SERVICE_ACCOUNT_JSON.`,
+      `Optional: to check build numbers against Google Play (${android.join(", ")}), set store.packageName and verify: ["store"] on the target and add the ${secret} LAUNCHSET_PLAY_SERVICE_ACCOUNT_JSON.`,
     );
   }
   const ios = plan.targets.filter((t) => t.type === "ios").map((t) => t.name);
   if (ios.length > 0) {
     manualSteps.push(
-      `Optional: to check build numbers against App Store Connect (${ios.join(", ")}), set store.appId and verify: ["store"] on the target and add the secrets LAUNCHSET_ASC_KEY_ID, LAUNCHSET_ASC_ISSUER_ID and LAUNCHSET_ASC_PRIVATE_KEY.`,
+      `Optional: to check build numbers against App Store Connect (${ios.join(", ")}), set store.appId and verify: ["store"] on the target and add the ${secrets} LAUNCHSET_ASC_KEY_ID, LAUNCHSET_ASC_ISSUER_ID and LAUNCHSET_ASC_PRIVATE_KEY.`,
     );
   }
   if (android.length + ios.length > 0) {
     manualSteps.push(
       "init doesn't ask the stores for their build numbers. If a store already has higher ones, `launchset verify` stops the upload and says which offset to use: set it as buildNumber.offset in launchset.config.ts.",
     );
+  }
+  if (gitlab && resolved.preview.enabled && resolved.preview.rebuildOnPush) {
+    manualSteps.push(gitlabSweepStep(resolved));
   }
   for (const m of ctx.machinery) {
     const action = m.item.actions.length > 1 ? answers[m.item.id] : "keep";

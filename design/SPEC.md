@@ -23,7 +23,7 @@ Developers describe each change in a small changeset file in their PR. Commit me
 3. **No commit-message conventions.** Release intent lives in changeset files only.
 4. **Build numbers are assigned in CI at build time and never committed.** That makes build numbers independent of branches.
 5. **Idempotent.** Re-running any workflow never double-publishes. State lives in git tags, not in external systems.
-6. **GitHub Actions only** (for v1).
+6. **GitHub Actions only** (for v1). GitLab CI is supported too: see design/GITLAB.md.
 7. **Agent-friendly.** Every CLI command works non-interactively with flags and can print JSON.
 
 ### 1.2 Out of scope for v1

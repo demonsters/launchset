@@ -5,7 +5,7 @@
 
 import type { Git } from "../git/index.ts";
 import { mapLimit } from "./concurrency.ts";
-import type { GitHub } from "./index.ts";
+import type { Forge } from "./types.ts";
 
 export interface BotPr {
   number: number;
@@ -17,7 +17,7 @@ export interface BotPr {
 
 export interface FindBotPrsOptions {
   git: Git;
-  github: GitHub;
+  forge: Forge;
   /**
    * Start of the range (exclusive): any ref or sha, typically the current version's release
    * commit (bot PRs before it were consumed by that release). Undefined = the whole history.
@@ -35,7 +35,7 @@ export interface FindBotPrsOptions {
   concurrency?: number;
 }
 
-/** Slack for clock skew between the committer's machine and GitHub. */
+/** Slack for clock skew between the committer's machine and the forge. */
 export const UPDATED_SINCE_MARGIN_MS = 24 * 60 * 60 * 1000;
 
 /**
@@ -48,7 +48,7 @@ export const UPDATED_SINCE_MARGIN_MS = 24 * 60 * 60 * 1000;
  * head commit is one of the range's commits.
  */
 export async function findBotPrsWithoutChangeset(options: FindBotPrsOptions): Promise<BotPr[]> {
-  const { git, github, since, head, branch, isChangesetPath } = options;
+  const { git, forge, since, head, branch, isChangesetPath } = options;
   const concurrency = options.concurrency ?? 4;
   const bots = new Set(options.bots.map((b) => b.toLowerCase()));
   if (bots.size === 0) return [];
@@ -59,7 +59,7 @@ export async function findBotPrsWithoutChangeset(options: FindBotPrsOptions): Pr
   const updatedSince = since
     ? new Date(Date.parse(await git.commitDate(since)) - UPDATED_SINCE_MARGIN_MS).toISOString()
     : undefined;
-  const prs = await github.closedPrsInto(branch, updatedSince ? { updatedSince } : {});
+  const prs = await forge.closedPrsInto(branch, updatedSince ? { updatedSince } : {});
 
   const candidates = prs
     .filter(
@@ -72,7 +72,7 @@ export async function findBotPrsWithoutChangeset(options: FindBotPrsOptions): Pr
     .sort((a, b) => a.number - b.number);
 
   const withChangeset = await mapLimit(candidates, concurrency, async (pr) => {
-    const files = await github.prFiles(pr.number);
+    const files = await forge.prFiles(pr.number);
     return files.some((f) => f.status !== "removed" && isChangesetPath(f.path));
   });
 
