@@ -1,5 +1,0 @@
----
-bump: minor
----
-
-GitLab: build jobs on Windows runners with PowerShell (`gitlab: { shell: "powershell" }` on a target; `--ci` also writes `launchset.ps1`), targets that build after other targets with their artifacts (`after`, GitLab only), and templates for the target jobs from extra files the child pipeline includes (`gitlab.include`). Preview jobs keep `interruptible: false` from your job. launchset's tag pushes no longer start tag pipelines (`git push -o ci.skip`; `gitlab.tagPipelines: true` lets release and prerelease tags start one). `launchset init` turns GitLab jobs that build on tags into custom targets with their steps copied, moves the templates they extend to `.gitlab/ci-templates.yml`, removes only the tag rule of a job that other rules still start, notes `workflow: rules` that allow tag pipelines, and takes `--decide target.<name>=custom` to declare a target it didn't detect. A build script that only reads `CFBundleShortVersionString` is no longer flagged as a version writer.
