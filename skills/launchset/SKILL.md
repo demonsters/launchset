@@ -1,6 +1,6 @@
 ---
 name: launchset
-description: Load this whenever you change code in a repo that contains launchset.config.* or a .launchset/ folder, before you open a pull request or push to the base branch there, and when asked to bump a version, edit CHANGELOG.md, or create a tag or release. launchset releases the repo from changeset files, so every PR needs one changeset for each change it makes. This skill says how to write changesets, when to split them, which bump to pick, and what never to edit by hand (version numbers, build numbers, CHANGELOG.md, release tags, the release PR).
+description: Load this whenever you change code in a repo that contains launchset.config.* or a .launchset/ folder, before you open a pull request or push to the base branch there, and when asked to bump a version, edit CHANGELOG.md, or create a tag or release. launchset releases the repo from changeset files, so every PR needs a changeset, and each changelog bullet must be about one change. This skill says how to write changesets, when to split them, which bump to pick, and what never to edit by hand (version numbers, build numbers, CHANGELOG.md, release tags, the release PR).
 ---
 
 # launchset: releases in this repo
@@ -13,7 +13,7 @@ On GitLab the same applies with "MR" for "PR": the release MR is `Release vX.Y.Z
 
 ## Every PR needs a changeset
 
-Before you open a PR, make sure it adds at least one: **one changeset for each change** in the PR (see [One changeset per change](#one-changeset-per-change)). Create each with:
+Before you open a PR, make sure it adds at least one, and that no summary crams several changes into one bullet (see [One changeset per change](#one-changeset-per-change)). Create each with:
 
 ```sh
 npx @demonsters/launchset add --bump <major|minor|patch|none> --message "<summary>"
@@ -58,9 +58,9 @@ When unsure between two, ask the human. The release gets the highest bump of all
 
 ## Write a good summary
 
-The summary becomes one changelog entry: one bullet.
+The summary becomes one changelog entry: its first line is the bullet, and any further lines are indented under it.
 
-- One change per summary. If the summary joins separate changes with "and", semicolons or a list, write separate changesets.
+- One change per bullet. If a line joins separate changes with "and", semicolons or a list, split them (see below).
 - User-facing: say what changed for the people who use the product, not how you did it.
 - One short sentence. Use the same tense as the other entries in `CHANGELOG.md` (look at it first).
 - No PR number and no author: launchset adds them.
@@ -72,10 +72,11 @@ The summary becomes one changelog entry: one bullet.
 A change is one thing a user would notice on its own: a feature, a fix, a behaviour change. Write one changeset per change: not per commit, and not per PR.
 
 - Several commits for one change: one changeset.
-- One PR with several changes: one changeset **for each**. Give each its own bump. A PR that adds a feature and fixes two bugs gets three changesets: one `minor`, two `patch`.
+- One PR with several changes: one changeset **for each**, with its own bump. A PR that adds a feature and fixes two bugs gets three changesets: one `minor`, two `patch`. Each lands under the right heading in the changelog.
+- Several small changes that belong together and share a bump (parts of one feature, or tweaks to one screen) may share one changeset, written as a short lead line with a sub-bullet per change. Start with the lead line: the first line becomes the changelog bullet, so a body that starts with `- ` renders as `- - …`. Changes with different bumps always get their own changesets.
 - Work that extends something with a pending changeset in `.launchset/`: edit that file instead of adding another. Look in `.launchset/` before you add.
 
-Before you open the PR, read your summaries. If one names more than one thing, split it.
+Never put several changes in one sentence. Before you open the PR, read your summaries. If a line names more than one thing, split it.
 
 Don't, one changeset for a whole PR:
 
@@ -87,7 +88,7 @@ bump: minor
 Add offline mode to the mobile app; the search field keeps its text after going back, and the login screen no longer crashes without a network connection.
 ```
 
-Do, three changesets:
+Do, three changesets (they need different bumps):
 
 ```md
 ---
@@ -112,6 +113,22 @@ bump: patch
 
 Fix the crash when opening the login screen without a network connection.
 ```
+
+Also fine, related changes with one bump in one changeset:
+
+```md
+---
+bump: minor
+---
+
+Keyboard navigation in the photo grid:
+
+- Space opens the selected photo in the viewer and closes it again.
+- Enter opens the selected album.
+- Up and Down move between folders.
+```
+
+This becomes one bullet with three sub-bullets in the changelog.
 
 ## Repos that also use Changesets
 

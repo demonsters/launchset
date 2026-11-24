@@ -2,7 +2,7 @@
 
 This folder holds **changesets** for [launchset](https://demonsters.github.io/launchset/), the tool that releases this repo. One version drives every build target (Docker images, Android, iOS, web), and they're released together.
 
-Every pull request adds a changeset for each change it makes: a small markdown file that says how big the change is and what to write in the changelog.
+Every pull request adds a changeset: a small markdown file that says how big the change is and what to write in the changelog.
 
 ```md
 ---
@@ -13,7 +13,7 @@ Add offline mode to the mobile app.
 ```
 
 - `bump`: `major` (breaking for users or API clients), `minor` (new features), `patch` (fixes) or `none` (no release needed: docs, CI, tests).
-- The text below the frontmatter is the changelog entry: one bullet about one change. A PR that adds a feature and fixes a bug adds two changesets.
+- The text below the frontmatter is the changelog entry: one bullet about one change, with any further lines indented under it. A PR that adds a feature and fixes a bug adds two changesets.
 - Name the file with three random words, like `brave-lions-sing.md`.
 
 Create one with `npx @demonsters/launchset add`, or write the file by hand.
