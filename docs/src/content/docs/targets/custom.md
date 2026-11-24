@@ -47,6 +47,8 @@ helm: {
 
 Placeholders in a regex `replace`: `{version}`, `{major}`, `{minor}`, `{patch}` and `{buildNumber}`. Other `{...}` stays as it is, so JSON and code in the replacement are fine. `$1`, `$<name>` and `$&` work like in `String.prototype.replace`. A `replace` with `{buildNumber}` is only stamped in CI, never by the release PR.
 
+Line endings don't matter for a regex: write `\n` for a line break and the pattern matches LF and CRLF files alike, so a Windows checkout with `core.autocrlf` stamps like a Linux one, and the file keeps its line endings (since launchset 1.1.1). A pattern that itself mentions `\r`, such as `\r?\n`, is matched against the file as it is.
+
 ## npm packages
 
 Add `verify: ["npm"]` so a re-run never fails on a version that is already published.

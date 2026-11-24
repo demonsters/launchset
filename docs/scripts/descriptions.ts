@@ -85,7 +85,7 @@ export const CONFIG_DESCRIPTIONS: Record<string, string> = {
   "targets[*].files[][yaml].key": "Dotted key path to the value, for example `appVersion`.",
   "targets[*].files[][regex].path": "File to edit.",
   "targets[*].files[][regex].pattern":
-    "JavaScript regular expression source. It must match exactly once in the file.",
+    "JavaScript regular expression source. It must match exactly once in the file. A `\\n` matches LF and CRLF line endings alike (since 1.1.1).",
   "targets[*].files[][regex].replace":
     "The replacement text. Placeholders: `{version}`, `{major}`, `{minor}`, `{patch}`, `{buildNumber}`. `$1`, `$<name>`, `$&` and `$$` work like in `String.prototype.replace`. An entry that uses `{buildNumber}` is only stamped in CI.",
   "targets[*].files[][regex].flags":
