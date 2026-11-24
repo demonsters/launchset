@@ -739,7 +739,8 @@ For AI agents working **in repos that use launchset** (not in the launchset repo
 
 - Every PR needs a changeset. Create it with `npx @demonsters/launchset add --bump <type> --message "<summary>"`, or write the file by hand (show the exact format) if the CLI isn't available (the package is private, so npm auth may be missing).
 - How to pick the bump: major (breaking for users or API clients), minor (new features), patch (fixes), none (no release needed: docs, CI, tests only).
-- How to write a good summary: user-facing, one line, past or present tense consistently, no PR number (launchset adds it).
+- How to write a good summary: user-facing, one line about one change, past or present tense consistently, no PR number (launchset adds it).
+- One changeset per change, not per commit and not per PR: a PR with several changes (a feature and two fixes) adds a changeset for each, with its own bump. Related changes with one bump may share a changeset as a lead line plus sub-bullets. Never several changes in one sentence or bullet. Show a bad and a good example.
 - When pushing straight to the base branch (no PR): make sure a changeset covers the work before pushing. One changeset per change, not per commit; edit an existing pending changeset if the work extends it.
 - Never edit version numbers, build numbers or `CHANGELOG.md` by hand; never create `v*` or `launchset/*` tags; never edit the release PR.
 - On a `release/X.Y.x` branch only patch or none.

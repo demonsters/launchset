@@ -13,7 +13,7 @@ Add offline mode to the mobile app.
 ```
 
 - `bump`: `major` (breaking for users or API clients), `minor` (new features), `patch` (fixes) or `none` (no release needed: docs, CI, tests).
-- The text below the frontmatter is the changelog entry.
+- The text below the frontmatter is the changelog entry: one bullet about one change, with any further lines indented under it. A PR that adds a feature and fixes a bug adds two changesets.
 - Name the file with three random words, like `brave-lions-sing.md`.
 
 Create one with `npx @demonsters/launchset add`, or write the file by hand.

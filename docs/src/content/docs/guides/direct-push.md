@@ -17,7 +17,7 @@ There is no PR, so there is no PR check and no sticky comment. Everything else i
 
 ## One changeset per change, not per commit
 
-Several commits often belong to one change. Write **one** changeset for the change, not one per commit. If new work extends something that already has a pending changeset, edit that file instead of adding another.
+Several commits often belong to one change. Write **one** changeset for the change, not one per commit. The other way round holds too: a push with several changes gets one changeset for each. If new work extends something that already has a pending changeset, edit that file instead of adding another.
 
 ```sh
 npx @demonsters/launchset add --bump minor --message "Add offline mode to the mobile app."
