@@ -305,13 +305,13 @@ function renderCheckComment(result: CheckResult, input: CheckInput, addHelp: str
         : "";
   if (result.reason === "release-pr") {
     blocks.push(
-      `### launchset: release ${PR}`,
+      `### 🚀 launchset: release ${PR}`,
       `This is the launchset release ${PR}. Merging it releases every auto target.`,
     );
   } else if (result.prChangesets.length > 0) {
     const highest = releaseBump(result.prChangesets);
     blocks.push(
-      `### launchset: ${plural(result.prChangesets.length, "changeset")} found`,
+      `### 🚀 launchset: ${plural(result.prChangesets.length, "changeset")} found`,
       `This ${PR}'s bump: **${highest ?? "none"}**. ${next}`.trim(),
       result.prChangesets
         .map((c) =>
@@ -323,12 +323,12 @@ function renderCheckComment(result: CheckResult, input: CheckInput, addHelp: str
     );
   } else if (result.reason === "bot") {
     blocks.push(
-      `### launchset: bot ${PR}`,
+      `### 🚀 launchset: bot ${PR}`,
       `No changeset needed: ${PR}s from ${code(input.pr.author)} get a generated patch entry under Dependencies in the next release.`,
     );
   } else {
     blocks.push(
-      "### launchset: no changeset",
+      "### 🚀 launchset: no changeset",
       `This ${PR} has no changeset, so the check fails.`,
       addHelp,
     );

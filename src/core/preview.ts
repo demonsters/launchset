@@ -420,7 +420,7 @@ export function renderPreviewComment(input: PreviewResultsInput): string {
   const { plan } = input;
   const failed = plan.matrix.filter((n) => input.results[n]?.status === "failure");
   const blocks = [
-    `### launchset preview: ${code(plan.version)}`,
+    `### 🚀 launchset preview: ${code(plan.version)}`,
     `${plan.channel === "prerelease" ? "Prerelease" : "Preview"} of ${plan.prNumber !== undefined ? `this ${forgeWords(input.host).prName}` : code(plan.branch)}${failed.length > 0 ? `: ${joinWords(failed.map(code))} failed` : ""}.`,
     resultsTable(input),
     dockerList(plan),

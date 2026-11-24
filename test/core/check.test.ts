@@ -39,7 +39,7 @@ describe("PR check (9.2)", () => {
     expect(result.prChangesets.map((c) => c.path)).toEqual([".launchset/brave-lions-sing.md"]);
     expect(result.bump).toBe("minor");
     expect(result.nextVersion).toBe("1.5.0");
-    expect(result.comment).toContain("### launchset: 1 changeset found");
+    expect(result.comment).toContain("### 🚀 launchset: 1 changeset found");
     expect(result.comment).toContain("The next release will be **1.5.0** (minor).");
     expect(result.comment).toContain(
       "- `minor`: Add offline mode. (`.launchset/brave-lions-sing.md`)",

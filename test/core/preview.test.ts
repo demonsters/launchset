@@ -255,7 +255,7 @@ describe("preview comment and pre-release body (9.7, 9.9)", () => {
         android: { status: "failure", jobUrl: "https://example.test/job/2" },
       },
     });
-    expect(comment).toContain("### launchset preview: `1.5.0-pr.123.17`");
+    expect(comment).toContain("### 🚀 launchset preview: `1.5.0-pr.123.17`");
     expect(comment).toContain("Preview of this PR: `android` failed.");
     expect(comment).toContain(
       `| \`docker-api\` | [succeeded](https://example.test/job/1) | \`1.5.0-pr.123.17\` | ${BUILD} |`,
