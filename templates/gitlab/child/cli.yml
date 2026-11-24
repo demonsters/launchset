@@ -6,7 +6,8 @@
   # A child pipeline has GitLab's default stages (not the parent's), so `test` always exists.
   stage: test
   variables:
-    # Full history and tags: finalize pushes the release tag and reads the history.
+    # Full history and tags: finalize pushes the release tag and reads the history, and a
+    # prerelease's notes compare with the base branch.
     GIT_DEPTH: "0"
     LAUNCHSET_CLI: @@cli_spec@@
   before_script:

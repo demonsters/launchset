@@ -161,9 +161,18 @@ describe("preview-plan --ci and preview-comment on GitLab", () => {
     const r = await cli(["preview-plan"], { cwd: ci.dir, env });
     expect(r.code).toBe(0);
     const doc = child(ci.dir);
-    expect(Object.keys(doc)).toEqual(["include", "preview-web"]);
+    expect(Object.keys(doc)).toEqual([
+      "include",
+      ".launchset_cli",
+      "preview-web",
+      "launchset-preview-comment",
+    ]);
     expect(doc["preview-web"]?.needs).toEqual([
       { pipeline: "$PARENT_PIPELINE_ID", job: "launchset-preview-plan" },
+    ]);
+    expect(doc["launchset-preview-comment"]?.needs).toEqual([
+      { pipeline: "$PARENT_PIPELINE_ID", job: "launchset-preview-plan" },
+      { job: "preview-web", artifacts: false },
     ]);
   });
 });
@@ -259,9 +268,11 @@ describe("plan --gitlab", () => {
     expect(preview.code).toBe(0);
     expect(Object.keys(child(f.dir, "p.yml"))).toEqual([
       "include",
+      ".launchset_cli",
       "preview-docker-api",
       "preview-web",
       "preview-ios",
+      "launchset-preview-comment",
     ]);
   });
 

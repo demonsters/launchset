@@ -10,8 +10,7 @@ The jobs are in `.gitlab/launchset.yml`, unless you set `preview: false` (then `
 | Job | What it does |
 | --- | --- |
 | `launchset-preview-plan` | Decides the version, build number and targets. On a prerelease branch it reserves the tag. Writes `plan.json` and the child pipeline. |
-| `launchset-preview` | Triggers the child pipeline: one `preview-<target>` job per target. |
-| `launchset-preview-comment` | Posts the result. Runs `when: always`, so a failed build is reported. |
+| `launchset-preview` | Triggers the child pipeline: one `preview-<target>` job per target, then `launchset-preview-comment`. |
 | `launchset-preview-sweep` | Optional. Runs only in a pipeline schedule you create: starts an MR pipeline for MRs that just got the label. See [below](#start-previews-when-the-label-is-added-preview-sweep). |
 
 Your build steps are the same hidden jobs as for releases (`.launchset-<target>` in `.gitlab/launchset-targets.yml`). Pick the upload channel with `$LAUNCHSET_CHANNEL`: `preview` and `prerelease` go to internal channels only.
@@ -24,7 +23,7 @@ GitLab starts no pipeline when you add a label to an MR, so launchset can't reac
 - **The MR has no label**: `launchset-preview-plan` is a **manual job** (`when: manual`, `allow_failure: true`). Click play on it to build a preview without the label. Because it is optional, an unplayed preview never blocks the MR or the merge.
 - **`preview.rebuildOnPush: false`**: every MR gets the manual job, label or not. A preview is built only when someone plays it. The preview sweep doesn't work with this setting.
 
-The child pipeline and the comment job wait for the plan job. If you never play the manual job, they are skipped.
+The child pipeline waits for the plan job: until someone plays the manual job, `launchset-preview` shows as skipped and nothing is built. When you play it, the child pipeline starts and ends with the comment job, so a preview you start by hand gets its MR note too.
 
 **MRs from forks never get a preview.** Their pipelines run without your project's variables, so there is no `LAUNCHSET_TOKEN` and nothing can be uploaded. A maintainer can push the branch to the project to get one.
 
@@ -131,7 +130,9 @@ A `preview.branches` entry with `prerelease` works as on GitHub: a push plans `<
 
 ## The result
 
-`launchset-preview-comment` posts **one sticky note** on the MR. It holds the version, the build number per target, the Docker tags, and a result per target with a link to its job. The next run updates the same note. On a prerelease branch it writes the GitLab release body instead.
+`launchset-preview-comment`, the last job of the child pipeline, posts **one sticky note** on the MR. It holds the version, the build number per target, the Docker tags, and a result per target with a link to its job. The next run updates the same note. On a prerelease branch it writes the GitLab release body instead; for a branch preview the result is in the job's log.
+
+It runs `when: always`, after every `preview-<target>` job, so a failed build is reported too. A skipped preview has no comment job: the child pipeline is a single `launchset-nothing-to-build` job that prints why. If you retry a failed preview job and the note still shows the old result, retry `launchset-preview-comment` as well.
 
 It finds each target's job by name, so keep the generated job names (`preview-<target>`). It lists the pipeline's jobs through the API, which needs `LAUNCHSET_TOKEN` with the `api` scope: `CI_JOB_TOKEN` can't list jobs, so with only the job token the note says it couldn't read the job results and lists the targets as `unknown`.
 
@@ -139,6 +140,13 @@ The note is posted as the token's bot user.
 
 :::note
 Mark the variable `LAUNCHSET_TOKEN` as **not Protected**. A protected variable isn't available to MR pipelines, and the comment job couldn't post.
+:::
+
+:::caution[Set up with launchset 1.1.0 or earlier?]
+The `.gitlab/launchset.yml` that `init` wrote up to launchset 1.1.0 has the job `launchset-preview-comment` in the parent pipeline. GitLab ran it before anyone played the manual plan job, and never after, so a preview started by hand got no note. `init` never rewrites that file, so change it yourself:
+
+1. Raise `LAUNCHSET_CLI` in `.launchset-cli` to the newer version. That version puts the comment job in the child pipeline.
+2. Delete the job `launchset-preview-comment` from `.gitlab/launchset.yml`. With a newer launchset it does nothing (its log says so), but it still costs a job in every MR pipeline.
 :::
 
 ## Switch previews off

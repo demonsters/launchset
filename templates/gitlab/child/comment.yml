@@ -1,0 +1,14 @@
+launchset-preview-comment:
+  extends: .launchset_cli
+  # Also when a build failed, so the note shows which target failed. It runs in the child
+  # pipeline, which only exists once the plan job ran: a manual preview gets its note too.
+  when: always
+  interruptible: @@interruptible@@
+  needs:
+    - pipeline: $PARENT_PIPELINE_ID
+      job: @@plan_job@@
+    @@build_needs@@
+  script:
+    # One sticky MR note with the result per target (on a prerelease branch: the GitLab
+    # release; for a branch preview: this job's log).
+    - launchset preview-comment --plan @plan.json --ci

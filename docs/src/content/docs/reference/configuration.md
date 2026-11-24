@@ -182,7 +182,7 @@ These options exist on every target type.
 | `targets.<name>.files[].path` <br>*kind yaml* | `string` | required | File to edit, for example `charts/app/Chart.yaml`. |
 | `targets.<name>.files[].key` <br>*kind yaml* | `string` | required | Dotted key path to the value, for example `appVersion`. |
 | `targets.<name>.files[].path` <br>*kind regex* | `string` | required | File to edit. |
-| `targets.<name>.files[].pattern` <br>*kind regex* | `string` | required | JavaScript regular expression source. It must match exactly once in the file. |
+| `targets.<name>.files[].pattern` <br>*kind regex* | `string` | required | JavaScript regular expression source. It must match exactly once in the file. A `\n` matches LF and CRLF line endings alike (since 1.1.1). |
 | `targets.<name>.files[].replace` <br>*kind regex* | `string` | required | The replacement text. Placeholders: `{version}`, `{major}`, `{minor}`, `{patch}`, `{buildNumber}`. `$1`, `$<name>`, `$&` and `$$` work like in `String.prototype.replace`. An entry that uses `{buildNumber}` is only stamped in CI. |
 | `targets.<name>.files[].flags` <br>*kind regex* | `string` |  | Extra RegExp flags: any of `i`, `m`, `s`, `u`. `g` is not allowed. |
 | `targets.<name>.files[].path` <br>*kind image* | `string` | required | Docker targets only. A deploy manifest (Kubernetes, Compose, Helm values) or a glob such as `deploy/k8s/*.yaml`. Every `<image>:<tag>` reference to this target's image gets the release tag. |

@@ -7,7 +7,11 @@
 # therefore runs:
 @@preview_mr_help@@
 # Fork MRs never get a preview: their pipelines have no access to this project's variables.
-# The plan, trigger and comment jobs share these conditions; only `when` differs.
+# The plan and trigger jobs share these conditions; only `when` differs.
+#
+# The result (one sticky MR note per preview, or the GitLab release of a prerelease) comes from
+# the job launchset-preview-comment at the end of the child pipeline, so it also runs for a
+# preview someone started from the manual job.
 
 launchset-preview-plan:
   extends: .launchset-cli
@@ -38,20 +42,6 @@ launchset-preview:
       - artifact: launchset-child.yml
         job: launchset-preview-plan
     strategy: mirror
-
-launchset-preview-comment:
-  extends: .launchset-cli
-  needs:
-    - job: launchset-preview-plan
-    - job: launchset-preview
-      artifacts: false
-  # `when: always`: also when a build failed, so the note shows which target failed.
-  rules:
-    @@preview_comment_rules@@
-  script:
-    # One sticky MR note with the result per target (on a prerelease branch: the GitLab
-    # release). A skipped preview writes no plan.json: then there is nothing to report.
-    - launchset preview-comment --plan @plan.json --ci
 
 # Opt-in: start a preview when the label is added, without a push or a click. GitLab starts no
 # pipeline for a label, so a pipeline schedule runs this job (Build > Pipeline schedules: the

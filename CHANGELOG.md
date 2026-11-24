@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.0 (2026-11-23)
+
+### Minor changes
+- GitLab support: run launchset in GitLab CI (gitlab.com and self-managed, 18.2+). `launchset init` sets up GitLab repos with `.gitlab/launchset.yml` and a `.gitlab/launchset-targets.yml` for your build steps. Releases build in a generated child pipeline. New CLI commands `release`, `preview-plan` and `preview-comment`, and a `--ci` mode that writes `plan.json`, `launchset.env` and `launchset.sh`. An optional preview sweep (`launchset preview-sweep`, run by a pipeline schedule) starts an MR pipeline when the preview label is added, since GitLab starts none for a label. `changelog.github` is renamed to `changelog.links` (the old name still works). ([#3](https://github.com/demonsters/launchset/pull/3), @rene-demonsters)
+- GitLab: build jobs on Windows runners with PowerShell (`gitlab: { shell: "powershell" }` on a target; `--ci` also writes `launchset.ps1`), targets that build after other targets with their artifacts (`after`, GitLab only), and templates for the target jobs from extra files the child pipeline includes (`gitlab.include`). Preview jobs keep `interruptible: false` from your job. launchset's tag pushes no longer start tag pipelines (`git push -o ci.skip`; `gitlab.tagPipelines: true` lets release and prerelease tags start one). `launchset init` turns GitLab jobs that build on tags into custom targets with their steps copied, moves the templates they extend to `.gitlab/ci-templates.yml`, removes only the tag rule of a job that other rules still start, notes `workflow: rules` that allow tag pipelines, and takes `--decide target.<name>=custom` to declare a target it didn't detect. A build script that only reads `CFBundleShortVersionString` is no longer flagged as a version writer. ([#3](https://github.com/demonsters/launchset/pull/3), @rene-demonsters)
+
 ## 1.0.3 (2026-11-19)
 
 ### Patch changes
