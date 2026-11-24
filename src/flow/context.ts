@@ -9,17 +9,12 @@ import { ConfigError, hostConfigIssues, type ResolvedConfig } from "../core/conf
 import { LaunchsetError } from "../core/errors.ts";
 import { forgeHints } from "../core/forge-hints.ts";
 import { type ForgeHost, forgeLinks } from "../core/forge-links.ts";
+import { type CiSystem, ciSystemFor, hostProfile } from "../core/hosts.ts";
 import type { RunInfo } from "../core/types.ts";
-import { createGitHub } from "../forge/github/index.ts";
-import { createGitLab, fallbackIdentity, serverHostOf } from "../forge/gitlab/index.ts";
 import type { Forge } from "../forge/types.ts";
 import { Git, type GitIdentity } from "../git/index.ts";
-import {
-  type CiEnvironment,
-  detectHost,
-  readCiEnvironment,
-  serverUrlFromRemote,
-} from "./ci/index.ts";
+import { type CiEnvironment, detectHost, readCiEnvironment } from "./ci/index.ts";
+import { HOST_ADAPTERS } from "./hosts.ts";
 
 export interface Logger {
   info(message: string): void;
@@ -97,29 +92,23 @@ export async function createContext(options: ContextOptions): Promise<FlowContex
   // Only a host known from the environment or the remote: a GitLab config in a repo without a
   // remote (a local `launchset version`) still works.
   if (detected.source !== "default") {
-    const issues = hostConfigIssues(config, host);
+    const issues = hostConfigIssues(config, host, ciSystemFor(host, env));
     if (issues.length > 0) throw new ConfigError(issues, file);
   }
+  const adapter = HOST_ADAPTERS[host];
   const ci = await readCiEnvironment(host, env);
-  if (host === "gitlab" && !env.CI_SERVER_URL) {
-    // Outside GitLab CI (a local `launchset status`), a self-managed server is the remote's.
-    const url = await origin();
-    const fromRemote = url === undefined ? undefined : serverUrlFromRemote(url);
-    if (fromRemote) {
-      ci.serverUrl = fromRemote;
-      if (!env.CI_API_V4_URL) ci.apiUrl = `${fromRemote}/api/v4`;
-    }
-  }
+  await adapter.serverFromRemote?.(ci, env, origin);
   const { serverUrl } = ci;
   const token = options.token || ci.token || undefined;
   // GitLab: launchset commits as the token's own user (push rules may reject unknown
   // authors), looked up only when something is committed.
-  const commitHost = env.CI_SERVER_HOST?.trim() || serverHostOf(serverUrl);
+  const { commitIdentity } = adapter;
+  const commitHost = commitIdentity?.host(env, serverUrl);
   let commitForge: Forge | undefined;
   const identity =
-    host === "gitlab"
+    commitIdentity && commitHost !== undefined
       ? async (): Promise<GitIdentity> =>
-          (await commitForge?.identity?.()) ?? fallbackIdentity(commitHost)
+          (await commitForge?.identity?.()) ?? commitIdentity.fallback(commitHost)
       : undefined;
   const git = new Git({
     cwd: root,
@@ -133,21 +122,13 @@ export async function createContext(options: ContextOptions): Promise<FlowContex
   if (!repository) repository = (await git.repoFromRemote().catch(() => undefined)) ?? undefined;
   const client = (clientToken: string | undefined, kind?: "job") => {
     if (!clientToken || !repository) return undefined;
-    if (host === "gitlab") {
-      return createGitLab({
-        token: clientToken,
-        ...(kind ? { tokenKind: kind } : {}),
-        repository,
-        ...(ci.apiUrl ? { apiUrl: ci.apiUrl } : {}),
-        serverUrl,
-        commitHost,
-        log,
-      });
-    }
-    return createGitHub({
+    return adapter.createForge({
       token: clientToken,
+      ...(kind ? { tokenKind: kind } : {}),
       repository,
       ...(ci.apiUrl ? { apiUrl: ci.apiUrl } : {}),
+      serverUrl,
+      ...(commitHost !== undefined ? { commitHost } : {}),
       log,
     });
   };
@@ -175,22 +156,30 @@ export async function createContext(options: ContextOptions): Promise<FlowContex
   if (repository) context.repository = repository;
   const fromEnv = ci.run ? { ...ci.run } : undefined;
   if (fromEnv?.id !== undefined && repository) {
-    fromEnv.url = forgeLinks({ host, serverUrl, repository }).runUrl(fromEnv.id);
+    fromEnv.url = forgeLinks({
+      host,
+      serverUrl,
+      repository,
+      ...(ci.system ? { ci: ci.system } : {}),
+    }).runUrl(fromEnv.id);
   }
   const run = options.run ? { ...fromEnv, ...options.run } : fromEnv;
   if (run) context.run = run;
   return context;
 }
 
+/** The CI system of the run: the one its environment was read with, else the host's own. */
+export function ciSystemOf(context: Pick<FlowContext, "host" | "ci">): CiSystem {
+  return context.ci.system ?? hostProfile(context.host).ci;
+}
+
 /** The forge client, or a clear error saying a token is needed. */
 export function requireForge(context: FlowContext, what: string): Forge {
   if (context.forge) return context.forge;
   const hints = forgeHints(context.host);
-  throw new LaunchsetError(
-    context.host === "gitlab" ? "no-gitlab-token" : "no-github-token",
-    `${what} ${hints.tokenNeeded}`,
-    { hint: hints.tokenHint(Boolean(context.repository)) },
-  );
+  throw new LaunchsetError(hostProfile(context.host).noTokenError, `${what} ${hints.tokenNeeded}`, {
+    hint: hints.tokenHint(Boolean(context.repository)),
+  });
 }
 
 /**

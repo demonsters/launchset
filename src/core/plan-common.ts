@@ -10,6 +10,7 @@ import type { ResolvedConfig, ResolvedTarget } from "./config/schema.ts";
 import { dockerPlan } from "./docker-tags.ts";
 import { LaunchsetError } from "./errors.ts";
 import type { ForgeHost } from "./forge-links.ts";
+import { hostProfile } from "./hosts.ts";
 import { indexTags, markerTag, releasesAfter, type TagIndex } from "./tags.ts";
 import type { Changeset, Channel, Plan, RunInfo, TargetPlan } from "./types.ts";
 import { highestVersion, isPlainVersion, marketingVersion } from "./versions.ts";
@@ -350,7 +351,7 @@ export function alert(
   text: string,
   host?: ForgeHost,
 ): string {
-  return `> [!${host === "gitlab" ? kind.toLowerCase() : kind}]\n${text
+  return `> [!${hostProfile(host).lowercaseAlerts ? kind.toLowerCase() : kind}]\n${text
     .trimEnd()
     .split("\n")
     .map((l) => (l === "" ? ">" : `> ${l}`))

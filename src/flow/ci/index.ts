@@ -4,7 +4,18 @@
  */
 
 import { LaunchsetError } from "../../core/errors.ts";
-import { FORGE_HOSTS, type ForgeHost } from "../../core/forge-links.ts";
+import {
+  CI_SYSTEMS,
+  type CiSystem,
+  type CiVariable,
+  ciFromEnv,
+  ciSystemFor,
+  DEFAULT_HOST,
+  FORGE_HOSTS,
+  type ForgeHost,
+  HOSTS,
+  isForgeHost,
+} from "../../core/hosts.ts";
 import { readGitHubEnvironment } from "./github.ts";
 import { gitlabEnvironment } from "./gitlab.ts";
 import type { CiEnvironment, Env } from "./types.ts";
@@ -13,8 +24,11 @@ export * from "./github.ts";
 export * from "./gitlab.ts";
 export * from "./types.ts";
 
-/** How the host was found, for messages. */
-export type HostSource = "LAUNCHSET_HOST" | "GITLAB_CI" | "GITHUB_ACTIONS" | "remote" | "default";
+/**
+ * How the host was found, for messages: `LAUNCHSET_HOST`, the CI flag of the host
+ * (`GITLAB_CI`, `GITHUB_ACTIONS`), the origin `remote`, or the `default` host.
+ */
+export type HostSource = "LAUNCHSET_HOST" | CiVariable | "remote" | "default";
 
 export interface HostDetection {
   host: ForgeHost;
@@ -60,23 +74,24 @@ export function serverUrlFromRemote(url: string): string | undefined {
 
 /**
  * The host from the environment alone: `LAUNCHSET_HOST` (`github` / `gitlab`, anything else
- * is an error), else `GITLAB_CI=true` → gitlab, else `GITHUB_ACTIONS=true` → github.
+ * is an error), else the CI system the environment names (`ciFromEnv`: `GITLAB_CI=true`,
+ * `GITHUB_ACTIONS=true`) and the host it runs against.
  */
 export function hostFromEnv(env: Env): HostDetection | undefined {
   const explicit = env.LAUNCHSET_HOST?.trim();
   if (explicit) {
     const host = explicit.toLowerCase();
-    if (!(FORGE_HOSTS as readonly string[]).includes(host)) {
+    if (!isForgeHost(host)) {
       throw new LaunchsetError(
         "invalid-host",
         `LAUNCHSET_HOST is "${explicit}", expected ${FORGE_HOSTS.map((h) => `"${h}"`).join(" or ")}`,
         { hint: "Unset LAUNCHSET_HOST to detect the host from the CI environment and the remote." },
       );
     }
-    return { host: host as ForgeHost, source: "LAUNCHSET_HOST" };
+    return { host, source: "LAUNCHSET_HOST" };
   }
-  if (env.GITLAB_CI === "true") return { host: "gitlab", source: "GITLAB_CI" };
-  if (env.GITHUB_ACTIONS === "true") return { host: "github", source: "GITHUB_ACTIONS" };
+  const ci = ciFromEnv(env);
+  if (ci) return { host: CI_SYSTEMS[ci].hosts[0], source: CI_SYSTEMS[ci].detect.variable };
   return undefined;
 }
 
@@ -92,12 +107,29 @@ export async function detectHost(
   const fromEnv = hostFromEnv(env);
   if (fromEnv) return fromEnv;
   const url = await remoteUrl?.().catch(() => undefined);
-  const host = url === undefined ? undefined : remoteHost(url);
-  if (host?.includes("gitlab")) return { host: "gitlab", source: "remote" };
-  return { host: "github", source: "default" };
+  const hostname = url === undefined ? undefined : remoteHost(url);
+  const host = hostname ? hostFromRemoteName(hostname) : undefined;
+  if (host) return { host, source: "remote" };
+  return { host: DEFAULT_HOST, source: "default" };
 }
 
-/** Read the CI environment of `host`. */
+/** The host a remote's host name says the repo is on (`gitlab.acme.dev`), if any. */
+export function hostFromRemoteName(hostname: string): ForgeHost | undefined {
+  return FORGE_HOSTS.find((host) => HOSTS[host].remoteMatches?.(hostname));
+}
+
+/** The environment readers, per CI system. */
+const ENVIRONMENTS: Readonly<
+  Record<CiSystem, (env: Env) => CiEnvironment | Promise<CiEnvironment>>
+> = { actions: readGitHubEnvironment, "gitlab-ci": gitlabEnvironment };
+
+/**
+ * Read the CI environment for a run on `host`, with the reader of its CI system
+ * ({@link ciSystemFor}: the one the environment names when it serves `host`, else the host's).
+ */
 export async function readCiEnvironment(host: ForgeHost, env: Env): Promise<CiEnvironment> {
-  return host === "gitlab" ? gitlabEnvironment(env) : readGitHubEnvironment(env);
+  const system = ciSystemFor(host, env);
+  const ci = await ENVIRONMENTS[system](env);
+  ci.system = system;
+  return ci;
 }

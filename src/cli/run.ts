@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { CONFIG_FILE_NAMES } from "../config/load.ts";
 import { LaunchsetError } from "../core/errors.ts";
+import { hostProfile } from "../core/hosts.ts";
 import {
   type ContextOptions,
   createContext,
@@ -54,7 +55,7 @@ export function cliLogger(io: CliIo): Logger {
 
 /** `owner/repo`. */
 const REPO = /^[^/\s]+\/[^/\s]+$/;
-/** A nested GitLab path (`group/sub/project`), which only GitLab accepts. */
+/** A nested path (`group/sub/project`), which only some hosts accept (`nestedRepositories`). */
 const NESTED_REPO = /^[^/\s]+(?:\/[^/\s]+){2,}$/;
 
 /** True when `repo` is a valid `--repo` for the host (detected like `createContext` does). */
@@ -62,7 +63,7 @@ async function validRepo(io: CliIo, root: string, repo: string): Promise<boolean
   if (REPO.test(repo)) return true;
   if (!NESTED_REPO.test(repo)) return false;
   const { host } = await detectHost(io.env, () => new Git({ cwd: root }).remoteUrl());
-  return host === "gitlab";
+  return hostProfile(host).nestedRepositories;
 }
 
 export async function makeContext(

@@ -9,6 +9,7 @@ import type { ResolvedConfig } from "./config/schema.ts";
 import { LaunchsetError } from "./errors.ts";
 import { forgeHints } from "./forge-hints.ts";
 import type { ForgeHost } from "./forge-links.ts";
+import { hostProfile } from "./hosts.ts";
 import {
   type BotPrInfo,
   buildTargetPlans,
@@ -454,9 +455,9 @@ function planPublish(
   if (notLatest) {
     plan.distTag = distTag({ channel: "release", version, maintenance: true });
     notices.push(
-      input.host === "gitlab"
-        ? `${version} is lower than the latest release ${latest}: it doesn't move latest (Docker latest/major tags, npm dist-tag). GitLab still lists its release as the latest one (it picks the newest by release date).`
-        : `${version} is lower than the latest release ${latest}: it doesn't move latest (Docker latest/major tags, npm dist-tag, GitHub latest).`,
+      hostProfile(input.host).latestFlag
+        ? `${version} is lower than the latest release ${latest}: it doesn't move latest (Docker latest/major tags, npm dist-tag, ${hostProfile(input.host).name} latest).`
+        : `${version} is lower than the latest release ${latest}: it doesn't move latest (Docker latest/major tags, npm dist-tag). ${hostProfile(input.host).name} still lists its release as the latest one (it picks the newest by release date).`,
     );
   }
   if (matrix.length === 0) {

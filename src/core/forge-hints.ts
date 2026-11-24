@@ -4,7 +4,8 @@
  * `actions/checkout`. Pure. The GitHub texts are the ones launchset always printed.
  */
 
-import type { ForgeHost } from "./forge-links.ts";
+import { DEFAULT_HOST, type ForgeHost } from "./hosts.ts";
+import { code } from "./plan-common.ts";
 
 /** The per-host texts. Each names where it is used. */
 export interface ForgeHints {
@@ -54,6 +55,12 @@ export interface ForgeHints {
   previewPrIncomplete: string;
   /** preview: no branch for a push or manual preview. */
   previewNoBranch: string;
+  /** Release notes: how to ship a manual target that isn't shipped yet (`ship it with …`). */
+  shipTarget(target: string, version: string): string;
+  /** Release PR: how manual targets are shipped on demand (`… on demand (<this>, or …)`). */
+  shipOnDemand: string;
+  /** preview: the PR lacks the preview label (`<pr> doesn't have the <label> label: <this>`). */
+  previewAddLabel: string;
 }
 
 const GITHUB: ForgeHints = {
@@ -91,6 +98,10 @@ const GITHUB: ForgeHints = {
   previewPrIncomplete:
     "the pull_request event payload has no pull_request number, head.ref or head.sha",
   previewNoBranch: "Check out a branch (not a detached HEAD), or run this in GitHub Actions.",
+  shipTarget: (target, version) =>
+    `a release workflow run with target ${code(target)} and version ${code(version)}`,
+  shipOnDemand: "a release workflow run with the `target` input",
+  previewAddLabel: "add it to build a preview.",
 };
 
 /** The LAUNCHSET_TOKEN GitLab needs, for hints. */
@@ -136,11 +147,17 @@ const GITLAB: ForgeHints = {
   previewPrIncomplete:
     "the merge request pipeline has no CI_MERGE_REQUEST_IID, CI_MERGE_REQUEST_SOURCE_BRANCH_NAME or commit sha",
   previewNoBranch: "Check out a branch (not a detached HEAD), or run this in GitLab CI.",
+  shipTarget: (target, version) =>
+    `a release pipeline run with ${code(`LAUNCHSET_TARGET=${target}`)} and ${code(`LAUNCHSET_RELEASE_VERSION=${version}`)}`,
+  shipOnDemand: "a release pipeline run with the `LAUNCHSET_TARGET` variable",
+  previewAddLabel: "add the label and push, or start the manual preview job.",
 };
 
+const HINTS: Readonly<Record<ForgeHost, ForgeHints>> = { github: GITHUB, gitlab: GITLAB };
+
 /** The hints of `host` (default GitHub). */
-export function forgeHints(host: ForgeHost = "github"): ForgeHints {
-  return host === "gitlab" ? GITLAB : GITHUB;
+export function forgeHints(host: ForgeHost = DEFAULT_HOST): ForgeHints {
+  return HINTS[host];
 }
 
 /** Hints for a failed git push or fetch, by why it failed. */
@@ -180,7 +197,12 @@ const GITLAB_PUSH: GitPushHints = {
 export const GITLAB_JOB_TOKEN_PUSH =
   "No token was given, so git used the runner's CI_JOB_TOKEN from the clone URL. It can't push launchset's branches and tags (and pushes made with it never start pipelines): set LAUNCHSET_TOKEN to a project or group access token with the api and write_repository scopes, role Maintainer.";
 
+const PUSH_HINTS: Readonly<Record<ForgeHost, GitPushHints>> = {
+  github: GITHUB_PUSH,
+  gitlab: GITLAB_PUSH,
+};
+
 /** The git push hints of `host` (default GitHub). */
-export function gitPushHints(host: ForgeHost = "github"): GitPushHints {
-  return host === "gitlab" ? GITLAB_PUSH : GITHUB_PUSH;
+export function gitPushHints(host: ForgeHost = DEFAULT_HOST): GitPushHints {
+  return PUSH_HINTS[host];
 }

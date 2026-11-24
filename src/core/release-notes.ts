@@ -4,6 +4,7 @@
  * superseded partial release. Pure.
  */
 
+import { forgeHints } from "./forge-hints.ts";
 import type { ForgeHost } from "./forge-links.ts";
 import { alert, code, joinWords } from "./plan-common.ts";
 
@@ -28,11 +29,9 @@ export const MANUAL_TARGETS_HEADING = "### Manual targets";
 
 function renderEntry(entry: ManualTargetEntry, version?: string, host?: ForgeHost): string {
   if (!entry.shipped) {
-    const how = !version
-      ? ""
-      : host === "gitlab"
-        ? ` (ship it with a release pipeline run with ${code(`LAUNCHSET_TARGET=${entry.target}`)} and ${code(`LAUNCHSET_RELEASE_VERSION=${version}`)})`
-        : ` (ship it with a release workflow run with target ${code(entry.target)} and version ${code(version)})`;
+    const how = version
+      ? ` (ship it with ${forgeHints(host).shipTarget(entry.target, version)})`
+      : "";
     return `- ${code(entry.target)}: not shipped yet${how}`;
   }
   const date = entry.date !== null ? ` ${entry.date}` : "";

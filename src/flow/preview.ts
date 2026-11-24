@@ -18,7 +18,8 @@
 import { isChangesetPath } from "../core/changesets.ts";
 import { errorMessage, LaunchsetError } from "../core/errors.ts";
 import { forgeHints } from "../core/forge-hints.ts";
-import { type ForgeHost, forgeWords } from "../core/forge-links.ts";
+import { forgeWords } from "../core/forge-links.ts";
+import { type CiSystem, ciFromEnv, ciProfile, DEFAULT_HOST, hostProfile } from "../core/hosts.ts";
 import { actionOutputs, parsePlan } from "../core/outputs.ts";
 import {
   alert,
@@ -47,7 +48,13 @@ import { escapeRegExp } from "../core/regex.ts";
 import type { Plan } from "../core/types.ts";
 import type { Forge, Job } from "../forge/types.ts";
 import { GitError, type PushResult, TagCleanupError, TagExistsError } from "../git/index.ts";
-import { branchFromRef, type FlowContext, type FlowResult, requireForge } from "./context.ts";
+import {
+  branchFromRef,
+  ciSystemOf,
+  type FlowContext,
+  type FlowResult,
+  requireForge,
+} from "./context.ts";
 import {
   baseBranchRef,
   changesetDir,
@@ -481,10 +488,10 @@ export function jobStatus(job: Job): TargetResultStatus {
 export function findTargetJob(
   jobs: readonly Job[],
   target: string,
-  host: ForgeHost = "github",
+  ci: CiSystem = hostProfile(DEFAULT_HOST).ci,
 ): Job | undefined {
   const pattern =
-    host === "gitlab"
+    ci === "gitlab-ci"
       ? new RegExp(`^(?:preview-|build-)?${escapeRegExp(target)}$`, "i")
       : new RegExp(`^(?:.* / )?(?:Preview |Build )?${escapeRegExp(target)}$`, "i");
   return jobs.filter((job) => pattern.test(job.name.trim())).at(-1);
@@ -498,11 +505,11 @@ function unknownResults(targets: readonly string[]): Record<string, TargetResult
 export function targetResults(
   plan: Plan,
   jobs: readonly Job[],
-  host: ForgeHost = "github",
+  ci: CiSystem = hostProfile(DEFAULT_HOST).ci,
 ): Record<string, TargetResult> {
   const results: Record<string, TargetResult> = {};
   for (const name of plan.matrix) {
-    const job = findTargetJob(jobs, name, host);
+    const job = findTargetJob(jobs, name, ci);
     results[name] = job
       ? { status: jobStatus(job), ...(job.url ? { jobUrl: job.url } : {}) }
       : { status: "unknown" };
@@ -519,7 +526,7 @@ async function listRunJobs(context: FlowContext, forge: Forge, runId: number): P
   try {
     return await forge.listJobs(runId);
   } catch (error) {
-    if (!context.fallbackForge || context.host === "gitlab") throw error;
+    if (!context.fallbackForge || !ciProfile(ciSystemOf(context)).fallbackListsJobs) throw error;
     context.log.warn(
       `Couldn't list the jobs with the App token (${errorMessage(error)}); trying GITHUB_TOKEN`,
     );
@@ -561,7 +568,9 @@ const LEFTOVER_GITLAB_JOB = "launchset-preview-comment";
  */
 function leftoverGitLabJob(context: FlowContext): string | undefined {
   const { env } = context;
-  if (context.host !== "gitlab" || env.GITLAB_CI !== "true") return undefined;
+  // Only in a GitLab CI job (not a local run against a GitLab project).
+  const ci = ciSystemOf(context);
+  if (ci !== "gitlab-ci" || ciFromEnv(env) !== ci) return undefined;
   if (env.CI_JOB_NAME !== LEFTOVER_GITLAB_JOB || env.CI_PIPELINE_SOURCE === "parent_pipeline") {
     return undefined;
   }
@@ -628,7 +637,7 @@ export async function previewComment(
     notes.push(`The ${hints.runName} id is unknown, so the per-target results can't be read.`);
   } else {
     try {
-      results = targetResults(plan, await listRunJobs(context, forge, runId), context.host);
+      results = targetResults(plan, await listRunJobs(context, forge, runId), ciSystemOf(context));
       listed = true;
     } catch (error) {
       // The comment is still worth posting; the failure is reported in it and in the summary.

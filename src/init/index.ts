@@ -15,6 +15,7 @@ import semver from "semver";
 import { CHANGELOG_TITLE } from "../core/changelog.ts";
 import { resolveConfig, TARGET_NAME } from "../core/config/schema.ts";
 import { LaunchsetError } from "../core/errors.ts";
+import { ciOf } from "../core/hosts.ts";
 import { renderTag } from "../core/tags.ts";
 import { REQUIRED_APP_PERMISSIONS } from "../forge/github/permissions.ts";
 import { Git } from "../git/index.ts";
@@ -380,7 +381,7 @@ async function writeAll(
   const conversions = await planConversion(root, d.changesets);
   const host = answers.host ?? ctx.host.host;
   const gitlab: GitLabPlan | undefined =
-    host === "gitlab"
+    ciOf(host) === "gitlab-ci"
       ? planGitLab(ctx, resolved, plan, { moveTemplates: answers["gitlab.templates"] === "move" })
       : undefined;
   const workflows = gitlab

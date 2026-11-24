@@ -2,7 +2,8 @@
 
 Status: implemented (all phases), plus the fixes from a trial adoption on GitLab (see
 "Trial fixes") and from its first pipelines on GitLab.com (see "GitLab.com trial"); the rest of
-"Still needs a real GitLab instance" is open. Last updated 2026-11-24.
+"Still needs a real GitLab instance" is open. The host abstraction now takes more hosts and CI
+systems (see "More hosts"). Last updated 2026-11-24.
 
 launchset ran on GitHub only. This plan covers what it takes to also run on GitLab
 (gitlab.com and self-managed), in an order that keeps the GitHub path safe at every step.
@@ -334,6 +335,108 @@ The child job needs no change to the parent file, so it reaches existing project
 child's job already did) and logs that the job should be removed. One loss: when GitLab can't
 create the child pipeline at all, no job reports on the MR (the trigger job fails, the MR shows
 it).
+## More hosts (Forgejo, Gitea, Codeberg)
+
+Not planned yet, but the code no longer assumes exactly two hosts, or one CI system per host,
+so adding either later doesn't mean finding every `host === "gitlab"` again.
+
+**Hosts and CI systems are separate tables.** One forge can be used with more than one CI
+system: Codeberg (a Forgejo instance) has hosted Forgejo Actions and Woodpecker CI, and
+self-managed Forgejo and Gitea are often paired with Woodpecker or Drone.
+- `HOSTS` (`src/core/hosts.ts`) has one `HostProfile` per forge: its words and paths (`!12`,
+  `-/merge_requests/12`), its own CI system (`ci`: what init sets up and what runs locally)
+  and the forge's traits: `prereleaseFlag`, `latestFlag`, `lowercaseAlerts`,
+  `nestedRepositories`, `selfManagedRemotes`, `skipCiPushOption`, `gitTokenUser`.
+- `CI_SYSTEMS` has one `CiProfile` per CI system (`actions`, `gitlab-ci`): how it's detected
+  (`detect`: a variable and its value, so `CI=woodpecker` fits as well as `GITLAB_CI=true`),
+  the hosts it serves (the first is used when the environment names none), and the CI's
+  traits: `runPath`, `labelEvents`, `fallbackListsJobs`, `ciFilesByDefault` (`--ci` on by
+  default) and `logSection` (collapsed log sections).
+- The CI environment is read per CI system (`readCiEnvironment`): the one the environment names
+  when it serves the host, else the host's own (`ciSystemFor`). `CiEnvironment.system` and
+  `ciSystemOf(context)` give the run's CI system; code about the CI (job names, the child
+  pipeline, MR checkouts, the sweep) asks it, not the host. CI systems are checked in
+  `CI_DETECTION_ORDER`, GitHub Actions last.
+- Texts per host are `Record<ForgeHost, …>` tables (`forge-hints.ts`, git's push-failure
+  wording, init's image guess), so adding a host to `FORGE_HOSTS` makes the compiler list each
+  one. Many hints are really about the CI (`actions/checkout`, `GIT_DEPTH`); they stay keyed by
+  host until a host gets a second CI system.
+- `src/flow/hosts.ts` holds the run-time side per host: the API client and what `createContext`
+  does differently (server from the remote, commit identity).
+- Tests fail on a new comparison with `"github"`/`"gitlab"` and on a direct read of a CI
+  system's detection variable outside `flow/ci/`. init's host guess (`init/detect.ts`) is the
+  exception to both: it weighs GitLab's own evidence.
+- Not moved yet: `listJobs` stays on `Forge`, and run URLs are built from `runPath` under the
+  repository URL. Both are wrong for a CI on its own server (see Woodpecker below) and move
+  when one is added.
+
+**What a new host needs.**
+1. A profile in `HOSTS`, its texts in the tables, and its CI system in a `CiProfile`'s `hosts`.
+2. A `Forge` client (`src/forge/<host>/`) and an adapter in `flow/hosts.ts`.
+3. Templates and init support for its CI system. A host on `actions` might reuse the GitHub
+   workflows and the Action with small changes; that's the main reason Forgejo and Gitea look
+   cheap. But:
+   - launchset's own jobs (check, plan, finalize, the preview plan and comment) hard-code
+     `runs-on: ubuntu-latest`; build and preview jobs already take a label per target
+     (`@@runs_on@@`). Codeberg's hosted runners use labels like `codeberg-medium`, and
+     self-hosted runners their own, so those jobs need a configurable label.
+   - Forgejo's default runner image is a small Debian one with Node, not GitHub's Ubuntu
+     image: anything the templates assume from `ubuntu-latest` needs checking.
+   - `uses: actions/…` resolves from the runner's default actions URL, which isn't always
+     github.com.
+4. Docs, skills, and its own "To verify" list.
+
+**A new CI system needs** a `CiProfile` (with the hosts it serves), an environment reader in
+`flow/ci/`, `listJobs` from its own API instead of the forge's, run URLs from its environment,
+and templates.
+
+**Forgejo and Gitea: what we know and what to check.** Their CI (Forgejo Actions, Gitea
+Actions) runs GitHub-Actions-style workflows, so they'd be served by `actions`. From their docs:
+- Forgejo's workflows are "familiar, not compatible": some job keys are ignored
+  (`permissions`, `continue-on-error`), OIDC uses `enable-openid-connect`, the default runner
+  image is a small Debian one with Node, and the `github` context lacks some keys. The
+  workflow templates need a trial there, not an assumption.
+- Forgejo fires `pull_request` `labeled`, so label events work and no preview sweep is needed.
+  Fork PRs get read-only tokens and no secrets, as on GitHub.
+- Gitea's API has `GET /repos/{owner}/{repo}/actions/runs/{run}/jobs` (for `listJobs`); since
+  which version, and whether Forgejo has the same, is open.
+- Gitea documents repository push options (`repo.private`), not `ci.skip`, so
+  `skipCiPushOption` would be unset (tag pushes may start tag workflows, as on GitHub).
+
+To check before designing: which variables their runners set (whether `GITHUB_ACTIONS` is set
+too, which is why GitHub Actions is detected last); whether Gitea's and Forgejo's APIs still
+match closely enough for one client; release `prerelease` and latest handling; Markdown alerts
+in comments; how a workflow token or access token authenticates git pushes and whether its
+pushes start workflows; whether the Action (`runs.using: node24`) runs on their runners; and
+how init tells them apart (`.forgejo/workflows`, `.gitea/workflows`, the remote's host name).
+
+**Woodpecker CI** (Codeberg's ci.codeberg.org; often with self-managed Forgejo and Gitea).
+Verified against its environment docs (3.20.x,
+<https://woodpecker-ci.org/docs/usage/environment>):
+- Detection: `CI=woodpecker` and `CI_SYSTEM_NAME=woodpecker`; it sets no `GITHUB_*` variables,
+  so it doesn't collide with GitHub Actions. `detect` would be `{ variable: "CI", value:
+  "woodpecker" }`.
+- The forge comes from the environment: `CI_FORGE_TYPE` is `bitbucket`, `bitbucket_dc`,
+  `forgejo`, `gitea`, `github` or `gitlab`, and `CI_FORGE_URL` is its root URL. So the CI
+  system comes from `CI`, and the host from `CI_FORGE_TYPE` (`hostFromEnv` would need to read
+  it instead of taking the CI's first host).
+- The CI server is separate from the forge (`CI_SYSTEM_URL`, `CI_SYSTEM_HOST`), and
+  `CI_PIPELINE_URL` is the run's web URL (`https://ci.example.com/repos/7/pipeline/8`): the
+  run link must come from the environment, not from `runPath` under the repository URL.
+- Repository, commit and PR: `CI_REPO` (`owner/name`), `CI_REPO_URL`; `CI_COMMIT_SHA`,
+  `CI_COMMIT_REF`, `CI_COMMIT_BRANCH` (the target branch on PRs), `CI_COMMIT_SOURCE_BRANCH` and
+  `CI_COMMIT_TARGET_BRANCH` (PRs only), `CI_COMMIT_TAG`; `CI_COMMIT_PULL_REQUEST` (the number)
+  and `CI_COMMIT_PULL_REQUEST_LABELS` (the docs don't say how several labels are separated).
+- Events: `CI_PIPELINE_EVENT` is `push`, `pull_request`, `pull_request_closed`,
+  `pull_request_metadata`, `tag`, `release`, `manual` or `cron`. `pull_request_metadata` with
+  `CI_PIPELINE_EVENT_REASON` `label_updated` or `label_cleared` (on Forgejo, Gitea, GitHub and
+  GitLab) means `labelEvents` would be true: it's a CI trait, not the forge's.
+- Run number and attempt: `CI_PIPELINE_NUMBER`; `CI_PIPELINE_RERUNS` is unset on the first
+  run and counts restarts, so the attempt is reruns + 1.
+- Tokens: none for the forge's API. The only credentials are `CI_NETRC_USERNAME`,
+  `CI_NETRC_PASSWORD` and `CI_NETRC_MACHINE`, marked "Internal - Please don't use!" and only
+  there for some images. So a Woodpecker setup needs `LAUNCHSET_TOKEN` as a secret, and
+  `fallbackListsJobs` is false.
 
 ## Decided (formerly open decisions)
 
