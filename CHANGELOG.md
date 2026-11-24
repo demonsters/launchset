@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.2 (2026-11-24)
+
+### Patch changes
+- launchset's PR comments (the changeset check and the preview comment) start with a 🚀, so they stand out in a PR, the way Changesets puts a 🦋 in front of its comment. ([#9](https://github.com/demonsters/launchset/pull/9), @rene-demonsters)
+
 ## 1.1.1 (2026-11-24)
 
 ### Patch changes
