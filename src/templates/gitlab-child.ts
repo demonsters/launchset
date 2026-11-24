@@ -4,8 +4,9 @@
  * It has exactly the jobs the plan needs: one `build-<target>` (or `preview-<target>`) job per
  * target in the matrix, which wraps the user's `.launchset-<target>` job from
  * `.gitlab/launchset-targets.yml` in `stamp` / `verify` / `mark`, then `launchset-finalize` for a
- * release. Nothing to build: a single `launchset-nothing-to-build` job that says why (a child
- * pipeline needs at least one job). Pure apart from reading the template files.
+ * release or `launchset-preview-comment` for a preview. Nothing to build: a single
+ * `launchset-nothing-to-build` job that says why (a child pipeline needs at least one job). Pure
+ * apart from reading the template files.
  */
 
 import type { GitLabShell } from "../core/config/schema.ts";
@@ -291,6 +292,9 @@ export function renderChildPipeline(input: ChildPipelineInput): string {
     input.kind === "release" &&
     plan !== undefined &&
     (plan.mode === "publish" || plan.mode === "ship");
+  // The preview's note (or prerelease release) comes from the child: it only exists once the
+  // plan job ran, also when that job is a manual one someone played later.
+  const comment = input.kind === "preview" && plan !== undefined;
   const sha = builds.length > 0 || finalize ? checkoutSha(input) : undefined;
 
   const parts = [
@@ -323,7 +327,7 @@ export function renderChildPipeline(input: ChildPipelineInput): string {
       ),
     );
   }
-  if (finalize) {
+  if (finalize || comment) {
     parts.push(
       fillTemplate(
         template("cli.yml"),
@@ -348,7 +352,24 @@ export function renderChildPipeline(input: ChildPipelineInput): string {
       ),
     );
   }
-  if (builds.length === 0 && !finalize) {
+  if (comment) {
+    parts.push(
+      fillTemplate(
+        template("comment.yml"),
+        {
+          plan_job: yamlScalar(input.planJob),
+          build_needs: builds
+            .map((t) => `- job: ${yamlScalar(childJobName("preview", t))}\n  artifacts: false`)
+            .join("\n"),
+          // Like the preview jobs: a newer push replaces the preview, a prerelease's release is
+          // always written.
+          interruptible: String(plan.channel !== "prerelease"),
+        },
+        "child/comment.yml",
+      ),
+    );
+  }
+  if (builds.length === 0 && !finalize && !comment) {
     parts.push(
       fillTemplate(
         template("nothing.yml"),

@@ -534,6 +534,48 @@ describe("previews in merge request pipelines", () => {
     expect(gitlab.callsTo("GET", "/pipelines/501/jobs")[0]?.auth).toBe("token");
   });
 
+  it("in the child pipeline: lists its own jobs, links the MR pipeline", async () => {
+    const { head, ci, gitlab } = await previewSetup();
+    const env = mrEnv(
+      { iid: 1, source: "feature", sha: head },
+      { LAUNCHSET_PREVIEW_MANUAL: "true" },
+    );
+    const plan = (await previewPlan(await gitlabContext(ci, env))).outputs.plan ?? "";
+    gitlab.jobs.set(501, [
+      { id: 2, name: "preview-web", status: "success", web_url: `${WEB}/-/jobs/2` },
+      { id: 3, name: "launchset-preview-comment", status: "running", web_url: `${WEB}/-/jobs/3` },
+    ]);
+    // The child's job: the parent's variables (the MR's among them), its own pipeline id.
+    const child = {
+      ...env,
+      CI_PIPELINE_SOURCE: "parent_pipeline",
+      CI_PIPELINE_ID: "501",
+      CI_JOB_NAME: "launchset-preview-comment",
+    };
+    const result = await previewComment(await gitlabContext(ci, child), { plan });
+    expect(result.data.kind).toBe("pr");
+    expect(result.data.results).toEqual({ web: { status: "success", jobUrl: `${WEB}/-/jobs/2` } });
+    expect(gitlab.notes[0]?.body).toContain(`[pipeline](${SERVER}/acme/app/-/pipelines/500)`);
+    expect(gitlab.callsTo("GET", "/pipelines/501/jobs")).toHaveLength(1);
+  });
+
+  it("the old comment job of the parent pipeline does nothing and says to remove it", async () => {
+    const { head, ci, gitlab } = await previewSetup(["launchset:preview"]);
+    const env = mrEnv({ iid: 1, source: "feature", sha: head, labels: ["launchset:preview"] });
+    const plan = (await previewPlan(await gitlabContext(ci, env))).outputs.plan ?? "";
+    const parent = { ...env, CI_JOB_NAME: "launchset-preview-comment" };
+    for (const input of [plan, ""]) {
+      const result = await previewComment(await gitlabContext(ci, parent), { plan: input });
+      expect(result.ok).toBe(true);
+      expect(result.data.kind).toBe("none");
+      expect(result.summary).toContain(
+        "Remove the job launchset-preview-comment from .gitlab/launchset.yml",
+      );
+    }
+    expect(gitlab.notes).toEqual([]);
+    expect(gitlab.callsTo("GET", "/pipelines/500/jobs")).toEqual([]);
+  });
+
   it("can't list the jobs: says why, and never retries with CI_JOB_TOKEN", async () => {
     const { head, ci, gitlab } = await previewSetup(["launchset:preview"]);
     const env = mrEnv({ iid: 1, source: "feature", sha: head, labels: ["launchset:preview"] });

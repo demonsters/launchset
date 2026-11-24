@@ -247,6 +247,7 @@ Notes:
 - Each launchset command is its own script line, for the `set -e` reason above.
 - When the plan's commit is not the pipeline's commit (a retry of an unfinished release, a merged results pipeline), every child job first runs `git checkout --quiet --detach <release-sha>` with `GIT_DEPTH: "0"`. Otherwise build jobs keep your project's clone depth.
 - The `build-<target>` jobs are not interruptible. Preview jobs are named `preview-<target>`; they are interruptible unless your job (or a template it extends) sets `interruptible: false`, or the preview is a prerelease.
+- A preview's child pipeline ends with `launchset-preview-comment` instead of `launchset-finalize` (`when: always`): it posts the MR note, or the GitLab release of a prerelease. See [Previews on GitLab](/gitlab/previews/#the-result).
 - A target with `after` gets optional `needs` on the other targets' jobs. A target with `gitlab.shell: "powershell"` gets PowerShell lines.
 - The files in `gitlab.include` are included before the targets file.
 - If a target has no `.launchset-<target>` job with a `script` (or `extends`) in the targets file, `launchset release` fails before it writes the child, with a hint naming the job.

@@ -549,6 +549,25 @@ async function branchOnlyChangesets(
   return { baseChangesetPaths: files.map((f) => f.path).filter((p) => !added.has(p)) };
 }
 
+/** The parent pipeline's comment job, in the `.gitlab/launchset.yml` that init wrote up to 1.1.0. */
+const LEFTOVER_GITLAB_JOB = "launchset-preview-comment";
+
+/**
+ * The reason to do nothing when this is the old `launchset-preview-comment` job of the parent
+ * pipeline (`init` never rewrites `.gitlab/launchset.yml`). It needs the manual plan job with
+ * `when: always`, so GitLab ran it before anyone played that job, and never again after. The
+ * child pipeline's job of the same name reports the preview now; posting here too would only
+ * repeat it. Undefined anywhere else.
+ */
+function leftoverGitLabJob(context: FlowContext): string | undefined {
+  const { env } = context;
+  if (context.host !== "gitlab" || env.GITLAB_CI !== "true") return undefined;
+  if (env.CI_JOB_NAME !== LEFTOVER_GITLAB_JOB || env.CI_PIPELINE_SOURCE === "parent_pipeline") {
+    return undefined;
+  }
+  return `This job is left over from an older .gitlab/launchset.yml: the job ${LEFTOVER_GITLAB_JOB} at the end of the preview's child pipeline posts the result now, also for a preview started from the manual job. Remove the job ${LEFTOVER_GITLAB_JOB} from .gitlab/launchset.yml.`;
+}
+
 /**
  * `launchset preview-comment`: the final job of the preview workflow. Reads each target's
  * job result from the run, then
@@ -563,6 +582,20 @@ export async function previewComment(
   context: FlowContext,
   options: PreviewCommentOptions,
 ): Promise<FlowResult<PreviewCommentData>> {
+  const leftover = leftoverGitLabJob(context);
+  if (leftover) {
+    context.log.warn(leftover);
+    return {
+      ok: true,
+      outputs: {},
+      summary: renderSummary({
+        title: "launchset preview: reported by the child pipeline",
+        notices: [leftover],
+      }),
+      lines: [leftover],
+      data: { kind: "none", results: {}, unmatched: [] },
+    };
+  }
   if (options.plan.trim() === "") {
     const reason =
       "No preview plan was passed: the preview was skipped, or the plan job failed (see its log).";

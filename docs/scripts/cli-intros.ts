@@ -49,7 +49,7 @@ export const CLI_INTROS: Record<string, string> = {
   "preview-plan":
     "Plans a preview build and, on a prerelease branch, reserves the prerelease tag by pushing it. `plan --preview` is the dry run. `--target` lists the targets of a manual run (comma separated, or `all`). The plan is skipped (with a reason) when there is nothing to preview.",
   "preview-comment":
-    "Posts the preview results: the sticky PR comment, or the prerelease notes on a prerelease branch. Pass the plan from `preview-plan`. An empty or missing plan means the preview was skipped, and nothing is posted.",
+    "Posts the preview results: the sticky PR comment, or the prerelease notes on a prerelease branch. Pass the plan from `preview-plan`. An empty or missing plan means the preview was skipped, and nothing is posted. On GitLab it runs as the last job of the preview's child pipeline.",
   "preview-sweep":
     "GitLab only. Starts a merge request pipeline for each open MR that got the preview label since its last MR pipeline for the head commit, so its preview builds without a push (GitLab starts no pipeline when a label is added). Runs in a pipeline schedule with `LAUNCHSET_PREVIEW_SWEEP=true`; see [Previews on GitLab](/gitlab/previews/#start-previews-when-the-label-is-added-preview-sweep). Starts at most `--max` pipelines (default 10), oldest label first, skips fork MRs and the release MR, and reports every MR. `--dry-run` only reports. Exits `1` when a pipeline couldn't be started (the others are still started). Needs `LAUNCHSET_TOKEN`, and refuses when `preview.rebuildOnPush` is false.",
   stamp:

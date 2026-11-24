@@ -15,8 +15,7 @@ Parent pipeline, in `.gitlab/launchset.yml`:
 | `launchset-release` | Pushes, and Run pipeline / API pipelines, of the base and maintenance branches | Updates the release MR, or plans the release. Writes `plan.json`, `launchset.env`, `launchset.sh` and `launchset-child.yml`. `resource_group: launchset-release-$CI_COMMIT_REF_SLUG`, not interruptible. |
 | `launchset-build` | Same as `launchset-release` | Trigger job. Runs the child pipeline with `strategy: mirror`. Passes `PARENT_PIPELINE_ID`. |
 | `launchset-preview-plan` | MR pipelines (automatic with the label, else manual), preview and prerelease branch pushes, Run pipeline with `LAUNCHSET_PREVIEW=true` | Plans a preview or prerelease. |
-| `launchset-preview` | Same conditions | Trigger job for the preview child pipeline. |
-| `launchset-preview-comment` | Same conditions, `when: always` | The sticky MR note, or the prerelease GitLab release. |
+| `launchset-preview` | Same conditions | Trigger job for the preview child pipeline. Skipped while the plan job waits to be played. |
 | `launchset-preview-sweep` | Only scheduled pipelines with `LAUNCHSET_PREVIEW_SWEEP=true` (a [schedule you create](/gitlab/previews/#start-previews-when-the-label-is-added-preview-sweep)) | `launchset preview-sweep`: starts an MR pipeline for open MRs that just got the preview label. `GIT_DEPTH: "1"`, `interruptible`. No other launchset job runs in that pipeline. |
 
 Hidden templates: `.launchset-cli` (the `node:24` image, `GIT_DEPTH: "0"`, the install lines) and `.launchset-release-rules`. Jobs run in one stage (see [the stage](/gitlab/getting-started/#the-stage)).
@@ -28,6 +27,7 @@ Child pipeline (`launchset-child.yml`):
 | `build-<target>` | A release build of one target: `stamp`, `verify`, your steps, `mark`. |
 | `preview-<target>` | A preview build: `stamp`, your steps. |
 | `launchset-finalize` | `when: always`. Creates the release tag and the GitLab release, or records a partial release. Release pipelines only. |
+| `launchset-preview-comment` | `when: always`, after the `preview-<target>` jobs. The sticky MR note, or the prerelease GitLab release. Preview pipelines with a plan only. |
 | `launchset-nothing-to-build` | The only job when there is nothing to build (a release MR update, `none` mode, a skipped preview). Prints why. |
 | `.launchset_cli` | Hidden. The child's own CLI template. |
 
@@ -131,8 +131,8 @@ GitLab support is written from GitLab's documentation and tested against recorde
 
 - `include: local` with `extends` and `!reference [.launchset-<target>, script]` inside an artifact-generated child pipeline. The documentation says includes merge before `!reference`.
 - Whether the dotenv variables of `launchset-release` reach child jobs through `needs: pipeline:`. It doesn't matter for launchset, which loads `launchset.sh` after `stamp`.
-- A job that `needs` an optional manual job (the MR preview plan job) should be skipped until the manual job runs, and then run. This includes the comment job with `when: always`.
-- How launchset recognizes its own sticky note: GitLab doesn't document `author.bot` on notes, so it also matches the `project_<id>_bot_` username. Check a note posted by a project access token on your instance.
+- The trigger job `launchset-preview`, skipped while the manual plan job waits, should start once someone plays the plan job (GitLab resets the skipped jobs after it).
+- Whether retrying a failed job of a finished child pipeline also runs its `when: always` job again (`launchset-preview-comment`, `launchset-finalize`). If it doesn't, retry that job too.
 - `GET /user` with a project access token should return the bot user, which sets the commit identity.
 - `$CI_PIPELINE_ID` as a variable of a trigger job (GitLab's own example uses it, but the variables table marks it job-only).
 - The Docker, Android and macOS templates: `docker:29` with `docker:29-dind` and `apk add nodejs-current`, `cimg/android` as a non-root user with an npm prefix, and Node on hosted macOS runners.
