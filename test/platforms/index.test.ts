@@ -157,3 +157,59 @@ describe("checkConsistency", () => {
     expect(await checkConsistency(config(), root)).toEqual([]);
   });
 });
+
+describe("a Windows checkout (core.autocrlf=true)", () => {
+  const crlf = (text: string) => text.replaceAll("\n", "\r\n");
+
+  /** The Attica case: a regex entry whose pattern spans a line break in a Cargo.lock. */
+  function cargoConfig() {
+    return resolveConfig({
+      targets: {
+        windows: {
+          type: "custom",
+          files: [
+            {
+              path: "Cargo.lock",
+              kind: "regex",
+              pattern: '(name = "attica-core"\\nversion = ")[^"]*"',
+              replace: '$1{version}"',
+            },
+          ],
+        },
+      },
+    });
+  }
+
+  beforeEach(async () => {
+    await writeFile(
+      join(root, "package.json"),
+      crlf('{\n  "name": "app",\n  "version": "1.4.0"\n}\n'),
+    );
+    await rm(join(root, "package-lock.json"));
+    const cargo = await readFile(join(FIXTURES, "generic/Cargo.lock"), "utf8");
+    await writeFile(join(root, "Cargo.lock"), crlf(cargo.replaceAll('"0.11.1"', '"1.4.0"')));
+  });
+
+  it("launchset stamp matches the pattern and keeps CRLF in every file", async () => {
+    const target: TargetPlan = {
+      name: "windows",
+      type: "custom",
+      release: "auto",
+      marketingVersion: "1.5.0",
+      buildNumber: 3,
+    };
+    await writeChanges(await stampForBuild(cargoConfig(), root, { version: "1.5.0" }, target));
+    const lock = await read("Cargo.lock");
+    expect(lock).toContain('name = "attica-core"\r\nversion = "1.5.0"\r\n');
+    expect(lock).toContain('name = "attica-core-macros"\r\nversion = "1.4.0"');
+    expect(lock).not.toMatch(/[^\r]\n/);
+    expect(await read("package.json")).toBe(crlf('{\n  "name": "app",\n  "version": "1.5.0"\n}\n'));
+  });
+
+  it("the release stamp and the consistency check agree", async () => {
+    expect(await checkConsistency(cargoConfig(), root)).toEqual([]);
+    await writeChanges(await stampForRelease(cargoConfig(), root, "1.5.0"));
+    expect(await read("Cargo.lock")).not.toMatch(/[^\r]\n/);
+    expect(await checkConsistency(cargoConfig(), root)).toEqual([]);
+  });
+});

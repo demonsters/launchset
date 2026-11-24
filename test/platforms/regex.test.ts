@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { regexFile } from "../../src/platforms/regex.ts";
+import { expandReplacement, mentionsCarriageReturn, regexFile } from "../../src/platforms/regex.ts";
 import { changedLines, expectStampError, fixture, replaceOnce } from "./stamper-test-utils.ts";
 
 const F = "version.txt";
@@ -185,5 +185,248 @@ describe("regexFile", () => {
 
   it("no values: input returned unchanged without matching", () => {
     expect(write(text, { pattern: "nope", replace: "x" }, {})).toBe(text);
+  });
+});
+
+describe("regexFile: line endings", () => {
+  const lf = fixture("generic/Cargo.lock");
+  const crlf = fixture("generic/Cargo-crlf.lock");
+  const mixed = fixture("generic/Cargo-mixed.lock");
+  const cargo = {
+    pattern: '(name = "attica-core"\\nversion = ")[^"]*"',
+    replace: '$1{version}"',
+  };
+  const stamped = (text: string) =>
+    replaceOnce(text, 'version = "0.11.1"\r\ndependencies', 'version = "0.11.2"\r\ndependencies');
+
+  it("fixtures have the line endings they claim", () => {
+    expect(lf).not.toContain("\r");
+    expect(crlf.split("\n").length - 1).toBe(crlf.split("\r\n").length - 1);
+    expect(mixed).toContain("\r\n");
+    expect(mixed).toMatch(/[^\r]\n/);
+  });
+
+  it("a \\n in the pattern matches LF, CRLF and mixed files alike", () => {
+    expect(write(lf, cargo, { marketing: "0.11.2" })).toBe(
+      replaceOnce(lf, 'version = "0.11.1"\ndependencies', 'version = "0.11.2"\ndependencies'),
+    );
+    expect(write(crlf, cargo, { marketing: "0.11.2" })).toBe(stamped(crlf));
+    // In the mixed file the attica-core version line ends in a lone \n; it stays that way.
+    expect(write(mixed, cargo, { marketing: "0.11.2" })).toBe(
+      replaceOnce(mixed, 'version = "0.11.1"\ndependencies', 'version = "0.11.2"\ndependencies'),
+    );
+  });
+
+  it("only the matched range changes: every other byte, CRLF or LF, stays", () => {
+    for (const text of [crlf, mixed]) {
+      const out = write(text, cargo, { marketing: "0.11.2" });
+      const at = text.indexOf('name = "attica-core"');
+      expect(out.slice(0, at)).toBe(text.slice(0, at));
+      const tail = text.indexOf("dependencies");
+      expect(out.slice(out.length - (text.length - tail))).toBe(text.slice(tail));
+      expect(out.length).toBe(text.length);
+    }
+  });
+
+  it("captures spanning a CRLF and a LF keep both, byte for byte", () => {
+    const pattern = '(name = "attica-core"\\nversion = ")[^"]*("\\ndependencies)';
+    const out = write(mixed, { pattern, replace: "$1{version}$2" }, { marketing: "0.11.2" });
+    expect(out).toBe(replaceOnce(mixed, '"0.11.1"\ndependencies', '"0.11.2"\ndependencies'));
+    expect(out).toContain('name = "attica-core"\r\nversion = "0.11.2"\ndependencies');
+    const named = write(
+      crlf,
+      {
+        pattern: '(?<head>name = "attica-core"\\nversion = ")[^"]*"',
+        replace: '$<head>{version}"',
+      },
+      { marketing: "0.11.2" },
+    );
+    expect(named).toBe(stamped(crlf));
+  });
+
+  it("$&, $` and $' expand to the file's own text", () => {
+    const text = "a\r\nV=1\r\nb\r\n";
+    expect(write(text, { pattern: "\\nV=1\\n", replace: "$&" }, { marketing: "1.0.0" })).toBe(text);
+    expect(write(text, { pattern: "V=1", replace: "[$`|$']" }, { marketing: "1.0.0" })).toBe(
+      "a\r\n[a\r\n|\r\nb\r\n]\r\nb\r\n",
+    );
+  });
+
+  it("line breaks written in the replacement get the file's CRLF", () => {
+    const text = "# v\r\nVERSION=1.0.0\r\nX=1\r\n";
+    expect(
+      write(
+        text,
+        { pattern: "VERSION=.*\\n", replace: "VERSION={version}\n# stamped\n" },
+        { marketing: "1.1.0" },
+      ),
+    ).toBe("# v\r\nVERSION=1.1.0\r\n# stamped\r\nX=1\r\n");
+  });
+
+  it("m flag: ^ and $ see lines, not the \\r", () => {
+    expect(
+      write(
+        crlf,
+        { pattern: '^version = "0\\.11\\.1"$\\n^dependencies', flags: "m", replace: "X" },
+        { marketing: "0.11.2" },
+      ),
+    ).toBe(replaceOnce(crlf, 'version = "0.11.1"\r\ndependencies', "X"));
+    // [^\n]* stops at the line end and doesn't eat the \r.
+    expect(
+      write(
+        "A=1\r\nVERSION=1.0.0\r\n",
+        { pattern: "^VERSION=[^\\n]*", flags: "m", replace: "VERSION={version}" },
+        { marketing: "2.0.0" },
+      ),
+    ).toBe("A=1\r\nVERSION=2.0.0\r\n");
+  });
+
+  it("read returns the matched text as written in the file, and its line", () => {
+    expect(regexFile.read(crlf, F, cargo)).toEqual([
+      {
+        field: "marketing",
+        key: cargo.pattern,
+        value: 'name = "attica-core"\r\nversion = "0.11.1"',
+        line: 11,
+      },
+    ]);
+    expect(regexFile.read(lf, F, cargo)[0]?.line).toBe(11);
+  });
+
+  it("patterns that spell out \\r?\\n or \\r\\n keep working", () => {
+    const optional = { ...cargo, pattern: '(name = "attica-core"\\r?\\nversion = ")[^"]*"' };
+    expect(write(crlf, optional, { marketing: "0.11.2" })).toBe(stamped(crlf));
+    expect(write(lf, optional, { marketing: "0.11.2" })).toBe(
+      write(lf, cargo, { marketing: "0.11.2" }),
+    );
+    const explicit = { ...cargo, pattern: '(name = "attica-core"\\r\\nversion = ")[^"]*"' };
+    expect(write(crlf, explicit, { marketing: "0.11.2" })).toBe(stamped(crlf));
+    // [^\r]* is matched against the file as is, so it stops at the \r.
+    expect(
+      write(
+        "A=1\r\nVERSION=1.0.0\r\n",
+        { pattern: "VERSION=[^\\r]*", replace: "VERSION={version}" },
+        { marketing: "2.0.0" },
+      ),
+    ).toBe("A=1\r\nVERSION=2.0.0\r\n");
+  });
+
+  it("the same config gives the same result on an LF and a CRLF checkout", () => {
+    const patterns = [
+      cargo,
+      {
+        pattern: 'name = "attica-core"\\s+version = "[^"]*"',
+        replace: 'name = "attica-core"\nversion = "{version}"',
+      },
+      {
+        pattern: '(?<=attica-core"\\n)version = "[^"]*"$',
+        flags: "m",
+        replace: 'version = "{version}"',
+      },
+      { pattern: '"0\\.11\\.1"\\n(dependencies)', replace: '"{major}.{minor}.{patch}"\n$1' },
+    ];
+    for (const options of patterns) {
+      const fromLf = write(lf, options, { marketing: "0.11.2" });
+      expect(write(crlf, options, { marketing: "0.11.2" })).toBe(fromLf.replaceAll("\n", "\r\n"));
+    }
+  });
+
+  it("0 matches in a file with \\r says what line endings it has", () => {
+    expectStampError(
+      () => write(crlf, { pattern: "nope", replace: "x" }, { marketing: "1.0.0" }),
+      F,
+      "matched 0 times",
+      "CRLF (\\r\\n) line endings",
+      "line endings aren't the cause",
+    );
+    expectStampError(
+      () => write(crlf, { pattern: "nope\\r\\n", replace: "x" }, { marketing: "1.0.0" }),
+      F,
+      "matched 0 times",
+      "the pattern mentions \\r, so it was matched against the file as is",
+    );
+    expectStampError(
+      () => write("a=1\rb=2\r", { pattern: "a=1\\nb", replace: "x" }, { marketing: "1.0.0" }),
+      F,
+      "matched 0 times",
+      "aren't followed by \\n (old Mac line endings)",
+    );
+    expectStampError(
+      () => write(lf, { ...cargo, pattern: 'attica-core"\\r\\n' }, { marketing: "1.0.0" }),
+      F,
+      "matched 0 times",
+      "The pattern mentions \\r, but the file has none",
+    );
+    // No hint for an LF file and a pattern without \r.
+    let message = "";
+    try {
+      write(lf, { pattern: "nope", replace: "x" }, { marketing: "1.0.0" });
+    } catch (e) {
+      message = (e as Error).message;
+    }
+    expect(message).toMatch(/check the pattern against the file$/);
+  });
+
+  it("several matches in the LF view is still an error", () => {
+    expectStampError(
+      () =>
+        write(crlf, { pattern: 'version = "0\\.11\\.1"\\n', replace: "x" }, { marketing: "1.0.0" }),
+      F,
+      "matched 2 times",
+    );
+  });
+});
+
+describe("mentionsCarriageReturn", () => {
+  it.each([
+    ["\\r?\\n", true],
+    ["\\r\\n", true],
+    ["[^\\r]", true],
+    ["\\x0d", true],
+    ["\\x0D", true],
+    ["\\u000d", true],
+    ["\\u{d}", true],
+    ["\\cM", true],
+    ["a\rb", true],
+    ["\\n", false],
+    ["\\\\r", false],
+    ["\\s+", false],
+    ["r", false],
+  ])("%j → %s", (pattern, expected) => {
+    expect(mentionsCarriageReturn(pattern)).toBe(expected);
+  });
+});
+
+describe("expandReplacement matches String.prototype.replace", () => {
+  const text = "pre-ab12cd-post";
+  const re = "(?<x>a)(b)(1)(2)?(c)(d)(z)?(e)?(f)?(g)?(h)?";
+  const templates = [
+    "$1|$2|$3",
+    "$$|$&|$`|$'",
+    "$0|$00|$01|$05|$10|$11|$12|$13|$99",
+    "$4|$7",
+    "$<x>|$<nope>|$<x|$<",
+    "$|$x|end$",
+    "{version}$",
+  ];
+  it.each(templates)("%j", (template) => {
+    const m = new RegExp(re, "d").exec(text) as RegExpExecArray & { indices: RegExpIndicesArray };
+    const slice = (r: [number, number] | undefined) => r && text.slice(r[0], r[1]);
+    const expanded = expandReplacement(template, {
+      matched: m[0],
+      before: text.slice(0, m.index),
+      after: text.slice(m.index + m[0].length),
+      captures: m.indices.slice(1).map(slice),
+      named: { x: slice(m.indices.groups?.x) },
+    });
+    expect(text.slice(0, m.index) + expanded + text.slice(m.index + m[0].length)).toBe(
+      text.replace(new RegExp(re), template),
+    );
+  });
+
+  it("$<name> is literal without named groups", () => {
+    const s = { matched: "a", before: "", after: "b", captures: ["a"], named: undefined };
+    expect("ab".replace(/(a)/, "$<a>$1")).toBe("$<a>ab");
+    expect(expandReplacement("$<a>$1", s)).toBe("$<a>a");
   });
 });
