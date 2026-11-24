@@ -3,7 +3,7 @@ title: Writing changesets
 description: What a changeset looks like, how to pick the bump and how to write the summary.
 ---
 
-Every pull request needs a changeset. It is a markdown file in the `.launchset/` folder.
+Every pull request needs a changeset for each change it makes. A changeset is a markdown file in the `.launchset/` folder.
 
 ## Create one
 
@@ -47,6 +47,7 @@ With several changesets pending, the release gets the highest bump. If only `non
 The text under the frontmatter becomes the changelog entry. Write it for the people who use the product.
 
 - Say what changed for the user, not how you did it.
+- One change per summary. Each changeset becomes one bullet, so a summary that lists several changes with "and" or semicolons should be several changesets.
 - One line is best. Keep tense consistent with the other entries.
 - Don't add a PR number or your name. launchset adds the PR link and author (`changelog.links` is on by default and needs a token).
 - Markdown works. With several lines, the first line is the bullet and the rest is indented under it.
@@ -67,7 +68,23 @@ The summary can only be empty when the bump is `none`.
 
 ## One changeset per change
 
-Write one changeset per change, not per commit. If your PR does one thing in five commits, it needs one changeset. If you extend work that already has a pending changeset, edit that file.
+Write one changeset per change: not per commit, and not per PR. A change is one thing a user notices on its own: a feature, a fix, a behaviour change.
+
+- If your PR does one thing in five commits, it needs one changeset.
+- If your PR does several things, it needs a changeset for each, each with its own bump. A PR that adds a feature and fixes two bugs adds three changesets: one `minor`, two `patch`. The changelog then lists three bullets, under the right headings.
+- If you extend work that already has a pending changeset, edit that file.
+
+Less good, one changeset for three changes:
+
+```md
+---
+bump: minor
+---
+
+Add offline mode; the search field keeps its text after going back, and the login screen no longer crashes offline.
+```
+
+Better: three changesets, `Add offline mode to the mobile app.` (`minor`), `Keep the text in the search field after going back.` (`patch`) and `Fix the crash when opening the login screen without a network connection.` (`patch`).
 
 ## What the file may contain
 

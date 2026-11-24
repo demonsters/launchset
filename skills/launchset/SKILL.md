@@ -1,6 +1,6 @@
 ---
 name: launchset
-description: Load this whenever you change code in a repo that contains launchset.config.* or a .launchset/ folder, before you open a pull request or push to the base branch there, and when asked to bump a version, edit CHANGELOG.md, or create a tag or release. launchset releases the repo from changeset files, so every PR needs one. This skill says how to write the changeset, which bump to pick, and what never to edit by hand (version numbers, build numbers, CHANGELOG.md, release tags, the release PR).
+description: Load this whenever you change code in a repo that contains launchset.config.* or a .launchset/ folder, before you open a pull request or push to the base branch there, and when asked to bump a version, edit CHANGELOG.md, or create a tag or release. launchset releases the repo from changeset files, so every PR needs one changeset for each change it makes. This skill says how to write changesets, when to split them, which bump to pick, and what never to edit by hand (version numbers, build numbers, CHANGELOG.md, release tags, the release PR).
 ---
 
 # launchset: releases in this repo
@@ -13,7 +13,7 @@ On GitLab the same applies with "MR" for "PR": the release MR is `Release vX.Y.Z
 
 ## Every PR needs a changeset
 
-Before you open a PR, make sure it adds one. Create it with:
+Before you open a PR, make sure it adds at least one: **one changeset for each change** in the PR (see [One changeset per change](#one-changeset-per-change)). Create each with:
 
 ```sh
 npx @demonsters/launchset add --bump <major|minor|patch|none> --message "<summary>"
@@ -25,7 +25,7 @@ For a change that needs no release (docs, CI, tests only) use `--empty`, which i
 npx @demonsters/launchset add --empty
 ```
 
-The command prints the path of the new file, for example `.launchset/brave-lions-sing.md`. Commit it with your change.
+The command prints the path of the new file, for example `.launchset/brave-lions-sing.md`. Commit it with your change. For a PR with three changes, run it three times.
 
 If `npx` can't run it (the package is private, so npm authentication may be missing, and it needs Node 26 or newer), write the file by hand. Name it with three lowercase words and `.md`, in `.launchset/`:
 
@@ -58,17 +58,60 @@ When unsure between two, ask the human. The release gets the highest bump of all
 
 ## Write a good summary
 
-The summary becomes the changelog entry.
+The summary becomes one changelog entry: one bullet.
 
+- One change per summary. If the summary joins separate changes with "and", semicolons or a list, write separate changesets.
 - User-facing: say what changed for the people who use the product, not how you did it.
-- One line. Use the same tense as the other entries in `CHANGELOG.md` (look at it first).
+- One short sentence. Use the same tense as the other entries in `CHANGELOG.md` (look at it first).
 - No PR number and no author: launchset adds them.
 - Fix: `Fix the crash when opening the login screen without a network connection.`
 - Don't: `fix bug in LoginScreen.tsx (#123)`.
 
 ## One changeset per change
 
-Write one changeset per change, not per commit. If your work extends something that already has a pending changeset in `.launchset/`, edit that file instead of adding another. Look in `.launchset/` before you add.
+A change is one thing a user would notice on its own: a feature, a fix, a behaviour change. Write one changeset per change: not per commit, and not per PR.
+
+- Several commits for one change: one changeset.
+- One PR with several changes: one changeset **for each**. Give each its own bump. A PR that adds a feature and fixes two bugs gets three changesets: one `minor`, two `patch`.
+- Work that extends something with a pending changeset in `.launchset/`: edit that file instead of adding another. Look in `.launchset/` before you add.
+
+Before you open the PR, read your summaries. If one names more than one thing, split it.
+
+Don't, one changeset for a whole PR:
+
+```md
+---
+bump: minor
+---
+
+Add offline mode to the mobile app; the search field keeps its text after going back, and the login screen no longer crashes without a network connection.
+```
+
+Do, three changesets:
+
+```md
+---
+bump: minor
+---
+
+Add offline mode to the mobile app.
+```
+
+```md
+---
+bump: patch
+---
+
+Keep the text in the search field after going back.
+```
+
+```md
+---
+bump: patch
+---
+
+Fix the crash when opening the login screen without a network connection.
+```
 
 ## Repos that also use Changesets
 
