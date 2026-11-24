@@ -135,7 +135,7 @@ describe("check in a merge request pipeline", () => {
     expect(result.ok).toBe(true);
     expect(result.data.result.reason).toBe("bot");
     expect(gitlab.callsTo("GET", "/merge_requests/1")[0]).toBeDefined();
-    expect(gitlab.notes[0]?.body).toContain("### launchset: bot MR");
+    expect(gitlab.notes[0]?.body).toContain("### 🚀 launchset: bot MR");
   });
 
   it("warns for a fork MR whose pipeline can't write notes", async () => {
