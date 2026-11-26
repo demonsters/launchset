@@ -1,6 +1,6 @@
 # Contributing to launchset
 
-Thanks for helping. launchset is maintained by a small team at [demonsters](https://github.com/demonsters). Bug reports, fixes, docs and real-world test cases are all welcome.
+Thanks for helping. launchset is built and used by a small team at [demonsters](https://github.com/demonsters), and shared as is: we maintain it as we use it, with no support commitment or promised response time. Bug reports, fixes, docs and real-world test cases are welcome.
 
 For anything bigger than a fix, open an issue or a [discussion](https://github.com/demonsters/launchset/discussions) first, so we can agree on the approach before you spend time on it. Security problems go through [SECURITY.md](SECURITY.md), not a public issue.
 
