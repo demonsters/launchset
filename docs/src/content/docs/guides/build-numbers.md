@@ -62,6 +62,16 @@ The trade-off: **two builds in the same minute get the same number.** That is fi
 - Build numbers are positive integers.
 - Android's `versionCode` can't exceed 2,100,000,000. launchset fails when it would.
 
+### Where Android's limit comes from
+
+`versionCode` is a 32-bit signed integer, so technically it goes up to 2,147,483,647. Android 9 (API 28) added a 64-bit `longVersionCode`, with `versionCodeMajor` in the upper 32 bits, but few apps use it, and it doesn't change what Google Play accepts.
+
+Google Play's own maximum is 2,100,000,000, a bit below the integer maximum (see [Version your app](https://developer.android.com/studio/publish/versioning) in the Android docs, which gives the number but no reason). Play rejects anything higher, so that is the limit launchset enforces.
+
+iOS has no comparable ceiling: `CFBundleVersion` is up to three period-separated integers, not a single number. Android's limit is the one that matters.
+
+With the default `timestamp` strategy (seconds since 2020-01-01, no offset), numbers reach 2,100,000,000 on 18 July 2086. With `unit: "minute"` that happens in October 6012. An `offset` brings the date closer and a later `epoch` pushes it out. Once you have uploads, you can't push the date out that way: a later `epoch` or a lower `offset` makes the numbers go down, and stores reject that.
+
 ## Migrating an app that already has build numbers
 
 An existing app has build numbers in its stores, and they may be **higher** than what a strategy produces now. A store rejects a lower number. The `offset` fixes that.
