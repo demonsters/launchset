@@ -82,8 +82,7 @@ See also [CLI reference](/reference/cli/).
 | `LAUNCHSET_TOKEN` | The access token. The first choice. See [Token and permissions](/gitlab/token/). |
 | `GITLAB_TOKEN` | The token when `LAUNCHSET_TOKEN` is not set. |
 | `CI_JOB_TOKEN` | Reads only (merge requests, notes, releases). Never used for pushes. |
-| `NPM_TOKEN` | Reads the private package when a job installs the CLI. |
-| `LAUNCHSET_CLI` | What jobs install with npm. Default `@demonsters/launchset@<version that wrote the files>`. |
+| `LAUNCHSET_CLI` | What jobs install with npm. Default `launchset@<version that wrote the files>`. |
 | `LAUNCHSET_HOST` | `github` or `gitlab`. Overrides detection. |
 | `LAUNCHSET_TARGET`, `LAUNCHSET_RELEASE_VERSION`, `LAUNCHSET_FORCE` | The inputs of a manual run (above). |
 | `LAUNCHSET_PREVIEW`, `LAUNCHSET_PREVIEW_MANUAL` | Preview runs (above). |

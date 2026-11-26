@@ -14,7 +14,7 @@ You need:
 - **GitLab 18.2 or newer.** The generated pipeline uses `trigger:strategy: mirror`, which arrived in 18.2.
 - **Merge request pipelines.** The PR check runs as an MR pipeline job. `launchset init` writes the `workflow: rules` that turn them on (see [the workflow rules](#the-workflow-rules)).
 - **Runners** that can run the `node:24` image. Every job that runs launchset needs Node 24 or newer, npm and git. Docker targets use Docker-in-Docker, so that runner must allow it. A target can also build on a Windows runner with PowerShell (see [PowerShell runners](#powershell-runners)).
-- **Read access to the private `@demonsters/launchset` package on npm.** Jobs install it with npm. You give them an `NPM_TOKEN` variable, see [Token and permissions](/gitlab/token/#npm_token).
+- **Access to npm** from the runners. Jobs install the CLI with npm, see [Installing the CLI](/gitlab/token/#installing-the-cli).
 - **A project or group access token** called `LAUNCHSET_TOKEN`. That is the counterpart of the GitHub App. See [Token and permissions](/gitlab/token/).
 
 Node 24 or newer is also needed on your machine, to run `init`.
@@ -24,13 +24,13 @@ Node 24 or newer is also needed on your machine, to run `init`.
 In the root of your repo:
 
 ```sh
-npx @demonsters/launchset init
+npx launchset init
 ```
 
 `init` picks the host by looking at the repo. It uses, in this order: `LAUNCHSET_HOST`, `GITLAB_CI=true`, the host of the `origin` remote (a name that contains `gitlab` means GitLab, `github.com` means GitHub), then a `.gitlab-ci.yml` without `.github/workflows`. When these disagree it asks. The `host` decision is only listed when something points at GitLab. To answer it yourself:
 
 ```sh
-npx @demonsters/launchset init --decide host=gitlab
+npx launchset init --decide host=gitlab
 ```
 
 Everything else is the same as on GitHub: versions, targets, conflicting release machinery, the config. On GitLab it also looks for release machinery in `.gitlab-ci.yml` and the local files it includes: jobs that run on tags, `glab release create`, the `release:` keyword, `npm publish`, Docker pushes of `latest` from branch pushes. Remote, project, template and component includes are not scanned.
@@ -261,9 +261,9 @@ git commit -m "Add launchset"
 git push -u origin add-launchset
 ```
 
-Create the MR. The check job reports that the MR has no changeset. Add one with `npx @demonsters/launchset add --bump patch --message "Set up releases with launchset"`, push, and the check turns green. At the end of its output, `init` printed the manual steps still open. Do these before you merge:
+Create the MR. The check job reports that the MR has no changeset. Add one with `npx launchset add --bump patch --message "Set up releases with launchset"`, push, and the check turns green. At the end of its output, `init` printed the manual steps still open. Do these before you merge:
 
-1. Create `LAUNCHSET_TOKEN` and `NPM_TOKEN`: [Token and permissions](/gitlab/token/).
+1. Create `LAUNCHSET_TOKEN`: [Token and permissions](/gitlab/token/).
 2. Let the token's bot push to the protected branches and create tags (usually already true).
 3. Allow pipeline variables if you want to run manual targets or previews by hand.
 4. Add your build steps to `.gitlab/launchset-targets.yml`, or check the ones `init` copied from your tag jobs.

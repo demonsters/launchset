@@ -16,18 +16,18 @@ On GitLab the same applies with "MR" for "PR": the release MR is `Release vX.Y.Z
 Before you open a PR, make sure it adds at least one, and that no summary crams several changes into one bullet (see [One changeset per change](#one-changeset-per-change)). Create each with:
 
 ```sh
-npx @demonsters/launchset add --bump <major|minor|patch|none> --message "<summary>"
+npx launchset add --bump <major|minor|patch|none> --message "<summary>"
 ```
 
 For a change that needs no release (docs, CI, tests only) use `--empty`, which is `bump: none`:
 
 ```sh
-npx @demonsters/launchset add --empty
+npx launchset add --empty
 ```
 
 The command prints the path of the new file, for example `.launchset/brave-lions-sing.md`. Commit it with your change. For a PR with three changes, run it three times.
 
-If `npx` can't run it (the package is private, so npm authentication may be missing, and it needs Node 24 or newer), write the file by hand. Name it with three lowercase words and `.md`, in `.launchset/`:
+If `npx` can't run it (it needs Node 24 or newer, and network access to npm), write the file by hand. Name it with three lowercase words and `.md`, in `.launchset/`:
 
 ```md
 ---
@@ -143,7 +143,7 @@ Never edit, push to or merge the Changesets release PR (`Version Packages`, bran
 
 ## Pushing straight to the base branch
 
-If the workflow here is to push to the base branch without a PR, make sure a changeset covers your work **before** you push. There is no PR check to remind you. `npx @demonsters/launchset status` shows what is pending, and a warning when commits exist that no changeset covers. If the repo has a pre-push hook, `launchset check --push` prints the same warning and never blocks.
+If the workflow here is to push to the base branch without a PR, make sure a changeset covers your work **before** you push. There is no PR check to remind you. `npx launchset status` shows what is pending, and a warning when commits exist that no changeset covers. If the repo has a pre-push hook, `launchset check --push` prints the same warning and never blocks.
 
 ## Never do these
 
@@ -175,8 +175,8 @@ To get a test build of a PR (TestFlight, Play internal track, preview Docker tag
 ## Check the state
 
 ```sh
-npx @demonsters/launchset status          # pending changesets, bump, next version, warnings
-npx @demonsters/launchset status --json   # the same as JSON
+npx launchset status          # pending changesets, bump, next version, warnings
+npx launchset status --json   # the same as JSON
 ```
 
 ## Manual targets
@@ -194,8 +194,8 @@ If the repo has a `.gitlab-ci.yml` and no `.github/workflows/launchset-*.yml`, i
 - **Never hand-edit** the release MR, tags that start with `v` or `launchset/`, version numbers or `CHANGELOG.md`, as on GitHub.
 - **Tokens.** The CI/CD variable `LAUNCHSET_TOKEN` (a project or group access token) is created by a human. Never ask for, read or print its value.
 - **Manual targets.** Ship one with Run pipeline on the base branch and the variable `LAUNCHSET_TARGET` (optionally `LAUNCHSET_RELEASE_VERSION`), not with the GitHub workflow input. Never ship one unasked.
-- **Preview sweep.** Optional: a pipeline schedule with the variable `LAUNCHSET_PREVIEW_SWEEP=true` runs `launchset-preview-sweep`, which starts an MR pipeline for MRs that just got the preview label. A human creates the schedule (Build > Pipeline schedules). `npx @demonsters/launchset preview-sweep --dry-run` shows what it would do. When you add a job without `rules` to `.gitlab-ci.yml` in such a project, start its rules with `- if: $LAUNCHSET_PREVIEW_SWEEP == "true"` / `when: never` (then `- if: $CI_PIPELINE_SOURCE != "merge_request_event"`), or it runs on every schedule run.
-- **Debugging.** The plan job logs the child pipeline (collapsed section) and keeps `launchset-child.yml` as an artifact. `npx @demonsters/launchset plan --gitlab -` prints the child pipeline for the plan locally.
+- **Preview sweep.** Optional: a pipeline schedule with the variable `LAUNCHSET_PREVIEW_SWEEP=true` runs `launchset-preview-sweep`, which starts an MR pipeline for MRs that just got the preview label. A human creates the schedule (Build > Pipeline schedules). `npx launchset preview-sweep --dry-run` shows what it would do. When you add a job without `rules` to `.gitlab-ci.yml` in such a project, start its rules with `- if: $LAUNCHSET_PREVIEW_SWEEP == "true"` / `when: never` (then `- if: $CI_PIPELINE_SOURCE != "merge_request_event"`), or it runs on every schedule run.
+- **Debugging.** The plan job logs the child pipeline (collapsed section) and keeps `launchset-child.yml` as an artifact. `npx launchset plan --gitlab -` prints the child pipeline for the plan locally.
 
 ## If something looks wrong
 

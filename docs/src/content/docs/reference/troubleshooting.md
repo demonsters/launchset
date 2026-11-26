@@ -31,7 +31,7 @@ See [GitHub App setup](/github-app/). Close the old release PR (or let launchset
 
 ## `mark` or the release PR fails in a git hook (`pre-push`, `reference-transaction`, ...)
 
-**Cause.** launchset 1.0.2 or older ran the repo's git hooks on its own pushes, checkouts and commits. A job that installs dependencies before launchset runs (most build jobs) also installs husky, simple-git-hooks or lefthook hooks, and a pre-push hook then ran your tests, lint or `npx @demonsters/launchset check --push` (which can't reach the private package in CI) during `mark`.
+**Cause.** launchset 1.0.2 or older ran the repo's git hooks on its own pushes, checkouts and commits. A job that installs dependencies before launchset runs (most build jobs) also installs husky, simple-git-hooks or lefthook hooks, and a pre-push hook then ran your tests, lint or `npx @demonsters/launchset check --push` (which couldn't reach the then-private package in CI) during `mark`.
 
 **Fix.** Update launchset: from 1.0.3 on, it runs git without the repo's hooks. On an older version, set `HUSKY=0` (husky) or `SKIP_SIMPLE_GIT_HOOKS=1` (simple-git-hooks) for the job, or install dependencies after `mark`.
 

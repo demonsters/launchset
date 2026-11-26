@@ -50,9 +50,9 @@ For example an Xcode archive on a Mac:
 ```sh
 git fetch --tags
 git checkout v1.4.0
-npx @demonsters/launchset ship --target ios
+npx launchset ship --target ios
 # ... archive and upload in Xcode ...
-npx @demonsters/launchset mark --target ios --version 1.4.0 --build-number 217175105
+npx launchset mark --target ios --version 1.4.0 --build-number 217175105
 ```
 
 `ship` checks that HEAD is at the release tag of the version (it tells you the `git checkout` to run otherwise), computes a build number with the target's strategy and stamps the files. `--json` prints the version, the build number and the `LAUNCHSET_*` values as `env`. `ship` needs **no token**: it reads tags (fetching them when there is a remote), computes the number and edits files. `mark --version` creates the marker tag and updates the GitHub Release, so it needs a token that can push (`--token`, `LAUNCHSET_TOKEN` or `GITHUB_TOKEN`) and the repository, from `--repo owner/repo`, `GITHUB_REPOSITORY` or the `origin` remote.
@@ -62,9 +62,9 @@ The `run-number` strategy only works in CI. `timestamp` and `semver` work by han
 With `semver`, the attempt part of the build number is 1 by hand, so uploading the same version twice gives the same number, and the store rejects the second upload. Pass `--attempt` (1 to 99) for the next one:
 
 ```sh
-npx @demonsters/launchset ship --target ios --attempt 2
+npx launchset ship --target ios --attempt 2
 # ... archive and upload ...
-npx @demonsters/launchset mark --target ios --version 1.4.0 --build-number 10400002
+npx launchset mark --target ios --version 1.4.0 --build-number 10400002
 ```
 
 `--attempt` is only for targets with the `semver` strategy: for any other strategy `ship` stops with an error (a `timestamp` build number is new every time anyway).

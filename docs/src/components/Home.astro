@@ -417,10 +417,10 @@ const docs = [
         title="What the agent runs"
         code={[
           "# 1. Look, and write nothing",
-          "npx @demonsters/launchset init --detect --json",
+          "npx launchset init --detect --json",
           "",
           "# 2. After asking you what it couldn't decide",
-          "npx @demonsters/launchset init --yes \\",
+          "npx launchset init --yes \\",
           "  --decide version=1.4.2 --decide target.ios=manual",
         ].join("\n")}
       />
@@ -434,11 +434,10 @@ const docs = [
       config and three workflows. Run it with <code>--detect</code> first to see what it would do
       without writing anything.
     </p>
-    <Code code="npx @demonsters/launchset init --detect" lang="sh" />
+    <Code code="npx launchset init --detect" lang="sh" />
     <p class="ls-note">
-      For now the CLI is <code>@demonsters/launchset</code> on npm, private to the demonsters org.
-      CI uses the public action <code>demonsters/launchset-action@v1</code>, which needs no npm
-      access.
+      The CLI is <code>launchset</code> on npm. CI uses the action
+      <code>demonsters/launchset-action@v1</code>, which needs no npm access.
     </p>
     <p>
       <a class="ls-start__link" href={to("getting-started/")}>Read Getting started</a>
@@ -470,17 +469,17 @@ const docs = [
 
   <footer class="ls-footer">
     <div class="ls-footer__oss" id="open-source">
-      <h2 class="ls-footer__title">Going open source</h2>
+      <h2 class="ls-footer__title">Open source</h2>
       <p>
-        launchset is built and used at demonsters. The source isn't public yet, but it will be, most
-        likely under the MIT license. The GitHub Action is public today, so any org can already use
-        it with its own GitHub App.
+        launchset is built and used at demonsters, and open source under the MIT license. Issues and
+        pull requests are welcome on <a href="https://github.com/demonsters/launchset">GitHub</a>.
       </p>
     </div>
     <div class="ls-footer__links">
       <a href={to("getting-started/")}>Docs</a>
       <a href={to("reference/cli/")}>CLI</a>
       <a href={to("reference/configuration/")}>Configuration</a>
+      <a href="https://github.com/demonsters/launchset">Source on GitHub</a>
       <a href="https://github.com/demonsters/launchset-action">GitHub Action</a>
       <a href="https://github.com/demonsters">demonsters on GitHub</a>
     </div>
@@ -966,6 +965,10 @@ const docs = [
     max-width: 60ch;
     font-size: 0.9375rem;
     color: var(--sl-color-gray-3);
+  }
+  .ls-footer__oss a {
+    color: var(--sl-color-white);
+    text-underline-offset: 0.15em;
   }
   .ls-footer__links {
     display: flex;

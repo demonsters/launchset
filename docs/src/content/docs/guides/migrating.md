@@ -7,7 +7,7 @@ Most repos already have releases: tag-triggered workflows, a Changesets pipeline
 
 There are two ways. Pick one:
 
-- **By yourself**, interactively: run `npx @demonsters/launchset init` and answer the questions.
+- **By yourself**, interactively: run `npx launchset init` and answer the questions.
 - **With an agent** (Claude Code or similar): the agent runs `init --detect --json`, asks you only the questions that matter, then runs `init --yes --decide ...`. The [adoption skill](#the-adoption-skill) tells it how.
 
 ## What init finds
@@ -25,7 +25,7 @@ There are two ways. Pick one:
 Look at the result first:
 
 ```sh
-npx @demonsters/launchset init --detect
+npx launchset init --detect
 ```
 
 ```text
@@ -119,9 +119,9 @@ The decision fields: `id`, `question`, `options` (each `value` and `label`), `fr
 
 The loop:
 
-1. **Detect.** `npx @demonsters/launchset init --detect --json > init.json`. Read it. Write nothing yet.
+1. **Detect.** `npx launchset init --detect --json > init.json`. Read it. Write nothing yet.
 2. **Ask.** Show the human the decisions. Ask the ones with `"ask": true`, and always the three below. Quote the `evidence`.
-3. **Run.** `npx @demonsters/launchset init --yes --decide version=1.4.0 --decide target.android=manual --decide "machinery..github/workflows/release.yml#1=disable"`
+3. **Run.** `npx launchset init --yes --decide version=1.4.0 --decide target.android=manual --decide "machinery..github/workflows/release.yml#1=disable"`
 4. **Review.** `git status`, `git diff`. Read what init changed. Move the team's own build steps into the generated workflows. Open one PR.
 
 Always ask the human about:
@@ -229,7 +229,7 @@ Does the repo also publish npm packages that each have their own version, next t
 
 Changesets pre mode (`pre.json`, `pre enter`) keeps prerelease versions in the repo. launchset has no pre mode. Use a **prerelease branch**: see [Preview builds and prerelease branches](/guides/previews/).
 
-1. On the branch that is in pre mode, convert its changesets: `npx @demonsters/launchset init --convert-only`. `pre.json` is ignored, with a warning.
+1. On the branch that is in pre mode, convert its changesets: `npx launchset init --convert-only`. `pre.json` is ignored, with a warning.
 2. Add the branch to the config:
 
 ```ts
@@ -242,9 +242,9 @@ Every push to the branch gets a `1.5.0-beta.N` version, a tag and a GitHub pre-r
 
 ## After init
 
-- `npx @demonsters/launchset status`: the version, the pending changesets, consistency.
-- `npx @demonsters/launchset version --dry-run`: the diff of the first release PR.
-- `npx @demonsters/launchset plan`: the plan as JSON.
+- `npx launchset status`: the version, the pending changesets, consistency.
+- `npx launchset version --dry-run`: the diff of the first release PR.
+- `npx launchset plan`: the plan as JSON.
 - Create the [GitHub App](/github-app/) and the secrets.
 - Set up the [store pipelines](/store-pipelines/) for native targets and test them with a preview build.
 - Open one PR with everything. In the description list the decisions, what was removed or changed, and the manual steps that remain.
@@ -253,12 +253,12 @@ Every push to the branch gets a `1.5.0-beta.N` version, a tag and a GitHub pre-r
 
 `skills/launchset-adopt/SKILL.md` teaches an AI agent this whole procedure: run `init --detect --json`, ask the right questions, find the conflicting machinery, move build steps, run `init --yes --decide ...` and open one PR. It is meant to be installed **before** the repo has launchset, so `init` doesn't install it. Put it in your user-level skills folder.
 
-The skill ships inside the npm package, next to the `launchset` skill. Copy it from the package (you need read access to the private `@demonsters` scope):
+The skill ships inside the npm package, next to the `launchset` skill. Copy it from the package:
 
 ```sh
 cd "$(mktemp -d)"
-npm pack @demonsters/launchset
-tar -xzf demonsters-launchset-*.tgz package/skills/launchset-adopt
+npm pack launchset
+tar -xzf launchset-*.tgz package/skills/launchset-adopt
 mkdir -p ~/.claude/skills
 cp -r package/skills/launchset-adopt ~/.claude/skills/
 ```
@@ -267,15 +267,15 @@ If the package is installed in a project, copy it from there instead:
 
 ```sh
 mkdir -p ~/.claude/skills
-cp -r node_modules/@demonsters/launchset/skills/launchset-adopt ~/.claude/skills/
+cp -r node_modules/launchset/skills/launchset-adopt ~/.claude/skills/
 ```
 
-With the launchset repo checked out, `cp -r skills/launchset-adopt ~/.claude/skills/` does the same. Without a checkout, the GitHub CLI works too (the repo is private):
+With the launchset repo checked out, `cp -r skills/launchset-adopt ~/.claude/skills/` does the same. Or download it straight from GitHub:
 
 ```sh
 mkdir -p ~/.claude/skills/launchset-adopt
-gh api repos/demonsters/launchset/contents/skills/launchset-adopt/SKILL.md \
-  -H "Accept: application/vnd.github.raw" > ~/.claude/skills/launchset-adopt/SKILL.md
+curl -fsSL https://raw.githubusercontent.com/demonsters/launchset/main/skills/launchset-adopt/SKILL.md \
+  -o ~/.claude/skills/launchset-adopt/SKILL.md
 ```
 
 Restart Claude Code and ask it: "Move this repo to launchset." The skill loads when you ask to set up or migrate a repo to launchset.

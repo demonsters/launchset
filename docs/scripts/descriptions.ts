@@ -6,7 +6,7 @@
  */
 export const CONFIG_DESCRIPTIONS: Record<string, string> = {
   "#Top-level options":
-    "Everything is optional except `targets`. `$schema` is only for editors: point it at `node_modules/@demonsters/launchset/dist/launchset.schema.json` in a `launchset.config.json` to get completion.",
+    "Everything is optional except `targets`. `$schema` is only for editors: point it at `node_modules/launchset/dist/launchset.schema.json` in a `launchset.config.json` to get completion.",
   $schema:
     "Path or URL of the JSON Schema, for editor completion in `launchset.config.json`. Ignored by launchset.",
   version: "Where the repo's one version lives.",

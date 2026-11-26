@@ -60,7 +60,7 @@ The version file must be a package that Changesets doesn't version: the workspac
 `init` lists Changesets steps and scripts as machinery that conflicts, and proposes `disable` for each. In this setup, answer `keep` for everything that versions, checks or publishes the npm packages: the `changesets/action` step, `changeset version|status|publish` scripts, pre-mode checks.
 
 ```sh
-npx @demonsters/launchset init \
+npx launchset init \
   --decide 'machinery..github/workflows/publish.yml#1=keep' \
   --decide 'machinery.package.json#1=keep'
 ```
