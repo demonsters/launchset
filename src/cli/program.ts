@@ -417,6 +417,7 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
     target?: string;
     version?: string;
     force?: boolean;
+    attempt?: number;
     branch?: string;
     fetch?: boolean;
     runNumber?: number;
@@ -438,6 +439,12 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
       cmd.option(
         "--force",
         "with --target: allow a version lower than the target's highest marker",
+      );
+      cmd.addOption(
+        new Option(
+          "--attempt <n>",
+          "with --target: the attempt part (1 to 99) of a semver build number, for another upload of the same version",
+        ).argParser(positiveInt),
       );
       cmd.option("--branch <name>", "plan for this branch (default: the current branch)");
       cmd.addOption(
@@ -500,6 +507,7 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
         ...(opts.target ? { target: opts.target } : {}),
         ...(opts.version ? { version: opts.version } : {}),
         ...(opts.force ? { force: true } : {}),
+        ...(opts.attempt !== undefined ? { attempt: opts.attempt } : {}),
         ...(opts.branch ? { branch: opts.branch } : {}),
       });
       const child = await planChild(context, opts.gitlab, {
@@ -522,6 +530,7 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
     target?: string;
     version?: string;
     force?: boolean;
+    attempt?: number;
     branch?: string;
     fetch?: boolean;
   }>(
@@ -534,6 +543,12 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
       cmd.option(
         "--force",
         "with --target: allow a version lower than the target's highest marker",
+      );
+      cmd.addOption(
+        new Option(
+          "--attempt <n>",
+          "with --target: the attempt part (1 to 99) of a semver build number, for another upload of the same version",
+        ).argParser(positiveInt),
       );
       cmd.option("--branch <name>", "release for this branch (default: the current branch)");
       cmd.option("--no-fetch", "don't fetch tags first");
@@ -550,6 +565,7 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
         ...(opts.target ? { target: opts.target } : {}),
         ...(opts.version ? { version: opts.version } : {}),
         ...(opts.force ? { force: true } : {}),
+        ...(opts.attempt !== undefined ? { attempt: opts.attempt } : {}),
         ...(opts.branch ? { branch: opts.branch } : {}),
       });
       const code = await emitCi(io, cliLogger(io), "release", result, context, opts);
@@ -756,7 +772,13 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
   );
 
   // ship ---------------------------------------------------------------------------------
-  command<{ target: string; version?: string; force?: boolean; fetch?: boolean }>(
+  command<{
+    target: string;
+    version?: string;
+    force?: boolean;
+    attempt?: number;
+    fetch?: boolean;
+  }>(
     "ship",
     "Prepare a manual target for a hand-made build of a released version, then stamp it.",
     (cmd) => {
@@ -764,8 +786,18 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
       cmd.requiredOption("--target <name>", "a manual target from the config");
       cmd.option("--version <version>", "the released version (default: the latest release)");
       cmd.option("--force", "allow a version lower than the target's highest marker");
+      cmd.addOption(
+        new Option(
+          "--attempt <n>",
+          "semver targets only: the attempt part of the build number (1 to 99, default 1), for another upload of the same version",
+        ).argParser(positiveInt),
+      );
       cmd.option("--no-fetch", "don't fetch tags first");
-      examples(cmd, "launchset ship --target ios --json");
+      examples(
+        cmd,
+        "launchset ship --target ios --json",
+        "launchset ship --target ios --attempt 2",
+      );
       return ciHelp(
         cmd,
         "LAUNCHSET_VERSION, LAUNCHSET_BUILD_NUMBER, LAUNCHSET_CHANNEL, LAUNCHSET_MARKETING_VERSION, ...",
@@ -778,6 +810,7 @@ export function createProgram(io: CliIo = processIo(), state: RunState = { exitC
         fetch: opts.fetch !== false,
         ...(opts.version ? { version: opts.version } : {}),
         ...(opts.force ? { force: true } : {}),
+        ...(opts.attempt !== undefined ? { attempt: opts.attempt } : {}),
       });
       return emitCi(io, cliLogger(io), "ship", result, context, opts);
     },

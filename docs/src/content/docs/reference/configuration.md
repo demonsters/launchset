@@ -96,7 +96,7 @@ These rules apply on top of the types:
 - **At least one target**, and at least one with `release: "auto"`. Otherwise no release could ever complete.
 - Target names are lowercase letters, digits and dashes, starting with a letter or digit.
 - **Unknown keys are errors.** That catches typos.
-- `buildNumber.strategy: "semver"` can't be combined with enabled previews. Set `preview: false`.
+- While previews are enabled, `semver` can't be the repo-wide `buildNumber.strategy` (previews number their plan with it), and a target can only use it when previews never build that target: it isn't in `preview.targets` (`"all"` is every target) or in the `targets` of any `preview.branches` entry (an entry without `targets` uses `preview.targets`). Take the target out of those lists, or set `preview: false`.
 - `maintenanceBranches` has exactly one `*` and must not match `baseBranch`.
 - `tags.partial` must differ from `tags.release`.
 - Docker: `image` has no tag or digest. Unknown `{placeholders}` are errors. The `release` list needs a template with `{version}`. `preview` and `prerelease` lists can't contain `latest` or a template that renders a plain `X.Y.Z`.
@@ -133,7 +133,7 @@ Everything is optional except `targets`. `$schema` is only for editors: point it
 | `tags.marker` | `string` | `"launchset/{target}@{version}"` | The marker tag that records one target shipped for one version. Must contain `{target}` and `{version}`. |
 | `tags.partial` | `string` | `"launchset/partial/{version}"` | The tag for a release that was superseded before it was complete. Must contain `{version}` and differ from `tags.release`. Keep it outside the namespace your tag-triggered workflows listen to. |
 | `buildNumber` | `object` |  | How build numbers are computed. A target can override any of these keys. |
-| `buildNumber.strategy` | `"timestamp" \| "run-number" \| "semver" \| "eas"` | `"timestamp"` | `timestamp`: seconds since `epoch`, plus `offset`. `run-number`: `github.run_number` plus `offset`. `semver`: derived from the version (not allowed while previews are enabled). `eas`: no build number at all, for Expo builds on EAS. |
+| `buildNumber.strategy` | `"timestamp" \| "run-number" \| "semver" \| "eas"` | `"timestamp"` | `timestamp`: seconds since `epoch`, plus `offset`. `run-number`: `github.run_number` plus `offset`. `semver`: derived from the version; not allowed here while previews are enabled, and only on targets that previews don't build. `eas`: no build number at all, for Expo builds on EAS. |
 | `buildNumber.epoch` | `string` | `"2020-01-01T00:00:00Z"` | Start of the `timestamp` strategy, as an ISO 8601 date-time. |
 | `buildNumber.offset` | `integer` | `0` | Added to every build number. Use it when existing builds in a store have higher numbers than the strategy would produce. |
 | `check` | `object` |  | The PR check. |
@@ -144,7 +144,7 @@ Everything is optional except `targets`. `$schema` is only for editors: point it
 
 ### Previews
 
-Set `preview: false` to switch off previews and prerelease branches. That is the only way to use the `semver` build-number strategy.
+Set `preview: false` to switch off previews and prerelease branches. While previews are on, the `semver` build-number strategy is only allowed on targets that previews never build (see Build numbers).
 
 | Option | Type | Default | What it does |
 | --- | --- | --- | --- |

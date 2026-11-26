@@ -27,6 +27,11 @@ export interface ShipOptions {
   version?: string;
   /** Allow shipping a version lower than the target's highest marker. */
   force?: boolean;
+  /**
+   * The attempt part of a `semver` build number (1 to 99), for another upload of the same
+   * version; default the run's attempt (1 outside CI). Only for `semver` targets.
+   */
+  attempt?: number;
   /** `git fetch --tags` first (when a remote exists). Default true. */
   fetch?: boolean;
 }
@@ -68,6 +73,7 @@ export async function ship(
     target: options.target,
     ...(options.version ? { version: options.version } : {}),
     ...(options.force ? { force: true } : {}),
+    ...(options.attempt !== undefined ? { attempt: options.attempt } : {}),
   };
   // Only what a ship decision reads: no changesets, commits or bot PRs.
   const state = {

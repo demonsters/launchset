@@ -245,6 +245,8 @@ Options:
                        or all)
   --version <version>  with --target: the released version to ship
   --force              with --target: allow a version lower than the target's highest marker
+  --attempt <n>        with --target: the attempt part (1 to 99) of a semver build number, for
+                       another upload of the same version
   --branch <name>      plan for this branch (default: the current branch)
   --run-number <n>     with --preview: the run number (default: $GITHUB_RUN_NUMBER, on GitLab
                        $CI_PIPELINE_IID)
@@ -286,6 +288,8 @@ Options:
   --target <name>      a manual target to ship
   --version <version>  with --target: the released version to ship
   --force              with --target: allow a version lower than the target's highest marker
+  --attempt <n>        with --target: the attempt part (1 to 99) of a semver build number, for
+                       another upload of the same version
   --branch <name>      release for this branch (default: the current branch)
   --no-fetch           don't fetch tags first
   -h, --help           display help for command
@@ -482,7 +486,7 @@ Variables: LAUNCHSET_VERSION, LAUNCHSET_RELEASE_SHA
 
 ### launchset ship
 
-Prepares a manual target for a build you make yourself: checks that HEAD is at the release tag of the version, computes a build number and stamps the target's files. After the upload, run `launchset mark`.
+Prepares a manual target for a build you make yourself: checks that HEAD is at the release tag of the version, computes a build number and stamps the target's files. After the upload, run `launchset mark`. For a target with the `semver` build-number strategy, `--attempt` sets the attempt part of the number (1 outside CI), so another upload of the same version gets a new one.
 
 ```text
 Usage: launchset ship [options]
@@ -501,11 +505,14 @@ Options:
   --target <name>      a manual target from the config
   --version <version>  the released version (default: the latest release)
   --force              allow a version lower than the target's highest marker
+  --attempt <n>        semver targets only: the attempt part of the build number (1 to 99, default
+                       1), for another upload of the same version
   --no-fetch           don't fetch tags first
   -h, --help           display help for command
 
 Example:
   $ launchset ship --target ios --json
+  $ launchset ship --target ios --attempt 2
 
 
 In --ci mode also writes plan.json, launchset.env and launchset.sh (see docs).

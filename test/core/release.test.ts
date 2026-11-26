@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { LaunchsetError } from "../../src/core/errors.ts";
-import { planRelease } from "../../src/core/release.ts";
+import { planRelease, type ReleaseInput } from "../../src/core/release.ts";
 import {
   BUILD,
   changeset,
@@ -476,6 +476,84 @@ describe("ship (9.8)", () => {
     const p = planRelease(rest).plan;
     expect(p.buildNumber).toBe(BUILD);
     expect(p.targets.ios?.buildNumber).toBe(BUILD);
+  });
+  describe("attempt (7.2)", () => {
+    // The Capacitor setup: previews build only web, the manual iOS app uses semver.
+    const semverConfig = makeConfig({
+      preview: { targets: ["web"] },
+      targets: {
+        web: { type: "web" },
+        ios: {
+          type: "ios",
+          source: { kind: "xcodeproj", file: "ios/App.xcodeproj" },
+          release: "manual",
+          buildNumber: { strategy: "semver" },
+        },
+      },
+    });
+    const shipSemver = (attempt?: number, overrides: Partial<ReleaseInput> = {}) =>
+      planRelease(
+        releaseInput({
+          config: semverConfig,
+          event: { kind: "dispatch", target: "ios", ...(attempt !== undefined ? { attempt } : {}) },
+          tags: tags(semverConfig, ["v1.5.0"]),
+          reachableReleases: ["1.5.0"],
+          ...overrides,
+        }),
+      );
+
+    it("defaults to the run's attempt, else 1", () => {
+      expect(shipSemver().plan.targets.ios?.buildNumber).toBe(10_500_001);
+      const rerun = shipSemver(undefined, { run: { id: 99, number: 17, attempt: 3 } });
+      expect(rerun.plan.targets.ios?.buildNumber).toBe(10_500_003);
+      const { run: _run, ...local } = releaseInput({
+        config: semverConfig,
+        event: { kind: "dispatch", target: "ios" },
+        tags: tags(semverConfig, ["v1.5.0"]),
+        reachableReleases: ["1.5.0"],
+      });
+      expect(planRelease(local).plan.targets.ios?.buildNumber).toBe(10_500_001);
+    });
+
+    it("sets the last two digits of a semver build number", () => {
+      const decision = shipSemver(2);
+      expect(decision.plan.targets.ios?.buildNumber).toBe(10_500_002);
+      expect(decision.summary).toContain("build number 10500002");
+      expect(shipSemver(99).plan.targets.ios?.buildNumber).toBe(10_500_099);
+      // Over the run's own attempt, which the plan still records as it was.
+      const rerun = shipSemver(5, { run: { id: 99, number: 17, attempt: 3 } });
+      expect(rerun.plan.targets.ios?.buildNumber).toBe(10_500_005);
+      expect(rerun.plan.run?.attempt).toBe(3);
+    });
+
+    it("must be 1 to 99", () => {
+      for (const attempt of [0, 100, 1.5, -1]) {
+        const error = expectError(() => shipSemver(attempt), "invalid-build-number");
+        expect(error.message).toContain("supports attempts 1 to 99");
+      }
+    });
+
+    it("is an error for a target with another strategy", () => {
+      const error = expectError(() => planRelease(dispatchAttempt("ios", 2)), "attempt-not-semver");
+      expect(error.message).toContain('ios uses the "timestamp" build-number strategy');
+      expect(error.hint).toContain("Leave the attempt out");
+    });
+
+    it("is an error without a target", () => {
+      const error = expectError(
+        () => planRelease(releaseInput({ event: { kind: "dispatch", attempt: 2 } })),
+        "attempt-without-target",
+      );
+      expect(error.message).toContain("only works together with the target input");
+    });
+
+    function dispatchAttempt(target: string, attempt: number) {
+      return releaseInput({
+        event: { kind: "dispatch", target, attempt },
+        tags: shipTags,
+        reachableReleases: ["1.3.0", "1.4.0", "1.5.0"],
+      });
+    }
   });
 });
 

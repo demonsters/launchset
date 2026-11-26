@@ -205,7 +205,19 @@ export function planPreview(input: PreviewInput): PreviewDecision {
     }
   }
 
-  const matrix = resolveTargets(config, targets);
+  // Config validation keeps semver targets out of the preview targets; only the targets input
+  // of a manual run can still name one (or reach it through "all").
+  const semverTargets = resolveTargets(config, targets).filter(
+    (name) => config.targets[name]?.buildNumber.strategy === "semver",
+  );
+  if (semverTargets.length > 0 && targets !== "all") {
+    throw new LaunchsetError(
+      "semver-preview",
+      `${joinWords(semverTargets.map(code))} ${semverTargets.length === 1 ? "uses" : "use"} the "semver" build-number strategy, so ${semverTargets.length === 1 ? "it" : "they"} can't be previewed: a preview of 1.5.0 and the real 1.5.0 would compete for the same build numbers`,
+      { hint: 'Leave it out of the targets input, or give it the "timestamp" strategy.' },
+    );
+  }
+  const matrix = resolveTargets(config, targets).filter((name) => !semverTargets.includes(name));
   const next = previewBaseVersion({
     current: input.version,
     bump: releaseBump(input.changesets),
@@ -304,6 +316,11 @@ export function planPreview(input: PreviewInput): PreviewDecision {
   });
 
   const notices: string[] = [];
+  if (semverTargets.length > 0) {
+    notices.push(
+      `Not building ${joinWords(semverTargets.map(code))}: the "semver" build-number strategy can't be used for previews.`,
+    );
+  }
   if (maintenance && trigger.kind === "dispatch") {
     notices.push(`${input.branch} is a maintenance branch: this preview was started by hand.`);
   }

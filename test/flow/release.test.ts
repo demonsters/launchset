@@ -326,4 +326,39 @@ describe("release: publish mode", () => {
       matrix: JSON.stringify(["ios"]),
     });
   });
+  it("takes the attempt input of a dispatch for a semver target", async () => {
+    const project = setupProject({
+      config: {
+        preview: { targets: ["web"] },
+        targets: {
+          web: { type: "web" },
+          ios: {
+            type: "ios",
+            source: { kind: "xcconfig", file: "ios/Version.xcconfig" },
+            release: "manual",
+            buildNumber: { strategy: "semver" },
+          },
+        },
+      },
+    });
+    new FakeGitHub(project.remote);
+    const dispatch = (inputs: Record<string, string>) =>
+      contextFor(project.repo, {
+        event: { name: "workflow_dispatch", payload: { inputs: { target: "ios", ...inputs } } },
+      });
+    const result = await release(await dispatch({ attempt: "4" }));
+    expect(result.data.mode).toBe("ship");
+    expect(result.data.plan.targets.ios?.buildNumber).toBe(10_400_004);
+    // Empty means not given: the run's attempt.
+    const plain = await release(await dispatch({ attempt: " " }));
+    const runAttempt = plain.data.plan.run?.attempt ?? 1;
+    expect(plain.data.plan.targets.ios?.buildNumber).toBe(10_400_000 + runAttempt);
+    await expect(release(await dispatch({ attempt: "two" }))).rejects.toMatchObject({
+      code: "invalid-build-number",
+      message: 'the attempt input must be a whole number from 1 to 99, got "two"',
+    });
+    await expect(release(await dispatch({ attempt: "0" }))).rejects.toMatchObject({
+      code: "invalid-build-number",
+    });
+  });
 });

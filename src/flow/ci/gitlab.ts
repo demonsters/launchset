@@ -60,6 +60,7 @@ function dispatchInputs(env: Env): Record<string, string> {
   }
   if (env.LAUNCHSET_RELEASE_VERSION) inputs.version = env.LAUNCHSET_RELEASE_VERSION;
   if (env.LAUNCHSET_FORCE) inputs.force = env.LAUNCHSET_FORCE;
+  if (env.LAUNCHSET_ATTEMPT) inputs.attempt = env.LAUNCHSET_ATTEMPT;
   return inputs;
 }
 

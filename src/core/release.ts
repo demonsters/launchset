@@ -5,7 +5,7 @@
  */
 
 import { isMaintenanceBranch } from "./branches.ts";
-import type { ResolvedConfig } from "./config/schema.ts";
+import type { BuildNumberConfig, ResolvedConfig } from "./config/schema.ts";
 import { LaunchsetError } from "./errors.ts";
 import { forgeHints } from "./forge-hints.ts";
 import type { ForgeHost } from "./forge-links.ts";
@@ -58,6 +58,11 @@ export type ReleaseEvent =
       version?: string;
       /** Allow shipping a version lower than the target's highest marker (spec 9.8). */
       force?: boolean;
+      /**
+       * `attempt` input (with `target`): the attempt part of a `semver` build number (1 to
+       * 99) instead of the run's attempt, for another upload of the same version (spec 7.2).
+       */
+      attempt?: number;
     };
 
 export interface ReleaseInput {
@@ -201,9 +206,12 @@ function buildPlan(
     releaseSha: string;
     tagMaintenance?: boolean;
     buildNumber?: number | null;
+    /** Overrides the run's attempt for the build numbers (not `plan.run`). */
+    attempt?: number;
   },
 ): Plan {
   const plan = basePlan(fields);
+  const run = fields.attempt !== undefined ? { ...input.run, attempt: fields.attempt } : input.run;
   plan.releaseSha = fields.releaseSha;
   plan.tag = releaseTag(input.config.tags, fields.version);
   plan.matrix = fields.matrix;
@@ -213,7 +221,7 @@ function buildPlan(
     baseVersion: fields.version,
     maintenance: fields.tagMaintenance ?? fields.maintenance,
     now: input.now,
-    ...(input.run ? { run: input.run } : {}),
+    ...(run ? { run } : {}),
     sha: fields.releaseSha,
     createdAt: plan.createdAt,
     markerTemplate: { tags: input.config.tags },
@@ -226,7 +234,7 @@ function buildPlan(
       : planBuildNumber(input.config, plan, {
           now: input.now,
           version: fields.version,
-          ...(input.run ? { run: input.run } : {}),
+          ...(run ? { run } : {}),
           ...(input.host ? { host: input.host } : {}),
         });
   return plan;
@@ -286,6 +294,15 @@ export function planRelease(input: ReleaseInput): ReleaseDecision {
       `the version input (${event.version}) only works together with the target input`,
       {
         hint: "To ship a manual target, set both target and version. To retry the current release, start the workflow without inputs.",
+      },
+    );
+  }
+  if (event.kind === "dispatch" && event.attempt !== undefined) {
+    throw new LaunchsetError(
+      "attempt-without-target",
+      `the attempt input (${event.attempt}) only works together with the target input`,
+      {
+        hint: "To ship a manual target again with a new build number, set target and attempt. To retry the current release, start the workflow without inputs.",
       },
     );
   }
@@ -499,6 +516,7 @@ function planShip(
       },
     );
   }
+  if (event.attempt !== undefined) checkShipAttempt(targetName, target.buildNumber, event.attempt);
   let version: string;
   if (event.version) {
     version = normalizeVersionInput(event.version);
@@ -547,7 +565,36 @@ function planShip(
     }
     notices.push(`Shipping ${version} although ${targetName} already shipped ${highest} (force).`);
   }
-  return finish(buildShipPlan(input, targetName, version), { notices });
+  const options = event.attempt !== undefined ? { attempt: event.attempt } : {};
+  return finish(buildShipPlan(input, targetName, version, options), { notices });
+}
+
+/**
+ * The `attempt` of a ship (spec 7.2): only the `semver` strategy has an attempt part, and it
+ * must be 1 to 99 so it can't overflow into the patch digits.
+ */
+function checkShipAttempt(targetName: string, buildNumber: BuildNumberConfig, attempt: number) {
+  if (buildNumber.strategy !== "semver") {
+    throw new LaunchsetError(
+      "attempt-not-semver",
+      `${targetName} uses the "${buildNumber.strategy}" build-number strategy, which has no attempt: the attempt only sets the last two digits of a "semver" build number`,
+      {
+        hint:
+          buildNumber.strategy === "timestamp"
+            ? "Leave the attempt out: every timestamp build number is new anyway."
+            : "Leave the attempt out.",
+      },
+    );
+  }
+  if (!Number.isSafeInteger(attempt) || attempt < 1 || attempt > 99) {
+    throw new LaunchsetError(
+      "invalid-build-number",
+      `attempt ${attempt}: the "semver" build-number strategy supports attempts 1 to 99`,
+      {
+        hint: "Pass a whole number from 1 to 99 (one higher than the last upload of this version).",
+      },
+    );
+  }
 }
 
 /**
@@ -560,7 +607,7 @@ export function buildShipPlan(
   input: PlanInput,
   targetName: string,
   version: string,
-  options: { buildNumber?: number | null } = {},
+  options: { buildNumber?: number | null; attempt?: number } = {},
 ): Plan {
   const tag = releaseTag(input.config.tags, version);
   const releaseSha = input.tags.shas.get(tag);
@@ -581,6 +628,7 @@ export function buildShipPlan(
     matrix: [targetName],
     releaseSha,
     ...(options.buildNumber !== undefined ? { buildNumber: options.buildNumber } : {}),
+    ...(options.attempt !== undefined ? { attempt: options.attempt } : {}),
   });
   plan.distTag = distTag({ channel: "release", version, maintenance: maintenance || notLatest });
   return plan;

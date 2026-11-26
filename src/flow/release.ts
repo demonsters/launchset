@@ -40,6 +40,8 @@ export interface ReleaseOptions {
   version?: string;
   /** Ship a version lower than the target's highest marker. */
   force?: boolean;
+  /** `attempt` input (with `target`): the attempt part of a `semver` build number, 1 to 99. */
+  attempt?: number;
   /** Default: the Actions ref, else git's current branch. */
   branch?: string;
   /** `git fetch --tags` first (when a remote exists). Default true. */

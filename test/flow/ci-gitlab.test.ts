@@ -162,6 +162,7 @@ describe("GitLab environment: events", () => {
         LAUNCHSET_TARGET: "web,ios",
         LAUNCHSET_RELEASE_VERSION: "1.2.3",
         LAUNCHSET_FORCE: "true",
+        LAUNCHSET_ATTEMPT: "2",
         LAUNCHSET_VERSION: "9.9.9",
       }).event;
       expect(event).toEqual({
@@ -169,7 +170,13 @@ describe("GitLab environment: events", () => {
         kind: "dispatch",
         ref: "refs/heads/main",
         sha: "c0ffee",
-        inputs: { target: "web,ios", targets: "web,ios", version: "1.2.3", force: "true" },
+        inputs: {
+          target: "web,ios",
+          targets: "web,ios",
+          version: "1.2.3",
+          force: "true",
+          attempt: "2",
+        },
       });
     },
   );
