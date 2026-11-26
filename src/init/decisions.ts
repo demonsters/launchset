@@ -8,7 +8,7 @@
  * | `host`                     | `github` `gitlab` (only shown when something points at GitLab) | the origin remote's host, else the CI files found |
  * | `version`                  | a plain X.Y.Z                  | the highest version found (never lower by default)  |
  * | `tags.release`             | a template with `{version}`    | `v{version}`                                        |
- * | `target.<name>`            | `auto` `manual` `none` (`custom` declares a target nothing detected) | auto when a workflow builds it; manual for native projects no workflow builds; auto for a GitLab tag job that builds or publishes (a custom target) |
+ * | `target.<name>`            | `auto` `manual` `none` (`custom` declares a target nothing detected) | auto when a workflow builds it; manual for native projects no workflow builds; auto for a GitLab tag job or a GitHub release-tag workflow job that builds or publishes (a custom target) |
  * | `gitlab.<name>.shell`      | `sh` `powershell`              | powershell when the GitLab job's scripts or runner tags say so (custom targets from GitLab jobs) |
  * | `gitlab.templates`         | `move` `keep`                  | move: the hidden templates the target jobs extend go to .gitlab/ci-templates.yml, which .gitlab-ci.yml and the child pipeline include |
  * | `docker.<name>.image`      | an image name                  | read from the existing workflow; else a guess (ask) |

@@ -28,7 +28,24 @@ export interface WorkflowTemplateInput {
   /** Action reference, default "demonsters/launchset-action@v1" ("./action" for launchset itself). */
   actionRef?: string;
   /** Extra info init found per target, e.g. Dockerfile path and build context. */
-  hints?: Record<string, { dockerfile?: string; context?: string; platforms?: string }>;
+  hints?: Record<string, WorkflowHint>;
+}
+
+/** What init found out about how a target was built before (see {@link WorkflowTemplateInput}). */
+export interface WorkflowHint {
+  dockerfile?: string;
+  context?: string;
+  platforms?: string;
+  /** A custom target's job in an existing workflow: its steps go in, commented out. */
+  moved?: {
+    path: string;
+    job: string;
+    /** Its steps as YAML, each starting with `if: @@if@@`. */
+    steps: string;
+    runsOn?: string;
+    /** `with:` lines of its `actions/checkout` step. */
+    checkoutWith?: string[];
+  };
 }
 
 export interface RenderedFile {
@@ -308,10 +325,51 @@ function buildSnippet(
     case "web":
       return fillTemplate(readTemplate("snippets/web.yml"), common, "snippets/web.yml");
     case "custom": {
-      const name = isNpmTarget(target) ? "snippets/custom-npm.yml" : "snippets/custom.yml";
-      return fillTemplate(readTemplate(name), common, name);
+      if (isNpmTarget(target)) {
+        return fillTemplate(
+          readTemplate("snippets/custom-npm.yml"),
+          common,
+          "snippets/custom-npm.yml",
+        );
+      }
+      const moved = hints[common.target]?.moved;
+      const example = moved
+        ? movedSteps(moved, common.if)
+        : fillTemplate(
+            readTemplate("snippets/custom-example.yml"),
+            common,
+            "snippets/custom-example.yml",
+          );
+      return fillTemplate(
+        readTemplate("snippets/custom.yml"),
+        { ...common, example },
+        "snippets/custom.yml",
+      );
     }
   }
+}
+
+/** The steps of the job a custom target comes from, commented out, with notes. */
+function movedSteps(moved: NonNullable<WorkflowHint["moved"]>, condition: string): string {
+  const notes = [
+    `The steps of job "${moved.job}" in ${moved.path}, which ran on release tags. Check them,`,
+    "uncomment them and remove the step above. `stamp` already wrote the version into this",
+    "target's files, and the checkout above is the release commit.",
+  ];
+  if (moved.checkoutWith && moved.checkoutWith.length > 0) {
+    notes.push(
+      `That job checked out with ${moved.checkoutWith.map((w) => `\`${w}\``).join(", ")}: add what it needs to the checkout step of this job.`,
+    );
+  }
+  if (moved.runsOn && moved.runsOn !== "ubuntu-latest") {
+    notes.push(
+      `That job ran on \`${moved.runsOn}\`: change runs-on of this job if it needs that runner.`,
+    );
+  }
+  const steps = moved.steps.replaceAll("@@if@@", condition);
+  return [...notes, "", ...steps.split("\n")]
+    .map((line) => (line === "" ? "#" : `# ${line}`))
+    .join("\n");
 }
 
 function renderBuildParts(

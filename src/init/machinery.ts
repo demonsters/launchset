@@ -229,8 +229,22 @@ const SHORT: Record<MachineryKind, string> = {
   "package-publish": "launchset publishes when a release ships",
 };
 
+/**
+ * The text that `echo` and `printf` print: a message, not a command. `echo "create it with
+ * 'git tag -a'"` mentions a tag command but doesn't run it. A `$(…)` or backticks inside run
+ * a command, so those messages are kept.
+ */
+const PRINTED_MESSAGE =
+  /\b(echo|printf)\b(?:\s+(?:'[^']*'|"(?:[^"\\$`]|\\.|\$(?!\())*"|(?:[^\s;&|'"$`()<>]|\$(?!\())+))+/g;
+
+/** A shell command without the messages it prints. */
+function withoutMessages(command: string): string {
+  return command.replace(PRINTED_MESSAGE, "$1");
+}
+
 /** The machinery kinds a shell command matches. */
-export function commandKinds(command: string): MachineryKind[] {
+export function commandKinds(full: string): MachineryKind[] {
+  const command = withoutMessages(full);
   const kinds: MachineryKind[] = [];
   if (CHANGESET_COMMAND.test(command)) kinds.push("changesets");
   if (RELEASE_TOOL_COMMAND.test(command)) kinds.push("release-tool");
@@ -249,7 +263,8 @@ export function scriptFileKinds(text: string): { kinds: MachineryKind[]; line: n
   const kinds: MachineryKind[] = [];
   let line = 0;
   const lines = linesOf(text);
-  const first = (pattern: RegExp) => lines.find((l) => pattern.test(l.text))?.number ?? 0;
+  const first = (pattern: RegExp) =>
+    lines.find((l) => pattern.test(withoutMessages(l.text)))?.number ?? 0;
   const note = (kind: MachineryKind, at: number) => {
     if (at === 0) return;
     kinds.push(kind);
@@ -756,8 +771,9 @@ const PACKAGE_PUBLISH_COMMAND = /\b(?:npm|pnpm)\s+publish\b|\byarn\s+(?:npm\s+)?
 const TRIVIAL_COMMAND = /^(?:echo|printf|true|:)(?:\s|$)/;
 
 /** The machinery kinds of a GitLab script command ({@link commandKinds} plus GitLab's tools). */
-export function gitlabCommandKinds(command: string): MachineryKind[] {
-  const kinds = commandKinds(command);
+export function gitlabCommandKinds(full: string): MachineryKind[] {
+  const kinds = commandKinds(full);
+  const command = withoutMessages(full);
   if (GITLAB_RELEASE_COMMAND.test(command) && !kinds.includes("tag-creation")) {
     kinds.push("tag-creation");
   }
