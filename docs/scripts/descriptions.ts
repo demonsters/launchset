@@ -31,10 +31,12 @@ export const CONFIG_DESCRIPTIONS: Record<string, string> = {
     "The tag for a release that was superseded before it was complete. Must contain `{version}` and differ from `tags.release`. Keep it outside the namespace your tag-triggered workflows listen to.",
   buildNumber: "How build numbers are computed. A target can override any of these keys.",
   "buildNumber.strategy":
-    "`timestamp`: seconds since `epoch`, plus `offset`. `run-number`: `github.run_number` plus `offset`. `semver`: derived from the version; not allowed here while previews are enabled, and only on targets that previews don't build. `eas`: no build number at all, for Expo builds on EAS.",
+    "`timestamp`: seconds (or minutes, see `unit`) since `epoch`, plus `offset`. `run-number`: `github.run_number` plus `offset`. `semver`: derived from the version; not allowed here while previews are enabled, and only on targets that previews don't build. `eas`: no build number at all, for Expo builds on EAS.",
   "buildNumber.epoch": "Start of the `timestamp` strategy, as an ISO 8601 date-time.",
   "buildNumber.offset":
     "Added to every build number. Use it when existing builds in a store have higher numbers than the strategy would produce.",
+  "buildNumber.unit":
+    'What the `timestamp` strategy counts since `epoch`: `"second"` (the default) or whole `"minute"`s (rounded down). Minutes stay under Android\'s limit until about the year 6000, but two builds in the same minute get the same number. An error with any other strategy.',
   check: "The PR check.",
   "check.bots":
     "PR authors that pass the check without a changeset. Matched case-insensitively. Their merged PRs get a generated patch entry under Dependencies in the next release.",
@@ -71,6 +73,7 @@ export const CONFIG_DESCRIPTIONS: Record<string, string> = {
   "targets[*].buildNumber.strategy": "See `buildNumber.strategy`.",
   "targets[*].buildNumber.epoch": "See `buildNumber.epoch`.",
   "targets[*].buildNumber.offset": "See `buildNumber.offset`.",
+  "targets[*].buildNumber.unit": "See `buildNumber.unit`.",
   "targets[*].after":
     "GitLab only (an error on GitHub). Targets whose jobs must finish first, in the same pipeline: this target's job gets their artifacts. In the child pipeline it `needs` their `build-<target>` (or `preview-<target>`) jobs as optional, so a retry that only builds this target still starts, without those artifacts. Names must exist, can't form a cycle, and an auto target can only come after auto targets.",
   "targets[*].gitlab": "GitLab settings of this target. Ignored on GitHub.",

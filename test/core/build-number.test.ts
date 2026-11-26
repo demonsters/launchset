@@ -52,6 +52,34 @@ describe("timestamp", () => {
   });
 });
 
+describe("timestamp unit", () => {
+  // 2026-11-18T12:00:00Z is 217,166,400 seconds, 3,619,440 minutes after 2020-01-01.
+  it("counts seconds by default, and with unit second", () => {
+    expect(computeBuildNumber(config(), { now: NOV_2026 })).toBe(217_166_400);
+    expect(computeBuildNumber(config({ unit: "second" }), { now: NOV_2026 })).toBe(217_166_400);
+  });
+
+  it("counts whole minutes with unit minute, rounded down, plus the offset", () => {
+    expect(computeBuildNumber(config({ unit: "minute" }), { now: NOV_2026 })).toBe(3_619_440);
+    // 59.999 seconds later is still the same minute; one more millisecond is the next one.
+    const later = NOV_2026.getTime() + 59_999;
+    expect(computeBuildNumber(config({ unit: "minute" }), { now: later })).toBe(3_619_440);
+    expect(computeBuildNumber(config({ unit: "minute" }), { now: later + 1 })).toBe(3_619_441);
+    expect(computeBuildNumber(config({ unit: "minute", offset: 500 }), { now: NOV_2026 })).toBe(
+      3_619_940,
+    );
+  });
+
+  it("reaches Android's limit in 2086 with seconds and in 6012 with minutes", () => {
+    const epoch = Date.parse("2020-01-01T00:00:00Z");
+    const atLimit = (unitMs: number) => new Date(epoch + ANDROID_MAX_VERSION_CODE * unitMs);
+    expect(atLimit(1000).toISOString()).toBe("2086-07-18T13:20:00.000Z");
+    expect(atLimit(60_000).toISOString()).toBe("6012-10-12T08:00:00.000Z");
+    const minute = computeBuildNumber(config({ unit: "minute" }), { now: atLimit(60_000) });
+    expect(minute).toBe(ANDROID_MAX_VERSION_CODE);
+  });
+});
+
 describe("run-number", () => {
   it("is the run number plus the offset", () => {
     expect(computeBuildNumber(config({ strategy: "run-number" }), { now: 0, runNumber: 42 })).toBe(

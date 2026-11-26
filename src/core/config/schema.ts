@@ -35,11 +35,15 @@ export const BUILD_NUMBER_STRATEGIES = ["timestamp", "run-number", "semver", "ea
 const strategy = z.enum(BUILD_NUMBER_STRATEGIES);
 const epoch = z.iso.datetime({ offset: true, message: "expected an ISO 8601 date-time" });
 const offset = z.number().int().min(0, "expected an integer >= 0");
+export const TIMESTAMP_UNITS = ["second", "minute"] as const;
+/** `timestamp` only. No default in the schema, so validation can tell it was set (read it with `?? "second"`). */
+const unit = z.enum(TIMESTAMP_UNITS);
 
 const buildNumberSchema = z.strictObject({
   strategy: strategy.default("timestamp"),
   epoch: epoch.default("2020-01-01T00:00:00Z"),
   offset: offset.default(0),
+  unit: unit.optional(),
 });
 
 /** A target's override: every field optional, merged over the root `buildNumber`. */
@@ -47,6 +51,7 @@ const buildNumberOverrideSchema = z.strictObject({
   strategy: strategy.optional(),
   epoch: epoch.optional(),
   offset: offset.optional(),
+  unit: unit.optional(),
 });
 
 export type BuildNumberConfig = z.output<typeof buildNumberSchema>;
@@ -743,6 +748,8 @@ function resolveTarget(
     epoch: target.buildNumber?.epoch ?? root.epoch,
     offset: target.buildNumber?.offset ?? root.offset,
   };
+  const unit = target.buildNumber?.unit ?? root.unit;
+  if (unit !== undefined) buildNumber.unit = unit;
   const common = { name, release: target.release, buildNumber, files: target.files };
   switch (target.type) {
     case "docker": {
@@ -796,6 +803,28 @@ const SEMVER_ROOT_WITH_PREVIEWS =
 
 const semverPreviewTarget = (name: string) =>
   `target "${name}" can't use the "semver" build-number strategy: previews build it, and a preview of 1.5.0 and the real 1.5.0 would compete for the same numbers. Take "${name}" out of preview.targets (and the targets of preview.branches), use "timestamp", or set preview: false`;
+
+/**
+ * `buildNumber.unit` only goes with the `timestamp` strategy (spec 7.2): an error where it is
+ * written next to another strategy (repo-wide, or in a target's override, whose strategy may
+ * come from the root). A repo-wide unit inherited by a target with another strategy is fine.
+ */
+function unitIssues(data: Pick<ParsedConfig, "buildNumber" | "targets">): ConfigIssue[] {
+  const issues: ConfigIssue[] = [];
+  const message = (strategy: string) =>
+    `"unit" only applies to the "timestamp" build-number strategy, not "${strategy}": remove it`;
+  if (data.buildNumber.unit !== undefined && data.buildNumber.strategy !== "timestamp") {
+    issues.push({ path: "buildNumber.unit", message: message(data.buildNumber.strategy) });
+  }
+  for (const [name, target] of Object.entries(data.targets)) {
+    const own = target.buildNumber;
+    const strategy = own?.strategy ?? data.buildNumber.strategy;
+    if (own?.unit !== undefined && strategy !== "timestamp") {
+      issues.push({ path: `targets.${name}.buildNumber.unit`, message: message(strategy) });
+    }
+  }
+  return issues;
+}
 
 /** Cross-field rules from spec 5 that zod's per-field checks can't express. */
 function semanticIssues(config: ResolvedConfig): ConfigIssue[] {
@@ -1052,7 +1081,7 @@ export function resolveConfig(input: unknown, options: { file?: string } = {}): 
   }
   const config: ResolvedConfig = { ...data, preview, targets };
 
-  const issues = semanticIssues(config);
+  const issues = [...semanticIssues(config), ...unitIssues(data)];
   config.preview.branches.forEach((entry, index) => {
     if (entry.prerelease && matchBranch(config.baseBranch, entry.branch)) {
       issues.push({

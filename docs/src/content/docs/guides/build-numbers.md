@@ -7,7 +7,7 @@ Stores want a number that only goes up, besides the version. launchset assigns i
 
 ## When a number is computed
 
-Once per workflow run, in the plan step (`command: release` or `preview-plan`). All targets in the run share it, except a target with its own `buildNumber` override (a different strategy, `epoch` or `offset`): that target gets its own number from its own settings. Re-running failed jobs reuses the plan, so a re-run gets the same number.
+Once per workflow run, in the plan step (`command: release` or `preview-plan`). All targets in the run share it, except a target with its own `buildNumber` override (a different strategy, `epoch`, `offset` or `unit`): that target gets its own number from its own settings. Re-running failed jobs reuses the plan, so a re-run gets the same number.
 
 `launchset stamp --target <name>` writes the number into the target's files in the CI checkout. The numbers in your repo are placeholders.
 
@@ -17,7 +17,7 @@ Set `buildNumber.strategy`. Any target can override it.
 
 | Strategy | Value | Notes |
 | --- | --- | --- |
-| `timestamp` (default) | Seconds since `epoch` (default `2020-01-01T00:00:00Z`), plus `offset`. | About 217 million in November 2026. Stays under the Android limit until about 2086. Always increases, across all branches, without credentials. |
+| `timestamp` (default) | Seconds since `epoch` (default `2020-01-01T00:00:00Z`), plus `offset`. With `unit: "minute"`, whole minutes. | About 217 million in November 2026 (3.6 million in minutes). Stays under the Android limit until about 2086 (minutes: about 6012). Always increases, across all branches, without credentials. See [Seconds or minutes](#seconds-or-minutes). |
 | `run-number` | `github.run_number` plus `offset`. | Simple. Resets if you rename the workflow file. Only works in CI. |
 | `semver` | `major*10^7 + minor*10^5 + patch*10^2 + attempt` | `attempt` is the run attempt (1 to 99), or the one you pass when [shipping a manual target](#shipping-the-same-version-again); 1 outside CI. Limits: minor up to 99, patch up to 999. **Only on targets that previews never build** while previews are enabled, because a preview of `1.5.0` and the real `1.5.0` would compete for the same numbers. See [Previews](#previews). |
 | `eas` | None. | For Expo projects whose builds are numbered by EAS. See [Expo](/targets/expo/). |
@@ -38,10 +38,39 @@ ios: {
 },
 ```
 
+### Seconds or minutes
+
+The `timestamp` strategy counts seconds since `epoch` by default. `unit: "minute"` counts whole minutes instead (rounded down), plus `offset`:
+
+```ts
+buildNumber: { strategy: "timestamp", unit: "minute" },
+```
+
+| Unit | November 2026 (default epoch) | Reaches Android's 2,100,000,000 |
+| --- | --- | --- |
+| `"second"` (default) | about 217,000,000 | July 2086 |
+| `"minute"` | about 3,600,000 | October 6012 |
+
+`unit` works repo-wide and per target, like `strategy`, `epoch` and `offset`. A target with its own `unit` gets its own number. With any strategy other than `timestamp` it is a config error.
+
+The trade-off: **two builds in the same minute get the same number.** That is fine for builds you upload by hand (`launchset ship`). In CI, the targets of one run already share that run's number, so that doesn't change. But two separate runs that plan within the same minute (two quick merges, a release and a manual ship) get the same number, and the second upload is rejected by the store. Keep seconds if that can happen to you.
+
+**Switching an existing app from seconds to minutes makes its numbers drop** from about 217 million to about 3.6 million, far below the builds already in the stores, which then reject every upload. Switch only an app that has no uploads yet, or set an `offset` above its highest uploaded number (`verify: ["store"]` tells you the offset it needs). `launchset init` suggests its offset for seconds, the unit it writes.
+
 ### Limits
 
 - Build numbers are positive integers.
 - Android's `versionCode` can't exceed 2,100,000,000. launchset fails when it would.
+
+### Where Android's limit comes from
+
+`versionCode` is a 32-bit signed integer, so technically it goes up to 2,147,483,647. Android 9 (API 28) added a 64-bit `longVersionCode`, with `versionCodeMajor` in the upper 32 bits, but few apps use it, and it doesn't change what Google Play accepts.
+
+Google Play's own maximum is 2,100,000,000, a bit below the integer maximum (see [Version your app](https://developer.android.com/studio/publish/versioning) in the Android docs, which gives the number but no reason). Play rejects anything higher, so that is the limit launchset enforces.
+
+iOS has no comparable ceiling: `CFBundleVersion` is up to three period-separated integers, not a single number. Android's limit is the one that matters.
+
+With the default `timestamp` strategy (seconds since 2020-01-01, no offset), numbers reach 2,100,000,000 on 18 July 2086. With `unit: "minute"` that happens in October 6012. An `offset` brings the date closer and a later `epoch` pushes it out. Once you have uploads, you can't push the date out that way: a later `epoch` or a lower `offset` makes the numbers go down, and stores reject that.
 
 ## Migrating an app that already has build numbers
 

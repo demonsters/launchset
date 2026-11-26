@@ -58,7 +58,9 @@ export function computeBuildNumber(
           { hint: "Use an epoch in the past (the default is 2020-01-01T00:00:00Z)." },
         );
       }
-      return positive(seconds + config.offset, "timestamp");
+      // Whole units since the epoch, rounded down.
+      const units = config.unit === "minute" ? Math.floor(seconds / 60) : seconds;
+      return positive(units + config.offset, "timestamp");
     }
     case "run-number": {
       const run = context.runNumber;

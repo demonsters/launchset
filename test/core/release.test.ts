@@ -142,6 +142,29 @@ describe("publish on push (9.3)", () => {
     expect(p.targets.web?.buildNumber).toBe(BUILD + 1000);
   });
 
+  it("gives a target with its own unit its own number; the others share the run's", () => {
+    const minutes = makeConfig({
+      targets: {
+        web: { type: "web" },
+        api: { type: "web", buildNumber: { unit: "minute" } },
+        android: { type: "android", source: { kind: "gradle", file: "build.gradle" } },
+      },
+    });
+    const p = plan({ config: minutes, version: "1.5.0", headIsReleaseCommit: true });
+    expect(p.buildNumber).toBe(BUILD);
+    expect(p.targets.web?.buildNumber).toBe(BUILD);
+    expect(p.targets.android?.buildNumber).toBe(BUILD);
+    expect(p.targets.api?.buildNumber).toBe(Math.floor(BUILD / 60));
+    // A repo-wide minute unit numbers the run (and every target without an override).
+    const all = plan({
+      config: makeConfig({ buildNumber: { unit: "minute" } }),
+      version: "1.5.0",
+      headIsReleaseCommit: true,
+    });
+    expect(all.buildNumber).toBe(Math.floor(BUILD / 60));
+    expect(all.targets.android?.buildNumber).toBe(Math.floor(BUILD / 60));
+  });
+
   it("has no build number with eas", () => {
     const eas = makeConfig({ buildNumber: { strategy: "eas" } });
     const p = plan({ config: eas, version: "1.5.0", headIsReleaseCommit: true });

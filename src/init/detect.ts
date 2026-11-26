@@ -8,7 +8,7 @@ import semver from "semver";
 import { parse as parseYaml } from "yaml";
 import { CONFIG_FILE_NAMES } from "../config/load.ts";
 import { computeBuildNumber } from "../core/build-number.ts";
-import { DEFAULT_DOCKER_TAGS } from "../core/config/schema.ts";
+import { type BuildNumberConfig, DEFAULT_DOCKER_TAGS } from "../core/config/schema.ts";
 import { FORGE_HOSTS, type ForgeHost } from "../core/forge-links.ts";
 import { lineOf } from "../core/text.ts";
 import { remoteHost, serverUrlFromRemote } from "../flow/ci/index.ts";
@@ -1393,12 +1393,29 @@ function pickCanonical(versions: readonly FoundVersion[]): Detection["canonical"
     : { version: "0.1.0", reason: "no version found anywhere; starting at 0.1.0", evidence: [] };
 }
 
+/**
+ * The `buildNumber` settings init writes: only `offset` is ever set, so the strategy is
+ * `timestamp` with the default epoch and unit (seconds).
+ */
+const INIT_BUILD_NUMBER: BuildNumberConfig = {
+  strategy: "timestamp",
+  epoch: DEFAULT_EPOCH,
+  offset: 0,
+};
+
+/**
+ * The `offset` that keeps the build numbers of `settings` (a `timestamp` strategy, any unit)
+ * above `highest` from `now` on: 0 when they already are, else the minimum rounded up to two
+ * significant digits.
+ */
+export function offsetAbove(highest: number, settings: BuildNumberConfig, now: Date): number {
+  const strategyNow = computeBuildNumber({ ...settings, offset: 0 }, { now }) as number;
+  return highest >= strategyNow ? roundUpOffset(highest - strategyNow + 1) : 0;
+}
+
 /** The timestamp strategy's number now, the highest committed build number and the offset. */
 function buildNumberInfo(targets: readonly DetectedTarget[], now: Date): Detection["buildNumbers"] {
-  const strategyNow = computeBuildNumber(
-    { strategy: "timestamp", epoch: DEFAULT_EPOCH, offset: 0 },
-    { now },
-  ) as number;
+  const strategyNow = computeBuildNumber(INIT_BUILD_NUMBER, { now }) as number;
   let highest: Detection["buildNumbers"]["highest"];
   for (const t of targets) {
     for (const f of t.files) {
@@ -1410,8 +1427,7 @@ function buildNumberInfo(targets: readonly DetectedTarget[], now: Date): Detecti
       }
     }
   }
-  const offset =
-    highest && highest.value >= strategyNow ? roundUpOffset(highest.value - strategyNow + 1) : 0;
+  const offset = highest ? offsetAbove(highest.value, INIT_BUILD_NUMBER, now) : 0;
   const buildNumbers: Detection["buildNumbers"] = { strategyNow, offset };
   if (highest) buildNumbers.highest = highest;
   return buildNumbers;
