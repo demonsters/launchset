@@ -178,7 +178,7 @@ Any target may override `buildNumber`. Any target may have extra `files` entries
 **Validation rules** (config load fails with a clear message):
 - At least one target. Target names: `[a-z0-9][a-z0-9-]*`.
 - At least one target with `release: "auto"` (otherwise no release would ever complete).
-- `buildNumber.strategy: "semver"` together with previews enabled is an error (section 7.2).
+- With previews enabled, `semver` is an error as the root `buildNumber.strategy` and on any target previews can build (section 7.2).
 - Docker `tags` rules from 6.1 (a release list needs a `{version}` template; preview and prerelease lists can't contain `latest`).
 - `preview.branches` entries are globs. Branches matching `maintenanceBranches` never auto-preview, even if a pattern matches them. A pattern that matches the base branch is an error for prerelease entries (9.9).
 - Source files referenced by targets must exist.
@@ -298,7 +298,7 @@ For anything else (an npm package, a Helm chart, a version file a web app reads)
 |---|---|---|
 | `timestamp` (default) | `floor((now - epoch) / 1s) + offset` | Epoch default `2020-01-01T00:00:00Z`. About 217 million in November 2026; stays under the Android limit until about 2086. Always increases, across all branches, without credentials. |
 | `run-number` | `github.run_number + offset` | Simple; resets if the workflow file is renamed. Documented as such. |
-| `semver` | `major*10^7 + minor*10^5 + patch*10^2 + attempt` | `attempt` is the run attempt (max 99). **Not allowed when previews are enabled**: previews of `1.5.0` and the real `1.5.0` would compete for the same numbers. Config validation rejects the combination. |
+| `semver` | `major*10^7 + minor*10^5 + patch*10^2 + attempt` | `attempt` is the run attempt (1 to 99; 1 outside CI and on GitLab), or the `attempt` input of a ship (9.8). **Only for targets previews never build** while previews are enabled: previews of `1.5.0` and the real `1.5.0` would compete for the same numbers. Config validation rejects `semver` as the root strategy while previews are enabled (previews number their plan with it), and on a target that `preview.targets` or a `preview.branches` entry's `targets` include (`"all"` is every target; an entry without `targets` uses `preview.targets`). A manual preview run can't name a `semver` target, and its `all` leaves them out. |
 | `eas` | none | For Expo projects building on EAS with `appVersionSource: "remote"` and `autoIncrement`. launchset outputs no build number and doesn't stamp one. |
 
 `offset` exists for migrating apps whose existing build numbers are higher than what the strategy would produce.
@@ -496,7 +496,7 @@ A target with `release: "manual"` is kept in version step with every release, bu
 **Rules:**
 - **Never backwards**: shipping a version lower than the target's highest existing marker is an error (stores reject lower versions), unless `--force`.
 - **Idempotent**: if a marker for that target and version already exists, `ship` says so and stops.
-- **Build numbers**: computed at ship time with the target's strategy, so `timestamp` stays increasing. `semver` is fine as well; `run-number` only from CI.
+- **Build numbers**: computed at ship time with the target's strategy, so `timestamp` stays increasing. `semver` is fine as well; `run-number` only from CI. A `semver` target's attempt can be set per ship (`ship --attempt <n>`, the release workflow's `attempt` input, GitLab `LAUNCHSET_ATTEMPT`), 1 to 99, so a second upload of the same version gets a new number; it is an error for other strategies and without a target.
 - **Store verification** (7.3) works the same as for auto targets.
 
 **Visibility:**

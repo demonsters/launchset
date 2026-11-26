@@ -53,6 +53,13 @@ on:
         required: false
         type: boolean
         default: false
+      attempt:
+        description: >-
+          Used together with target, for a target with the semver build-number strategy: the
+          last two digits of its build number (1 to 99), to upload the same version again.
+          Default: the run attempt.
+        required: false
+        type: string
 
 # One group per pushed commit, so GitHub never cancels a waiting run (it keeps only one
 # waiting run per group): a release-commit push always gets its publish run. Runs for older

@@ -31,7 +31,7 @@ export const CONFIG_DESCRIPTIONS: Record<string, string> = {
     "The tag for a release that was superseded before it was complete. Must contain `{version}` and differ from `tags.release`. Keep it outside the namespace your tag-triggered workflows listen to.",
   buildNumber: "How build numbers are computed. A target can override any of these keys.",
   "buildNumber.strategy":
-    "`timestamp`: seconds since `epoch`, plus `offset`. `run-number`: `github.run_number` plus `offset`. `semver`: derived from the version (not allowed while previews are enabled). `eas`: no build number at all, for Expo builds on EAS.",
+    "`timestamp`: seconds since `epoch`, plus `offset`. `run-number`: `github.run_number` plus `offset`. `semver`: derived from the version; not allowed here while previews are enabled, and only on targets that previews don't build. `eas`: no build number at all, for Expo builds on EAS.",
   "buildNumber.epoch": "Start of the `timestamp` strategy, as an ISO 8601 date-time.",
   "buildNumber.offset":
     "Added to every build number. Use it when existing builds in a store have higher numbers than the strategy would produce.",
@@ -44,7 +44,7 @@ export const CONFIG_DESCRIPTIONS: Record<string, string> = {
   "gitlab.tagPipelines":
     "Let launchset's release and prerelease tags start tag pipelines. With `false`, every tag launchset pushes on GitLab is pushed with `git push -o ci.skip`, so none starts a pipeline; marker and partial tags never do.",
   "#Previews":
-    "Set `preview: false` to switch off previews and prerelease branches. That is the only way to use the `semver` build-number strategy.",
+    "Set `preview: false` to switch off previews and prerelease branches. While previews are on, the `semver` build-number strategy is only allowed on targets that previews never build (see Build numbers).",
   preview:
     "Preview builds and prerelease branches. `false` switches them off; an object configures them.",
   "preview.label": "A PR with this label gets a preview build.",

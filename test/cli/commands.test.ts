@@ -614,6 +614,16 @@ describe("verify, mark, finalize, ship, hotfix, check", () => {
     );
   });
 
+  it("ship --attempt: only for semver targets, a positive integer", async () => {
+    const f = fixtureRepo();
+    const timestamp = await cli(["ship", "--target", "ios", "--attempt", "2"], { cwd: f.dir });
+    expect(timestamp.code).toBe(1);
+    expect(timestamp.stderr).toContain('ios uses the "timestamp" build-number strategy');
+    const zero = await cli(["ship", "--target", "ios", "--attempt", "0"], { cwd: f.dir });
+    expect(zero.code).toBe(2);
+    expect(zero.stderr).toContain("expected a positive integer");
+  });
+
   it("ship refuses an auto target", async () => {
     const f = fixtureRepo();
     const r = await cli(["ship", "--target", "web"], { cwd: f.dir });

@@ -174,6 +174,56 @@ describe("branch previews (8.3, 9.7)", () => {
     expect(p.version).toBe("1.4.2-release-1-4-x.17");
   });
 
+  describe("semver targets (7.2)", () => {
+    const semverConfig = makeConfig({
+      preview: { targets: ["web"] },
+      targets: {
+        web: { type: "web" },
+        ios: {
+          type: "ios",
+          source: { kind: "xcodeproj", file: "ios/App.xcodeproj" },
+          release: "manual",
+          buildNumber: { strategy: "semver" },
+        },
+      },
+    });
+    const dispatch = (targets?: string[]) =>
+      planPreview(
+        input({
+          config: semverConfig,
+          tags: tags(semverConfig, ["v1.4.0"]),
+          branch: "feature/x",
+          trigger: { kind: "dispatch", ...(targets ? { targets } : {}) },
+        }),
+      );
+
+    it("never previews them: the targets input can't name one", () => {
+      expect(planOf(dispatch()).matrix).toEqual(["web"]);
+      expect(() => dispatch(["web", "ios"])).toThrow(LaunchsetError);
+      let error: unknown;
+      try {
+        dispatch(["ios"]);
+      } catch (thrown) {
+        error = thrown;
+      }
+      expect(error).toMatchObject({
+        code: "semver-preview",
+        message: expect.stringContaining(
+          '`ios` uses the "semver" build-number strategy, so it can\'t be previewed',
+        ),
+      });
+    });
+
+    it("leaves them out of all, with a notice", () => {
+      const decision = dispatch(["all"]);
+      expect(planOf(decision).matrix).toEqual(["web"]);
+      if (decision.kind !== "plan") throw new Error("expected a plan");
+      expect(decision.notices).toContain(
+        'Not building `ios`: the "semver" build-number strategy can\'t be used for previews.',
+      );
+    });
+  });
+
   it("rejects unknown dispatch targets", () => {
     expect(() => planPreview(input({ trigger: { kind: "dispatch", targets: ["nope"] } }))).toThrow(
       /no target "nope"/,

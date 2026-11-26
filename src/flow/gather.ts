@@ -217,11 +217,13 @@ export interface ReleaseEventOptions {
   target?: string;
   version?: string;
   force?: boolean;
+  attempt?: number;
 }
 
 /**
  * The release event (spec 9.3): explicit, else `workflow_dispatch` (inputs `target`,
- * `version`, `force` from the payload, overridden by explicit options), else a push. A
+ * `version`, `force`, `attempt` from the payload, overridden by explicit options), else a
+ * push. A
  * `target` option without an event means a dispatch (shipping a manual target).
  */
 export function releaseEventFor(
@@ -230,7 +232,7 @@ export function releaseEventFor(
 ): ReleaseEvent {
   if (options.event) return options.event;
   const dispatch = context.ci.event?.kind === "dispatch";
-  if (!dispatch && !options.target) return { kind: "push" };
+  if (!dispatch && !options.target && options.attempt === undefined) return { kind: "push" };
   const inputs = dispatch ? (context.ci.event?.inputs ?? {}) : {};
   const event: ReleaseEvent = { kind: "dispatch" };
   const target = options.target || inputs.target;
@@ -239,7 +241,22 @@ export function releaseEventFor(
   if (version) event.version = version;
   const force = options.force ?? (inputs.force === "true" ? true : undefined);
   if (force) event.force = true;
+  const attempt = options.attempt ?? attemptInput(inputs.attempt);
+  if (attempt !== undefined) event.attempt = attempt;
   return event;
+}
+
+/** The `attempt` input: empty means not given; anything but a whole number is an error. */
+function attemptInput(value: string | undefined): number | undefined {
+  const text = value?.trim();
+  if (!text) return undefined;
+  if (!/^\d+$/.test(text)) {
+    throw new LaunchsetError(
+      "invalid-build-number",
+      `the attempt input must be a whole number from 1 to 99, got "${text}"`,
+    );
+  }
+  return Number(text);
 }
 
 /** A cached reader of the root version at any commit. */

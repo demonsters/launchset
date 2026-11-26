@@ -39,7 +39,8 @@
 #   - LAUNCHSET_TARGET=<name>: ships a manual target (for example an iOS app that is not built on
 #     every release). LAUNCHSET_RELEASE_VERSION=<version> picks the released version (default:
 #     the latest release on this branch); LAUNCHSET_FORCE=true ships it even if the target
-#     already shipped a higher version.
+#     already shipped a higher version. LAUNCHSET_ATTEMPT=<1-99> sets the last two digits of a
+#     "semver" build number (default 1), to upload the same version again.
 @@preview_manual_help@@
 #   GitLab may restrict pipeline variables by role: Settings > CI/CD > Variables, "Minimum role
 #   to use pipeline variables" (default Maintainer on self-managed; no_one_allowed for new

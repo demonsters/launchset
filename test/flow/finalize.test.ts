@@ -319,6 +319,51 @@ describe("ship by hand", () => {
     ).rejects.toMatchObject({ code: "not-released" });
   });
 
+  it("sets the attempt of a semver build number with --attempt", async () => {
+    const project = setupProject({
+      config: {
+        // Previews build only web, so the manual iOS app may use semver.
+        preview: { targets: ["web"] },
+        targets: {
+          web: { type: "web" },
+          ios: {
+            type: "ios",
+            source: { kind: "xcconfig", file: "ios/Version.xcconfig" },
+            release: "manual",
+            buildNumber: { strategy: "semver" },
+          },
+        },
+      },
+    });
+    const local = async () => {
+      const context = await contextFor(project.repo, { token: null });
+      context.run = undefined;
+      return context;
+    };
+    const first = await ship(await local(), { target: "ios" });
+    expect(first.data.buildNumber).toBe(10_400_001);
+    project.repo.git("checkout", "--quiet", "--", ".");
+
+    const second = await ship(await local(), { target: "ios", attempt: 2 });
+    expect(second.data.buildNumber).toBe(10_400_002);
+    expect(readFileSync(`${project.repo.dir}/ios/Version.xcconfig`, "utf8")).toBe(
+      xcconfig("1.4.0", 10_400_002),
+    );
+    expect(second.lines.join("\n")).toContain("--build-number 10400002");
+    project.repo.git("checkout", "--quiet", "--", ".");
+
+    await expect(ship(await local(), { target: "ios", attempt: 100 })).rejects.toMatchObject({
+      code: "invalid-build-number",
+    });
+  });
+
+  it("refuses --attempt for a target without the semver strategy", async () => {
+    const project = setupProject();
+    await expect(
+      ship(await contextFor(project.repo, { token: null }), { target: "ios", attempt: 2 }),
+    ).rejects.toMatchObject({ code: "attempt-not-semver" });
+  });
+
   it("refuses the run-number strategy outside CI", async () => {
     const project = setupProject({
       config: {

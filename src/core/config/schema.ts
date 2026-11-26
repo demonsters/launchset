@@ -777,8 +777,25 @@ function resolveTarget(
   }
 }
 
-const SEMVER_WITH_PREVIEWS =
-  'the "semver" build-number strategy can\'t be used while previews are enabled (previews and the real release would compete for the same numbers). Use "timestamp", or set preview: false';
+/**
+ * Targets previews can build (spec 9.7): `preview.targets` and every `preview.branches`
+ * entry's `targets` (an entry without them uses `preview.targets`); `"all"` is every target.
+ * Empty when previews are disabled.
+ */
+export function previewBuildTargets(
+  config: Pick<ResolvedConfig, "preview" | "targets">,
+): Set<string> {
+  if (!config.preview.enabled) return new Set();
+  const lists = [config.preview.targets, ...config.preview.branches.map((b) => b.targets)];
+  if (lists.includes("all")) return new Set(Object.keys(config.targets));
+  return new Set(lists.flatMap((list) => (Array.isArray(list) ? list : [])));
+}
+
+const SEMVER_ROOT_WITH_PREVIEWS =
+  'the "semver" build-number strategy can\'t be the repo-wide strategy while previews are enabled: previews get their build number from it, and a preview of 1.5.0 and the real 1.5.0 would compete for the same numbers. Use "timestamp" here and set buildNumber: { strategy: "semver" } on the targets previews don\'t build, or set preview: false';
+
+const semverPreviewTarget = (name: string) =>
+  `target "${name}" can't use the "semver" build-number strategy: previews build it, and a preview of 1.5.0 and the real 1.5.0 would compete for the same numbers. Take "${name}" out of preview.targets (and the targets of preview.branches), use "timestamp", or set preview: false`;
 
 /** Cross-field rules from spec 5 that zod's per-field checks can't express. */
 function semanticIssues(config: ResolvedConfig): ConfigIssue[] {
@@ -817,18 +834,22 @@ function semanticIssues(config: ResolvedConfig): ConfigIssue[] {
     });
   }
 
-  if (config.preview.enabled && config.buildNumber.strategy === "semver") {
-    issues.push({ path: "buildNumber.strategy", message: SEMVER_WITH_PREVIEWS });
+  // Previews compute the plan's own build number (the `build-number` output) with the root
+  // strategy, so it can't be semver even when every preview target overrides it.
+  const rootSemver = config.preview.enabled && config.buildNumber.strategy === "semver";
+  if (rootSemver) {
+    issues.push({ path: "buildNumber.strategy", message: SEMVER_ROOT_WITH_PREVIEWS });
   }
+  const previewBuilt = previewBuildTargets(config);
 
   for (const target of Object.values(config.targets)) {
     const base = `targets.${target.name}`;
-    if (
-      config.preview.enabled &&
-      target.buildNumber.strategy === "semver" &&
-      config.buildNumber.strategy !== "semver"
-    ) {
-      issues.push({ path: `${base}.buildNumber.strategy`, message: SEMVER_WITH_PREVIEWS });
+    // With a semver root, the root's issue covers the targets too.
+    if (!rootSemver && previewBuilt.has(target.name) && target.buildNumber.strategy === "semver") {
+      issues.push({
+        path: `${base}.buildNumber.strategy`,
+        message: semverPreviewTarget(target.name),
+      });
     }
     target.files.forEach((file, index) => {
       if (file.kind === "image" && target.type !== "docker") {

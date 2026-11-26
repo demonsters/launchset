@@ -43,6 +43,7 @@ Set on **Build → Pipelines → Run pipeline** or through the API. They need [p
 | `LAUNCHSET_TARGET=<name>` | Base or maintenance branch | Ships a manual target. See [Manual targets](/guides/manual-targets/). |
 | `LAUNCHSET_RELEASE_VERSION=<version>` | With `LAUNCHSET_TARGET` | The released version to ship. Default: the latest release on the branch. |
 | `LAUNCHSET_FORCE=true` | With `LAUNCHSET_TARGET` | Ships even when the target already shipped a higher version. |
+| `LAUNCHSET_ATTEMPT=<1-99>` | With `LAUNCHSET_TARGET` | For a target with the `semver` build-number strategy: the last two digits of its build number (default 1), to upload the same version again. An error for other strategies. |
 | `LAUNCHSET_PREVIEW=true` | Any branch | Builds a preview of the branch instead of releasing. |
 | `LAUNCHSET_TARGET=<names>` | With `LAUNCHSET_PREVIEW=true` | The targets to preview (comma-separated, or `all`). |
 

@@ -57,7 +57,7 @@ export const CLI_INTROS: Record<string, string> = {
   verify:
     "Asks the store, registry or npm whether this version and build number is already published (see `verify` on the target). It prints `already-published` and fails when the store already has a higher build number.",
   mark: "Creates and pushes the marker tag `launchset/<target>@<version>` that records one target shipped. For a manual target you shipped by hand, pass `--version` (and `--build-number`). It needs a token that can push.",
-  ship: "Prepares a manual target for a build you make yourself: checks that HEAD is at the release tag of the version, computes a build number and stamps the target's files. After the upload, run `launchset mark`.",
+  ship: "Prepares a manual target for a build you make yourself: checks that HEAD is at the release tag of the version, computes a build number and stamps the target's files. After the upload, run `launchset mark`. For a target with the `semver` build-number strategy, `--attempt` sets the attempt part of the number (1 outside CI), so another upload of the same version gets a new one.",
   finalize:
     "Creates the release tag and the GitHub Release once every auto target has a marker. Also marks superseded releases as partial and opens the changelog backport PR after a maintenance release. It fails and lists the missing targets when the release is incomplete.",
   hotfix:

@@ -6,6 +6,7 @@ import {
   defineConfig,
   gitlabSettings,
   hostConfigIssues,
+  previewBuildTargets,
   resolveConfig,
   targetShell,
   UNKNOWN_KEY_MESSAGE,
@@ -173,18 +174,101 @@ describe("validation rules (spec 5)", () => {
     ]);
   });
 
-  it("semver build numbers with previews", () => {
-    const [root] = issues({ buildNumber: { strategy: "semver" }, targets: { web } });
-    expect(root?.path).toBe("buildNumber.strategy");
-    expect(root?.message).toMatch(/can't be used while previews are enabled.*set preview: false/);
-    expect(
-      issues({ targets: { web: { type: "web", buildNumber: { strategy: "semver" } } } }).map(
-        (i) => i.path,
-      ),
-    ).toEqual(["targets.web.buildNumber.strategy"]);
-    expect(() =>
-      resolveConfig({ preview: false, buildNumber: { strategy: "semver" }, targets: { web } }),
-    ).not.toThrow();
+  describe("semver build numbers with previews", () => {
+    const ios = { type: "ios", source: { kind: "xcodeproj", file: "ios/App.xcodeproj" } } as const;
+    const semverIos = { ...ios, release: "manual", buildNumber: { strategy: "semver" } } as const;
+    const targets = { web, ios: semverIos };
+    const paths = (input: unknown) => issues(input).map((i) => i.path);
+
+    it("a repo-wide semver is rejected while previews are enabled", () => {
+      const [root, ...rest] = issues({ buildNumber: { strategy: "semver" }, targets: { web } });
+      expect(rest).toEqual([]);
+      expect(root?.path).toBe("buildNumber.strategy");
+      expect(root?.message).toMatch(/repo-wide strategy while previews are enabled/);
+      expect(root?.message).toMatch(/set buildNumber: \{ strategy: "semver" \} on the targets/);
+      expect(root?.message).toMatch(/set preview: false$/);
+      // Also when every preview target overrides it: previews number the plan with the root.
+      expect(
+        paths({
+          buildNumber: { strategy: "semver" },
+          preview: { targets: ["web"] },
+          targets: { web: { type: "web", buildNumber: { strategy: "timestamp" } }, ios },
+        }),
+      ).toEqual(["buildNumber.strategy"]);
+    });
+
+    it('a target in preview.targets "all" (the default) is rejected', () => {
+      const [issue, ...rest] = issues({ targets });
+      expect(rest).toEqual([]);
+      expect(issue).toEqual({
+        path: "targets.ios.buildNumber.strategy",
+        message:
+          'target "ios" can\'t use the "semver" build-number strategy: previews build it, and a preview of 1.5.0 and the real 1.5.0 would compete for the same numbers. Take "ios" out of preview.targets (and the targets of preview.branches), use "timestamp", or set preview: false',
+      });
+      expect(paths({ preview: { targets: "all" }, targets })).toEqual([
+        "targets.ios.buildNumber.strategy",
+      ]);
+    });
+
+    it("a target that previews don't build may use semver", () => {
+      expect(() => resolveConfig({ preview: { targets: ["web"] }, targets })).not.toThrow();
+      expect(() => resolveConfig({ preview: { targets: [] }, targets })).not.toThrow();
+      expect(() =>
+        resolveConfig({
+          preview: {
+            targets: ["web"],
+            branches: ["develop", { branch: "beta", targets: ["web"] }],
+          },
+          targets,
+        }),
+      ).not.toThrow();
+    });
+
+    it("a target in preview.targets is rejected", () => {
+      expect(paths({ preview: { targets: ["web", "ios"] }, targets })).toEqual([
+        "targets.ios.buildNumber.strategy",
+      ]);
+    });
+
+    it("a target in the targets of a preview.branches entry is rejected", () => {
+      expect(
+        paths({
+          preview: { targets: ["web"], branches: [{ branch: "develop", targets: ["ios"] }] },
+          targets,
+        }),
+      ).toEqual(["targets.ios.buildNumber.strategy"]);
+      expect(
+        paths({
+          preview: { targets: ["web"], branches: [{ branch: "beta", targets: "all" }] },
+          targets,
+        }),
+      ).toEqual(["targets.ios.buildNumber.strategy"]);
+      // An entry without targets uses preview.targets, which is "all" by default.
+      expect(paths({ preview: { branches: ["develop"] }, targets })).toEqual([
+        "targets.ios.buildNumber.strategy",
+      ]);
+    });
+
+    it("anything goes with preview: false", () => {
+      expect(() =>
+        resolveConfig({ preview: false, buildNumber: { strategy: "semver" }, targets: { web } }),
+      ).not.toThrow();
+      expect(() => resolveConfig({ preview: false, targets })).not.toThrow();
+    });
+
+    it("previewBuildTargets", () => {
+      const names = (input: unknown) => [...previewBuildTargets(resolveConfig(input))].sort();
+      const timestampIos = { web, ios };
+      expect(names({ targets: timestampIos })).toEqual(["ios", "web"]);
+      expect(names({ preview: { targets: ["web"] }, targets: timestampIos })).toEqual(["web"]);
+      expect(
+        names({
+          preview: { targets: [], branches: [{ branch: "develop", targets: ["ios"] }] },
+          targets: timestampIos,
+        }),
+      ).toEqual(["ios"]);
+      expect(names({ preview: false, targets: timestampIos })).toEqual([]);
+    });
   });
 
   describe("docker tags (6.1)", () => {
