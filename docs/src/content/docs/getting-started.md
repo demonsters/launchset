@@ -14,7 +14,7 @@ On GitLab? See [launchset on GitLab](/gitlab/getting-started/). The release flow
 You need:
 
 - A GitHub repository, and GitHub Actions turned on.
-- Node 26 or newer on the machine where you run the CLI. (The GitHub Action brings its own Node.)
+- Node 24 or newer on the machine where you run the CLI. (The GitHub Action brings its own Node.)
 - Read access to the private `@demonsters/launchset` package on npm. If `npx @demonsters/launchset --version` fails with a 404 or 401, set up npm authentication for the `@demonsters` scope first.
 - Owner rights in the GitHub org, to create a GitHub App. See [GitHub App setup](/github-app/).
 

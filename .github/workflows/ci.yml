@@ -21,16 +21,13 @@ jobs:
         with:
           fetch-depth: 0
       - uses: pnpm/action-setup@v4
-      # Node 24 is the GitHub Actions runtime of the bundled action: the smoke test runs the
-      # bundle with it (LAUNCHSET_NODE24). Node 26 runs everything else.
+      # Node 24 is both the supported minimum and the GitHub Actions runtime of the bundled
+      # action: the smoke test runs the bundle with it (LAUNCHSET_NODE24).
       - uses: actions/setup-node@v5
         with:
           node-version: 24
-      - run: echo "LAUNCHSET_NODE24=$(command -v node)" >> "$GITHUB_ENV"
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 26
           cache: pnpm
+      - run: echo "LAUNCHSET_NODE24=$(command -v node)" >> "$GITHUB_ENV"
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
       - run: pnpm typecheck

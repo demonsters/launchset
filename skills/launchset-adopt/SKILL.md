@@ -9,7 +9,7 @@ launchset releases repos where **one version** drives **many targets** (Docker i
 
 You are moving an **existing** repo onto it. This works on GitHub and on GitLab (GitLab.com or self-managed 18.2+); the steps below name both where they differ. The CLI does the detecting and the writing. Your job is to ask the human the right questions, deal with what conflicts, move the team's build steps, and deliver one reviewable PR.
 
-Use `npx @demonsters/launchset` (Node 26 or newer; the package is private, so npm needs access to the `@demonsters` scope. If `npx` fails with 401 or 404, tell the human and stop).
+Use `npx @demonsters/launchset` (Node 24 or newer; the package is private, so npm needs access to the `@demonsters` scope. If `npx` fails with 401 or 404, tell the human and stop).
 
 ## The rules
 

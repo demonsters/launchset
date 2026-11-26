@@ -72,7 +72,7 @@ export async function getPlayAccessToken(
   account: ServiceAccount,
   ctx: VerifyContext,
 ): Promise<string> {
-  let key: CryptoKey;
+  let key: Awaited<ReturnType<typeof importPKCS8>>;
   try {
     key = await importPKCS8(account.private_key, "RS256");
   } catch (error) {
