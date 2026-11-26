@@ -1,0 +1,21 @@
+name: Feature request
+description: Something launchset doesn't do yet.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The release problem you have, in your own setup. What platforms, which CI, how you release today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would help?
+      description: How you'd like launchset to handle it. A config or command sketch is welcome.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What have you tried?
+      description: Workarounds, or other tools you've looked at.

@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or idea
+    url: https://github.com/demonsters/launchset/discussions
+    about: Ask how to set something up, or discuss an idea before opening an issue.
+  - name: Security problem
+    url: https://github.com/demonsters/launchset/security/advisories/new
+    about: Report a vulnerability privately. Please don't open a public issue.
+  - name: Documentation
+    url: https://demonsters.github.io/launchset/
+    about: Getting started, targets, guides and the configuration reference.

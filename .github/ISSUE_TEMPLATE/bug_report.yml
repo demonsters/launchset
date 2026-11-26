@@ -1,0 +1,55 @@
+name: Bug report
+description: launchset did something wrong, or failed with an error.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please remove tokens, private keys and anything else secret from what you paste. For a security problem, use **Report a vulnerability** in the Security tab instead.
+  - type: input
+    id: version
+    attributes:
+      label: launchset version
+      description: "`npx launchset --version`, or the `launchset-action` tag your workflow uses."
+      placeholder: "1.2.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: host
+    attributes:
+      label: Where does it run?
+      options:
+        - GitHub Actions
+        - GitLab CI
+        - On my machine (CLI)
+    validations:
+      required: true
+  - type: input
+    id: command
+    attributes:
+      label: Command or workflow step
+      description: The launchset command, or the action's `command` input.
+      placeholder: "launchset init --detect, or command: release"
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: Your launchset config
+      description: "`launchset.config.*`, or the part that matters."
+      render: ts
+  - type: textarea
+    id: files
+    attributes:
+      label: The file it got wrong (for stamping problems)
+      description: A minimal copy of the `build.gradle`, `project.pbxproj`, `Info.plist`, `.xcconfig`, `app.json` or other file, with names removed. This often becomes a test fixture.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Output or logs
+      description: The error and the lines around it.
+      render: text
