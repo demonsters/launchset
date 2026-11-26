@@ -5,7 +5,9 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for reporting. Please remove tokens, private keys and anything else secret from what you paste. For a security problem, use **Report a vulnerability** in the Security tab instead.
+        Thanks for reporting. Weird Gradle, Xcode and Expo setups are very welcome: a copy of the file launchset got wrong is the most useful thing you can send.
+
+        Please remove tokens, private keys and anything else secret from what you paste. For a security problem, use **Report a vulnerability** in the Security tab instead.
   - type: input
     id: version
     attributes:
