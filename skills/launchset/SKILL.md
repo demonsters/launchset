@@ -162,6 +162,7 @@ Your knowledge of GitHub Action versions is out of date. Do this when you add or
 - **Check compatibility before you bump.** Read the release notes of every major in between (`gh api repos/<owner>/<repo>/releases/tags/<tag> --jq .body`). Check that each input and output the step uses still exists with the same meaning: read `action.yml` at the new tag and look for renamed, removed or deprecated inputs. Also check behaviour changes the workflow depends on, and the minimum runner version.
 - **Adapt or hold back.** Adapt the step when an input was renamed. If the new major needs a secret or variable the repo may not have, or a runner upgrade, keep the old major and tell the human what it would take. Never make a step depend on a secret that doesn't exist yet.
 - **Say what you checked** in the PR description: the old major, the new major and what changed.
+- **Outdated pins you didn't come for.** If the workflow you're editing, or another one you read, pins actions that are behind, don't update them silently and don't ignore them. Tell the human which ones they are (`path:line`, old and new major, compatible or not), recommend updating the compatible ones, and ask whether to do it now, in a separate commit, or later.
 
 ## Maintenance branches
 

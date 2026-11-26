@@ -153,14 +153,26 @@ Do this for every `uses:` in the workflows the PR adds or changes: the steps ini
    - **Outputs** that later steps read (`steps.<id>.outputs.*`).
    - **Behaviour** the workflow depends on: triggers it now refuses (for example `actions/checkout@v7` won't check out fork PRs under `pull_request_target` or `workflow_run`), where credentials are kept, caching, path layouts, and failures that used to be warnings.
    - **Runner requirements**: the minimum runner version for self-hosted runners, and the Node runtime.
-3. **Decide per action.**
-   - Compatible: bump it.
-   - Needs a small edit: bump it and adapt the step (a renamed input, an output name).
-   - Needs something only the human can provide (a new secret or variable, a runner upgrade), or breaks a step: **don't bump.** Keep the working major and explain why in the PR.
+3. **Work out a recommendation per action.**
+   - Compatible: update.
+   - Needs a small edit: update and adapt the step (a renamed input, an output name).
+   - Needs something only the human can provide (a new secret or variable, a runner upgrade), or breaks a step: keep the working major for now, and say what the update would take.
 
    Never make a step depend on a secret the repo may not have. For example, `actions/create-github-app-token@v3` deprecates `app-id` for `client-id`. The generated workflows pass `vars.LAUNCHSET_APP_CLIENT_ID || secrets.LAUNCHSET_APP_ID`, so an org with only the older secret keeps working.
-4. **Stay inside the migration.** Don't bump workflows the PR doesn't otherwise touch. List the outdated ones in the PR instead.
-5. **Report it.** In the PR description, list each action you checked: the old major, the new major and what you verified. Name the ones you held back and why.
+4. **Apply it to launchset's own steps** (`stamp`, `verify`, `mark`, the token and checkout steps init generated): update the compatible ones without asking. They are launchset's, and the human approved launchset's workflows.
+5. **Ask about the team's steps.** The steps you moved over are the team's, and so are the workflows the migration doesn't touch. Outdated pins there are common, often several majors behind. Don't update them silently, and don't leave them silently either. Ask the human once, in one question that lists every outdated action: where it is (`path:line`), the old and new major, what changes for that step, and your recommendation. For example:
+
+   > The build steps you moved use outdated actions. I recommend updating them in this PR:
+   > - `docker/build-push-action` v5 → v7 (`launchset-release.yml:142`): compatible, the inputs you use are unchanged.
+   > - `actions/setup-java` v3 → v6 (`launchset-release.yml:160`): compatible.
+   > - `ruby/setup-ruby` v1: current.
+   >
+   > `ci.yml` and `deploy.yml` (not part of the migration) also use `actions/checkout@v3` and `actions/setup-node@v3`; both are compatible. Shall I update those too, in a separate commit in this PR?
+   >
+   > Hold back: `some/action` v2 → v3 needs a new secret `X`.
+
+   Recommend updating everything that is compatible. Do what the human answers: update the steps they accept, in a separate commit so the review can tell the version updates apart from the migration, and leave the rest as it was.
+6. **Report it.** In the PR description, list each action you checked: the old major, the new major and what you verified. Name the ones you held back and why, and the ones the human chose to keep.
 
 To keep the pins current after the migration, suggest Dependabot for `github-actions`. init lists it as a manual step when the repo has no Dependabot or Renovate configuration. A Dependabot PR for a new major needs the same check: it bumps the version, not the inputs.
 
