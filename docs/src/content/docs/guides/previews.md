@@ -67,7 +67,7 @@ The `stamp` step in the preview workflow writes the preview version and build nu
 
 `steps.stamp.outputs.channel` is `preview` (or `prerelease` on a prerelease branch). Docker previews get the tags from the `preview` list: by default `1.5.0-pr.123.4` and `pr-123` for a PR, `1.5.0-develop.17` and `develop` for a branch. `latest` and plain `X.Y.Z` tags are not allowed in preview lists.
 
-iOS builds use the plain next version (`1.5.0`), because Apple doesn't accept suffixes. The build number tells them apart. This is also why `buildNumber.strategy: "semver"` is rejected while previews are on.
+iOS builds use the plain next version (`1.5.0`), because Apple doesn't accept suffixes. The build number tells them apart. This is also why, while previews are on, the `semver` build-number strategy is only allowed on targets that previews never build, and not as the repo-wide `buildNumber.strategy` (see [Build numbers](/guides/build-numbers/#previews)).
 
 ## Switch previews off
 
@@ -75,7 +75,7 @@ iOS builds use the plain next version (`1.5.0`), because Apple doesn't accept su
 preview: false,
 ```
 
-Delete `launchset-preview.yml` too. (If you leave it, its runs end with a notice that previews are disabled.) The `semver` build-number strategy becomes allowed.
+Delete `launchset-preview.yml` too. (If you leave it, its runs end with a notice that previews are disabled.) The `semver` build-number strategy becomes allowed everywhere, repo-wide included.
 
 ## Prerelease branches
 
