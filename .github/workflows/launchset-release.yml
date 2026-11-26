@@ -20,6 +20,11 @@
 #                                                 takes the place of LAUNCHSET_APP_ID.
 #   (npm needs no secret: trusted publishing, see below.)
 #
+# Every job that uses the App key or npm's OIDC token runs in the `release` environment
+# (Settings → Environments), which only main, release/*.x and next/* may use. Secrets and
+# variables of the environment win over the org's, so the App's key can live there, out of
+# reach of workflows on any other branch. npm's trusted publisher names the environment too.
+#
 # npm auth: trusted publishing (OIDC), no long-lived token. The `build` job has
 # `id-token: write`; `npm publish` exchanges the workflow's OIDC token for a short-lived npm
 # token. Set up once on npmjs.com: package @demonsters/launchset → Settings → Trusted publishing
@@ -78,6 +83,7 @@ jobs:
   launchset:
     name: Plan release
     runs-on: ubuntu-latest
+    environment: release
     permissions:
       contents: read
     outputs:
@@ -123,6 +129,7 @@ jobs:
     # values is an error in GitHub Actions).
     if: contains(fromJSON('["publish","ship"]'), needs.launchset.outputs.mode) && needs.launchset.outputs.matrix != '[]'
     runs-on: ubuntu-latest
+    environment: release
     permissions:
       contents: read
       # npm trusted publishing (OIDC): `npm publish` gets a short-lived token.
@@ -247,6 +254,7 @@ jobs:
     # Runs even when a build failed, to report which targets are missing.
     if: always() && contains(fromJSON('["publish","ship"]'), needs.launchset.outputs.mode)
     runs-on: ubuntu-latest
+    environment: release
     permissions:
       contents: read
     steps:
