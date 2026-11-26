@@ -29,6 +29,7 @@ import {
   type GitLabScriptItem,
   gitlabCiOf,
   gitlabDockerBuilds,
+  gitlabJobShell,
   referencesTo,
   referencingJobs,
   runsOnTags,
@@ -52,6 +53,7 @@ import {
   pairOf,
   type RunCommand,
   runCommands,
+  runLines,
   type ScalarRef,
   shellCommands,
   tagGated,
@@ -92,9 +94,16 @@ export type GitLabOp =
   /** Comment out a script line (a plain sequence item). */
   | { op: "comment-item"; item: GitLabScriptItem; inSeq: boolean; reason: string }
   /** Replace a script line with the no-op `":"` (the script would be empty otherwise). */
-  | { op: "noop-item"; item: GitLabScriptItem; inSeq: boolean; reason: string }
+  | { op: "noop-item"; item: GitLabScriptItem; inSeq: boolean; reason: string; noop?: string }
   /** Comment out (or neutralize) commands inside a block scalar script item. */
-  | { op: "commands"; item: GitLabScriptItem; commands: RunCommand[]; reason: string }
+  | {
+      op: "commands";
+      item: GitLabScriptItem;
+      commands: RunCommand[];
+      reason: string;
+      /** The shell's no-op: `:` (default), or `$null` in PowerShell. */
+      noop?: string;
+    }
   /** A key of a job, e.g. `release:`. */
   | { op: "remove-pair"; pair: Pair }
   /** A `-t <image>:latest` flag of a build that has other tags. */
@@ -750,7 +759,17 @@ function commandEdits(
   if (commands.length === all.length) {
     return [workflowEdit(workflow, { op: "remove-step", job, step })];
   }
-  if (commands.some((c) => c.removal === null)) return undefined;
+  if (commands.some((c) => c.removal === null) || step.shell === "other") return undefined;
+  // The no-op that replaces a command inside a chain or block exists in sh (`:`) and
+  // PowerShell (`$null`), not in cmd, and a mixed matrix would need both.
+  const noop = step.shell === "posix" || step.shell === "powershell";
+  if (!noop && commands.some((c) => c.removal === "neutralize")) return undefined;
+  if (
+    (step.shell === "powershell" || step.shell === "mixed") &&
+    continuesWithBacktick(commands, all)
+  ) {
+    return undefined;
+  }
   const del = commands.filter((c) => c.removal === "delete");
   const neutral = commands.filter((c) => c.removal === "neutralize");
   const edits: Edit[] = [];
@@ -762,6 +781,16 @@ function commandEdits(
     );
   }
   return edits;
+}
+
+/**
+ * PowerShell continues a line with a backtick, which the shell reader doesn't know: true when
+ * one of `commands` (in `all`) ends with one, or follows a command that does, so it may span more
+ * lines than were found.
+ */
+function continuesWithBacktick(commands: RunCommand[], all: RunCommand[]): boolean {
+  const continues = (c: RunCommand | undefined) => /`\s*$/.test(c?.lines.at(-1)?.text ?? "");
+  return commands.some((c) => continues(c) || continues(all[all.indexOf(c) - 1]));
 }
 
 function commandEffect(edits: Edit[], step: WorkflowStep): string {
@@ -794,6 +823,35 @@ function stepReferences(workflow: Workflow, job: WorkflowJob, step: WorkflowStep
     });
   }
   return found;
+}
+
+/**
+ * A `run` step in another language (`shell: python`, `shell: node {0}`): its release commands
+ * are found in its strings, like a script file's, and init doesn't edit it.
+ */
+function otherShellStep(
+  workflow: Workflow,
+  job: WorkflowJob,
+  step: WorkflowStep,
+  draftFor: (job: WorkflowJob, step: WorkflowStep) => Draft,
+) {
+  const run = step.run as ScalarRef;
+  const js = /^(?:node|deno|bun|tsx)$/.test(step.shellName.replace(/^.*[\\/]/, ""));
+  const scan = scanScriptFile(run.value, js ? "step.js" : "step.py");
+  if (scan.kinds.length === 0) return;
+  const d = draftFor(job, step);
+  for (const k of scan.kinds) addKind(d, k);
+  const lines = runLines(run, workflow.text);
+  for (const n of scan.lines) {
+    const line = lines[n - 1];
+    d.evidence.push({
+      path: workflow.path,
+      line: line?.number ?? step.line,
+      note: `runs \`${(line?.text ?? run.value).trim().slice(0, 80)}\` (${step.shellName})`,
+    });
+  }
+  d.disable = undefined;
+  d.why = `the step runs in ${step.shellName}, not a shell, so init can't take single commands out of it; edit it by hand`;
 }
 
 function stepDrafts(workflow: Workflow, builds: DockerBuild[], scriptPaths: string[]): Draft[] {
@@ -842,6 +900,10 @@ function stepDrafts(workflow: Workflow, builds: DockerBuild[], scriptPaths: stri
         continue;
       }
       if (!step.run) continue;
+      if (step.shell === "other") {
+        otherShellStep(workflow, job, step, draftFor);
+        continue;
+      }
       const wd = step.workingDirectory ? normalizeRel(step.workingDirectory) : ".";
       const matched: RunCommand[] = [];
       const all = runCommands(step.run, workflow.text);
@@ -878,7 +940,9 @@ function stepDrafts(workflow: Workflow, builds: DockerBuild[], scriptPaths: stri
         } else {
           d.disable = undefined;
           d.why =
-            "a conflicting command is part of a heredoc or a compound line (if/case on one line); edit it by hand";
+            step.shell === "cmd" || step.shell === "mixed"
+              ? `a conflicting command is part of a chain or a block, and the step runs in ${step.shellName}, which has no no-op init can put in its place; edit it by hand`
+              : "a conflicting command is part of a heredoc or a compound line (if/case on one line); edit it by hand";
         }
       }
     }
@@ -1151,6 +1215,8 @@ function gitlabJobDraft(
     );
   }
 
+  // A PowerShell runner has no `:`; `$null` is its no-op statement.
+  const powershell = gitlabJobShell(ci, job).shell === "powershell";
   // Lines to comment out (plain items), commands to disable inside block scalars.
   const commented = new Set<GitLabScriptItem>();
   const inBlock = new Map<GitLabScriptItem, RunCommand[]>();
@@ -1166,6 +1232,9 @@ function gitlabJobDraft(
     }
     if (commands.some((c) => c.removal === null)) {
       return "a conflicting command is part of a heredoc or a compound line (if/case on one line); edit it by hand";
+    }
+    if (powershell && continuesWithBacktick(commands, item.commands)) {
+      return "a conflicting command is next to a PowerShell line continuation (`); edit it by hand";
     }
     const list = inBlock.get(item) ?? [];
     for (const c of commands) if (!list.includes(c)) list.push(c);
@@ -1220,6 +1289,7 @@ function gitlabJobDraft(
         item,
         inSeq: s.seq !== undefined,
         reason,
+        ...(powershell ? { noop: "$null" } : {}),
       });
     });
     if (s.seq === undefined && !singleLine(gone[0] as GitLabScriptItem, file.text)) {
@@ -1227,11 +1297,13 @@ function gitlabJobDraft(
     }
     parts.push(
       left === 0
-        ? `turns ${s.key} into the no-op ":" (# launchset: disabled — …)`
+        ? `turns ${s.key} into the no-op ${powershell ? "$null" : '":"'} (# launchset: disabled — …)`
         : `comments out the conflicting ${s.key} ${gone.length === 1 ? "line" : "lines"} (# launchset: disabled — …)`,
     );
   }
-  for (const [item, commands] of inBlock) ops.push({ op: "commands", item, commands, reason });
+  for (const [item, commands] of inBlock) {
+    ops.push({ op: "commands", item, commands, reason, ...(powershell ? { noop: "$null" } : {}) });
+  }
   if (inBlock.size > 0) {
     parts.push("disables the conflicting commands in its script (# launchset: disabled — …)");
   }

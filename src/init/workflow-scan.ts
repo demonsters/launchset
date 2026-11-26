@@ -39,6 +39,13 @@ export interface ScalarRef {
   line: number;
 }
 
+/**
+ * The shell a `run` step runs in: `posix` (bash, sh), `powershell` (pwsh, the default on
+ * Windows runners), `cmd`, `mixed` (a matrix of Windows and other runners, so bash on some and
+ * pwsh on others) or `other` (python, node, a custom command).
+ */
+export type StepShell = "posix" | "powershell" | "cmd" | "mixed" | "other";
+
 export interface WorkflowStep {
   index: number;
   node: YAMLMap;
@@ -52,6 +59,10 @@ export interface WorkflowStep {
   withPairs: Map<string, Pair>;
   env: Record<string, string>;
   workingDirectory?: string;
+  /** The shell its `run` runs in: `shell:`, else `defaults.run.shell`, else the runner's. */
+  shell: StepShell;
+  /** The `shell:` value it comes from (`python`), or the runner's default (`pwsh`, `bash`). */
+  shellName: string;
   /** `step "Release"` or `step 2 (changesets/action)`. */
   label: string;
 }
@@ -237,6 +248,8 @@ function parseStep(text: string, node: YAMLMap, index: number): WorkflowStep {
     with: withValues,
     withPairs,
     env: envOf(pairOf(node, "env")?.value),
+    shell: "posix",
+    shellName: "bash",
     label: name
       ? `step "${name}"`
       : `step ${index + 1}${uses ? ` (${uses.replace(/@.*/, "")})` : ""}`,
@@ -251,6 +264,53 @@ function parseStep(text: string, node: YAMLMap, index: number): WorkflowStep {
   return step;
 }
 
+/** The kind of shell a `shell:` value names (`bash -e {0}` → posix, `pwsh` → powershell). */
+export function shellKind(value: string): StepShell {
+  const program = (value.trim().split(/\s+/)[0] ?? "").replace(/^.*[\\/]/, "").toLowerCase();
+  if (/^(?:bash|sh|zsh|dash|ksh)$/.test(program)) return "posix";
+  if (program === "pwsh" || program === "powershell") return "powershell";
+  if (program === "cmd") return "cmd";
+  return "other";
+}
+
+/** `defaults.run.shell` of a workflow or job. */
+function defaultShell(node: YAMLMap): string | undefined {
+  const defaults = pairOf(node, "defaults")?.value;
+  const run = isMap(defaults) ? pairOf(defaults as YAMLMap, "run")?.value : undefined;
+  const shell = isMap(run) ? pairOf(run as YAMLMap, "shell")?.value : undefined;
+  return isScalar(shell) && typeof shell.value === "string" ? shell.value : undefined;
+}
+
+const strings = (node: unknown): string[] => {
+  if (isScalar(node))
+    return node.value === null || node.value === undefined ? [] : [String(node.value)];
+  if (isSeq(node)) return node.items.flatMap(strings);
+  if (isMap(node)) return node.items.flatMap((i) => strings((i as Pair).value));
+  return [];
+};
+
+/**
+ * The default shell of a job's runner: pwsh on Windows, bash elsewhere. A `runs-on` from the
+ * matrix (`${{ matrix.os }}`) with Windows and other runners is `mixed`.
+ */
+function runnerShell(job: YAMLMap): { shell: StepShell; name: string } {
+  const labels = strings(pairOf(job, "runs-on")?.value);
+  const windows = (s: string) => /windows/i.test(s);
+  if (labels.some((l) => l.includes("${{"))) {
+    const strategy = pairOf(job, "strategy")?.value;
+    const matrix = isMap(strategy) ? strings(pairOf(strategy as YAMLMap, "matrix")?.value) : [];
+    const runners = matrix.filter((s) => /windows|ubuntu|macos|linux/i.test(s));
+    if (runners.some(windows)) {
+      return runners.every(windows)
+        ? { shell: "powershell", name: "pwsh" }
+        : { shell: "mixed", name: "bash or pwsh" };
+    }
+  }
+  return labels.some(windows)
+    ? { shell: "powershell", name: "pwsh" }
+    : { shell: "posix", name: "bash" };
+}
+
 function parseJobs(text: string, root: YAMLMap): { jobs: WorkflowJob[]; map?: YAMLMap } {
   const jobsPair = pairOf(root, "jobs");
   if (!jobsPair || !isMap(jobsPair.value)) return { jobs: [] };
@@ -258,13 +318,27 @@ function parseJobs(text: string, root: YAMLMap): { jobs: WorkflowJob[]; map?: YA
   for (const item of jobsPair.value.items) {
     if (!isScalar(item.key) || !isMap(item.value)) continue;
     const node = item.value as YAMLMap;
+    const fallbackShell = defaultShell(node) ?? defaultShell(root);
+    const runner = runnerShell(node);
     const stepsPair = pairOf(node, "steps");
     const steps: WorkflowStep[] = [];
     let stepsSeq: YAMLSeq | undefined;
     if (stepsPair && isSeq(stepsPair.value)) {
       stepsSeq = stepsPair.value as YAMLSeq;
       stepsSeq.items.forEach((step, index) => {
-        if (isMap(step)) steps.push(parseStep(text, step as YAMLMap, index));
+        if (!isMap(step)) return;
+        const parsed = parseStep(text, step as YAMLMap, index);
+        const own = pairOf(step as YAMLMap, "shell")?.value;
+        const shell =
+          (isScalar(own) && typeof own.value === "string" ? own.value : undefined) ?? fallbackShell;
+        if (shell !== undefined) {
+          parsed.shell = shellKind(shell);
+          parsed.shellName = shell.trim().split(/\s+/)[0] ?? shell;
+        } else {
+          parsed.shell = runner.shell;
+          parsed.shellName = runner.name;
+        }
+        steps.push(parsed);
       });
     }
     const needsPair = pairOf(node, "needs");

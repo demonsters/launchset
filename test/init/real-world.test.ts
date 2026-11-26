@@ -743,3 +743,106 @@ jobs:
     expect(commandKinds("fastlane run upload_to_testflight")).toEqual([]);
   });
 });
+
+describe("13. each step's shell decides how init edits it", () => {
+  const job = (head: string, run: string, extra = "") => `on:
+  push:
+    branches: [main]
+${extra}jobs:
+  build:
+${head}    steps:
+      - uses: actions/checkout@v7
+      - run: |
+${run
+  .split("\n")
+  .map((l) => `          ${l}`)
+  .join("\n")}
+`;
+  const inBlock = "pnpm build\nif ($env:CI) {\n  git tag v1\n}";
+
+  it("Windows runners run pwsh: a no-op is $null, not :", async () => {
+    const dir = repo({ [`${WF}ci.yml`]: job("    runs-on: windows-latest\n", inBlock) });
+    await runInit(options(dir, { yes: true }));
+    const text = read(dir, `${WF}ci.yml`);
+    expect(text).toContain("            $null # launchset: disabled — ");
+    expect(text).not.toMatch(/^\s*: # launchset/m);
+  });
+
+  it("defaults.run.shell: bash wins over the runner", async () => {
+    const dir = repo({
+      [`${WF}ci.yml`]: job(
+        "    runs-on: windows-latest\n    defaults:\n      run:\n        shell: bash\n",
+        'pnpm build\nif [ -n "$CI" ]; then\n  git tag v1\nfi',
+      ),
+    });
+    await runInit(options(dir, { yes: true }));
+    expect(read(dir, `${WF}ci.yml`)).toContain("            : # launchset: disabled — ");
+  });
+
+  it("a matrix of Windows and Linux gets no no-op, only whole lines", async () => {
+    const head = `    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: \${{ matrix.os }}
+`;
+    const chained = repo({ [`${WF}ci.yml`]: job(head, "pnpm build &&\n  git tag v1") });
+    const json = await detect(chained);
+    expect(json.detection.machinery[0]?.actions).not.toContain("disable");
+    const lines = repo({ [`${WF}ci.yml`]: job(head, "pnpm build\ngit tag v1") });
+    await runInit(options(lines, { yes: true }));
+    expect(read(lines, `${WF}ci.yml`)).not.toContain("git tag v1");
+    expect(read(lines, `${WF}ci.yml`)).toContain("pnpm build");
+  });
+
+  it("a PowerShell line continuation keeps init's hands off", async () => {
+    const dir = repo({
+      [`${WF}ci.yml`]: job("    runs-on: windows-latest\n", "pnpm build\ngit tag `\n  v1"),
+    });
+    expect((await detect(dir)).detection.machinery[0]?.actions).not.toContain("disable");
+  });
+
+  it("shell: python is read like a script file, and not edited", async () => {
+    const dir = repo({
+      [`${WF}ci.yml`]: `on:
+  push:
+    branches: [main]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - shell: python
+        run: |
+          import subprocess
+          subprocess.run(["make", "dist"], check=True)
+          subprocess.run("git tag v1 && git push --tags", shell=True, check=True)
+`,
+    });
+    const [item] = (await detect(dir)).detection.machinery;
+    expect(item?.kinds).toEqual(["tag-creation"]);
+    expect(item?.actions).not.toContain("disable");
+    expect(item?.evidence.some((e) => e.line === 12)).toBe(true);
+  });
+
+  it("GitLab: a job on Windows runners gets $null too", async () => {
+    const dir = repo(
+      {
+        ".gitlab-ci.yml": `build:
+  tags: [windows]
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+  script:
+    - |
+      pnpm build
+      if ($env:CI) {
+        git tag v1
+      }
+`,
+      },
+      GITLAB,
+    );
+    await runInit(options(dir, { yes: true }));
+    const text = read(dir, ".gitlab-ci.yml");
+    expect(text).toContain("        $null # launchset: disabled — ");
+    expect(text).toContain("pnpm build");
+  });
+});

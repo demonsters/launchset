@@ -10,10 +10,11 @@ import { indentAt, lineOf } from "../core/text.ts";
 import { checkTemplateFile, targetJobName } from "../templates/gitlab-child.ts";
 import {
   effective,
-  effectiveFrom,
+  flatStrings,
   type GitLabCi,
   type GitLabFile,
   type GitLabJob,
+  gitlabJobShell,
   runsOnlyOnTags,
   runsOnTags,
   templatesOf,
@@ -22,7 +23,7 @@ import {
 import { gitlabCommandKinds, publishCommand } from "./machinery.ts";
 import { commentsAbove } from "./retire.ts";
 import { pairLines } from "./text-edit.ts";
-import type { DetectedGitLabJob, DetectedTarget, Evidence } from "./types.ts";
+import type { DetectedTarget } from "./types.ts";
 
 /** Where init moves the templates the target jobs extend (`gitlab.include`). */
 export const TEMPLATES_FILE = ".gitlab/ci-templates.yml";
@@ -52,45 +53,6 @@ export function targetNameForJob(job: string): string {
     .filter((w) => w !== "");
   const kept = words.filter((w) => !GENERIC_WORDS.has(w));
   return (kept.length > 0 ? kept : words).join("-") || "job";
-}
-
-/** PowerShell in a script: its variables, cmdlets and parameters. */
-const POWERSHELL =
-  /\$env:|\b(?:Invoke-(?:WebRequest|RestMethod|Expression)|Get-(?:CimInstance|Command|ChildItem|Content)|Start-(?:Process|Sleep)|Stop-Process|Set-(?:Location|Content)|Write-(?:Host|Error|Output)|Test-Path|Remove-Item|New-Item|Copy-Item|Join-Path|Resolve-Path)\b|\s-ErrorAction\b/;
-
-const flatStrings = (value: unknown): string[] => {
-  if (typeof value === "string") return [value];
-  if (Array.isArray(value)) return value.flatMap(flatStrings);
-  if (value && typeof value === "object") return Object.values(value).flatMap(flatStrings);
-  return [];
-};
-
-/** The shell of a job's runner, from its scripts (through `extends`) and runner tags. */
-function shellOf(ci: GitLabCi, job: GitLabJob): Pick<DetectedGitLabJob, "shell" | "shellEvidence"> {
-  const evidence: Evidence[] = [];
-  for (const key of ["hooks", "before_script", "script"]) {
-    const found = effectiveFrom(ci, job, key);
-    if (!found) continue;
-    const line = flatStrings(found.value).find((l) => POWERSHELL.test(l));
-    if (line === undefined) continue;
-    const match = POWERSHELL.exec(line)?.[0]?.trim();
-    evidence.push({
-      path: found.job.path,
-      line: found.job.line,
-      note: `${key} of ${found.job === job ? "the job" : found.job.name} is PowerShell (${match})`,
-    });
-    break;
-  }
-  const tags = effectiveFrom(ci, job, "tags");
-  const windows = flatStrings(tags?.value).find((t) => /windows|\bwin(?:\d+)?\b/i.test(t));
-  if (tags && windows) {
-    evidence.push({
-      path: tags.job.path,
-      line: tags.job.line,
-      note: `${tags.job === job ? "the job runs" : `${tags.job.name} runs`} on runners tagged ${windows}`,
-    });
-  }
-  return { shell: evidence.length > 0 ? "powershell" : "sh", shellEvidence: evidence };
 }
 
 /** What a tag job makes: artifacts, a deployment, or a publish or push command. */
@@ -172,7 +134,7 @@ export function gitlabJobTargets(
           job: job.name,
           path: job.path,
           line: job.line,
-          ...shellOf(ci, job),
+          ...gitlabJobShell(ci, job),
           after: [],
           templates: templatesOf(ci, job).map((t) => ({
             name: t.name,

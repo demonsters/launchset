@@ -197,6 +197,8 @@ After `disable`, check what is left in the file. Example with a tag trigger and 
 
 A workflow with no trigger left gets `workflow_dispatch`. A removed step that other steps refer to (`steps.<id>...`, `needs.<job>...`) is listed as a manual follow-up. So is a place that still runs a removed `package.json` script by name (`npm run release` in a workflow, GitLab job or another script), because that call now fails.
 
+init edits a step in the shell it runs in: the step's `shell:`, else `defaults.run.shell`, else the runner's default (pwsh on Windows, bash elsewhere). On GitLab, a job whose runner is tagged `windows` or whose script is PowerShell runs in PowerShell. A command inside a chain or a block becomes the no-op `:` in bash and `$null` in PowerShell. Where there's no safe no-op, init only takes out whole lines and otherwise leaves the step to you: in `cmd`, in a matrix of Windows and other runners, and next to a PowerShell line continuation (`` ` ``). A step in another language (`shell: python`, `node`) is read like a script file, and init doesn't edit it.
+
 Then **move the team's own build steps** into `launchset-release.yml`: the `docker/build-push-action` settings (context, file, platforms), signing, fastlane, deploy steps. Keep secrets and environments as they are.
 
 ## Keep what deploy tooling depends on

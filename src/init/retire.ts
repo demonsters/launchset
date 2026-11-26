@@ -206,6 +206,8 @@ export function retireWorkflow(workflow: Workflow, ops: Op[]): WorkflowResult {
   }
   for (const [step, { commands, reason }] of neutralized) {
     if (!live(step)) continue;
+    // PowerShell has no `:`; `$null` is its no-op statement.
+    const noop = step.shell === "powershell" ? "$null" : ":";
     for (const c of commands) {
       c.lines.forEach((l, i) => {
         const indent = /^[ \t]*/.exec(l.text)?.[0] ?? "";
@@ -213,7 +215,7 @@ export function retireWorkflow(workflow: Workflow, ops: Op[]): WorkflowResult {
         replaceLine(
           l.number,
           i === 0
-            ? `${indent}:${c.trailingOp ? ` ${c.trailingOp}` : ""} # launchset: disabled — ${reason}: ${trimmed}`
+            ? `${indent}${noop}${c.trailingOp ? ` ${c.trailingOp}` : ""} # launchset: disabled — ${reason}: ${trimmed}`
             : `${indent}# ${trimmed}`,
         );
       });
@@ -402,7 +404,7 @@ export function retireGitLab(text: string, ops: GitLabOp[]): string {
         } else {
           const [first, ...rest] = lines.map((l) => l.text.trim());
           replaceLines(numbers, [
-            `${indent}- ":" # launchset: disabled — ${op.reason}: ${(first ?? "").replace(/^-\s*/, "")}`,
+            `${indent}- ${op.noop === undefined ? '":"' : `'${op.noop}'`} # launchset: disabled — ${op.reason}: ${(first ?? "").replace(/^-\s*/, "")}`,
             ...rest.map((r) => `${indent}  # ${r}`),
           ]);
         }
@@ -418,7 +420,7 @@ export function retireGitLab(text: string, ops: GitLabOp[]): string {
                 [l.number],
                 [
                   i === 0
-                    ? `${indent}:${c.trailingOp ? ` ${c.trailingOp}` : ""} # launchset: disabled — ${op.reason}: ${trimmed}`
+                    ? `${indent}${op.noop ?? ":"}${c.trailingOp ? ` ${c.trailingOp}` : ""} # launchset: disabled — ${op.reason}: ${trimmed}`
                     : `${indent}# ${trimmed}`,
                 ],
               );
