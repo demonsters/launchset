@@ -58,7 +58,7 @@ export const CONFIG_DESCRIPTIONS: Record<string, string> = {
   "preview.branches[].targets":
     'Targets to build on this branch: `"all"` or a list of target names. Overrides `preview.targets`.',
   "preview.branches[].prerelease":
-    "A prerelease id such as `alpha`, `beta` or `rc`. Makes this a prerelease branch: pushes get a tag like `v1.5.0-alpha.3` and a GitHub pre-release.",
+    "A prerelease id such as `alpha`, `beta` or `rc`. Makes this a prerelease branch (experimental): pushes get a tag like `v1.5.0-alpha.3` and a GitHub pre-release.",
   "preview.targets":
     'Targets built by previews: `"all"` or a list of target names. Manual targets can be listed too.',
   "#Targets":

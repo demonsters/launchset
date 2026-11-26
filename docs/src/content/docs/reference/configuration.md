@@ -156,7 +156,7 @@ Set `preview: false` to switch off previews and prerelease branches. While previ
 | `preview.branches` | `(string \| object)[]` | `[]` | Branches that build a preview on every push. A string is a branch glob (`develop`, `feature/*`). An object can limit the targets or turn the branch into a prerelease branch. Branches that match `maintenanceBranches` never auto-preview. A prerelease pattern must not match `baseBranch`. |
 | `preview.branches[].branch` | `string` | required | The branch glob. |
 | `preview.branches[].targets` | `"all" \| string[]` |  | Targets to build on this branch: `"all"` or a list of target names. Overrides `preview.targets`. |
-| `preview.branches[].prerelease` | `string` |  | A prerelease id such as `alpha`, `beta` or `rc`. Makes this a prerelease branch: pushes get a tag like `v1.5.0-alpha.3` and a GitHub pre-release. |
+| `preview.branches[].prerelease` | `string` |  | A prerelease id such as `alpha`, `beta` or `rc`. Makes this a prerelease branch (experimental): pushes get a tag like `v1.5.0-alpha.3` and a GitHub pre-release. |
 | `preview.targets` | `"all" \| string[]` | `"all"` | Targets built by previews: `"all"` or a list of target names. Manual targets can be listed too. |
 
 ### Targets

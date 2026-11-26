@@ -37,7 +37,7 @@ React Native, Capacitor and Expo apps use the `android` and `ios` types with the
 
 - [React Native](/targets/react-native/): `gradle` and `xcodeproj`.
 - [Capacitor](/targets/capacitor/): `kind: "capacitor"`.
-- [Expo](/targets/expo/): `kind: "expo"`, or environment variables for `app.config.js`.
+- [Expo](/targets/expo/) (experimental): `kind: "expo"`, or environment variables for `app.config.js`.
 
 ## How stamping works
 

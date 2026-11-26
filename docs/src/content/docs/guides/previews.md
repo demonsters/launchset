@@ -79,6 +79,10 @@ Delete `launchset-preview.yml` too. (If you leave it, its runs end with a notice
 
 ## Prerelease branches
 
+:::caution[Experimental]
+Prerelease branches are experimental. They have had less real-world use than releases and previews, so their details may still change. If something doesn't work for you, [open an issue](https://github.com/demonsters/launchset/issues/new/choose).
+:::
+
 A `preview.branches` entry with `prerelease` makes the branch a prerelease branch:
 
 ```ts
