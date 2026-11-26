@@ -105,6 +105,8 @@ export interface DetectedTarget {
   gitlab?: DetectedGitLabJob;
   /** A custom target from a job in a GitHub workflow that release tags start. */
   github?: DetectedGitHubJob;
+  /** A custom target that publishes an npm package (what retired machinery published before). */
+  npm?: { package: string; name: string };
   /** Declared with `--decide target.<name>=custom` (nothing detected it). */
   declared?: boolean;
 }
@@ -120,6 +122,8 @@ export interface DetectedGitHubJob {
   runsOn?: string;
   /** The `with:` of its `actions/checkout` step (`lfs: true`), which launchset's checkout lacks. */
   checkoutWith?: string[];
+  /** What else launchset's build job lacks of it (env, defaults, matrix, needs, reusable workflow). */
+  notes?: string[];
 }
 
 /** The GitLab job a custom target comes from (it runs on tags and builds or publishes). */

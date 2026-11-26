@@ -35,6 +35,7 @@ import {
   tagRuleEdit,
   usersOf,
 } from "./gitlab-scan.ts";
+import { QUOTED_SPACE, runsFile, simpleCommands } from "./shell.ts";
 import { latestFlagRange } from "./text-edit.ts";
 import type { Evidence, MachineryAction, MachineryItem, MachineryKind } from "./types.ts";
 import {
@@ -45,6 +46,8 @@ import {
   type RunCommand,
   runCommands,
   type ScalarRef,
+  shellCommands,
+  tagGated,
   type Workflow,
   type WorkflowJob,
   type WorkflowStep,
@@ -106,8 +109,18 @@ export type Edit =
       /** `&&`-separated parts to drop; undefined drops the whole entry. */
       segments?: string[];
     }
-  /** Comment out lines (Ruby/shell `#`), e.g. fastlane version actions. */
-  | { kind: "comment-lines"; path: string; lines: number[]; reason: string };
+  /**
+   * Comment out lines (Ruby/shell `#`), e.g. fastlane version actions. A line in `noops` (a
+   * shell command inside if/for or a chain) becomes the no-op `:` instead, so the structure
+   * stays valid.
+   */
+  | {
+      kind: "comment-lines";
+      path: string;
+      lines: number[];
+      reason: string;
+      noops?: { line: number; trailingOp?: string }[];
+    };
 
 export interface MachineryFinding {
   item: MachineryItem;
@@ -146,16 +159,49 @@ export interface MachineryInput {
 // ---------------------------------------------------------------------------
 // Patterns
 
-const CHANGESET_COMMAND = /\bchangeset\s+(version|status|publish|tag|pre)\b/;
-const TAG_COMMANDS: RegExp[] = [
-  /\bgit\s+tag\s+(?:-[asfmu]\b|--(?:annotate|sign|force|message)\b|["'$\w])/,
-  /\bgit\s+push\b[^\n]*(?:--tags|--follow-tags|refs\/tags\/|\s["']?v\$|\s["']?v\d)/,
-  /\bgh\s+release\s+create\b/,
-  /\bcreateRelease\b/,
-  /\b(?:npm|pnpm)\s+version\b(?![^\n]*--no-git-tag-version)/,
-];
+// Shell commands are matched one simple command at a time (see shell.ts), at its start: a
+// command that is only mentioned (a comment, a quoted argument, an echoed message) never counts.
+
+const CHANGESET_COMMAND = /^changeset\s+(?:version|status|publish|tag|pre)\b/;
 const RELEASE_TOOL_COMMAND =
-  /\b(?:semantic-release|release-it|standard-version|release-please|commit-and-tag-version)\b/;
+  /^(?:semantic-release|release-it|standard-version|release-please|commit-and-tag-version)\b/;
+/** `git` with its global options (`git -C dir`, `git -c k=v`). */
+const GIT = String.raw`^git\s+(?:-[Cc]\s+\S+\s+|--[\w-]+(?:=\S*)?\s+)*`;
+const TAG_COMMANDS: RegExp[] = [
+  new RegExp(
+    String.raw`${GIT}tag\s+(?:-[A-Za-z]*[asfmu][A-Za-z]*\b|--(?:annotate|sign|force|message)\b|[^-\s])`,
+  ),
+  // Pushing tags; deleting a remote tag (`--delete`, `:refs/tags/v1`) doesn't create one.
+  new RegExp(
+    String.raw`${GIT}push\b(?!.*\s(?:--delete|-d)\b)(?!.*\s\+?:\S)(?=.*(?:\s--tags\b|\s--follow-tags\b|refs\/tags\/|\s\+?v\$|\s\+?v\d))`,
+  ),
+  /^gh\s+release\s+create\b/,
+];
+const GIT_TAG_OFF = /\s--no-git-tag-version\b|\s--git-tag-version(?:=|\s+)false\b/;
+
+/**
+ * `npm version patch` (also `pnpm`, and yarn's `--new-version` / strategy forms): bumps the
+ * version and creates its tag. `npm version` alone only prints versions.
+ */
+function bumpsVersion(text: string): boolean {
+  const m = /^(?:npm|pnpm|yarn)\s+version\b/.exec(text);
+  if (!m || GIT_TAG_OFF.test(text)) return false;
+  const words = text.slice(m[0].length).trim().split(/\s+/).filter(Boolean);
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i] as string;
+    if (/^(?:-m|--message|--preid)$/.test(w)) {
+      i++;
+    } else if (
+      /^--(?:new-version|major|minor|patch|premajor|preminor|prepatch|prerelease)\b/.test(w)
+    ) {
+      return true;
+    } else if (!w.startsWith("-")) {
+      return true;
+    }
+  }
+  return false;
+}
+
 const VERSION_KEYS =
   /\b(MARKETING_VERSION|CURRENT_PROJECT_VERSION|versionCode|versionName|CFBundleVersion|CFBundleShortVersionString)\b/;
 /**
@@ -168,17 +214,37 @@ const VERSION_KEY_READS = new RegExp(
   "g",
 );
 
-/** A line that names a version key other than to read it. */
+const VERSION_WRITE_COMMANDS = [
+  /^agvtool\s+(?:new-version|new-marketing-version|next-version|bump)\b/,
+  /^PlistBuddy\b.*\bSet[\s\u2423]*:?[\s\u2423]*(?:CFBundleVersion|CFBundleShortVersionString)\b/,
+];
+/** `sed -i` / `perl -pi`: edits a file in place. */
+const IN_PLACE = /^(?:sed|perl)\b.*\s(?:-[A-Za-z]*i|--in-place)/;
+const FILE_WRITE =
+  /\b(?:writeFile|writeFileSync|outputFile|outputFileSync|appendFile|appendFileSync)\b|\bfs\.write\b|File\.write|\.write_text\(|\.write\(|open\([^)]*["'][wa]/;
+/** Lines that only print or log: what they mention isn't run. */
+const LOG_CALL =
+  /\b(?:console\.\w+|print|println|puts|logger\.\w+|log\.\w+|logging\.\w+|core\.(?:info|notice|warning|error|debug)|UI\.\w+)\s*[(\s"'`]/;
+
+/** A line of a script (not shell) that writes a version key, not only reads or prints it. */
 function writesVersionKey(line: string): boolean {
-  return VERSION_KEYS.test(line.replace(VERSION_KEY_READS, ""));
+  const l = line.replace(VERSION_KEY_READS, "");
+  const key = VERSION_KEYS.exec(l);
+  if (!key || LOG_CALL.test(l)) return false;
+  if (FILE_WRITE.test(l)) return true;
+  // Replacing it in a text: `s.replace(/versionCode \d+/, …)`, `re.sub(…)`, `gsub`.
+  if (/\.(?:replace|replaceAll|g?sub!?)\s*\(|\bre\.sub\(/.test(l)) return true;
+  // Assigning it: `info["CFBundleVersion"] = n`, `versionName = …`.
+  const eq = /(?<![=!<>+\-*/])=(?![=>])/.exec(l);
+  if (eq && key.index < eq.index) return true;
+  // Building text with it: `` `versionCode ${n}` ``, f-strings, `%s`, `.format(`.
+  return (
+    new RegExp(String.raw`\`[^\`]*${VERSION_KEYS.source}[^\`]*\$\{`).test(l) ||
+    new RegExp(String.raw`\bf["'][^"']*${VERSION_KEYS.source}[^"']*\{`).test(l) ||
+    /%[sd]|\.format\(/.test(l)
+  );
 }
 
-const VERSION_WRITE_COMMANDS = [
-  /\bagvtool\s+(?:new-version|new-marketing-version|next-version|bump)\b/,
-  /PlistBuddy[^\n]*Set\s*:?\s*(?:CFBundleVersion|CFBundleShortVersionString)/,
-];
-const FILE_WRITE =
-  /\b(?:writeFile|writeFileSync|outputFile|outputFileSync|appendFile)\b|\bfs\.write\b|\bsed\s+(?:-\w*\s+)*-i|\bagvtool\b|PlistBuddy|File\.write|\.write_text\(|open\([^)]*["']w/;
 const RELEASE_ACTIONS =
   /^(?:softprops\/action-gh-release|actions\/create-release|ncipollo\/release-action|marvinpinto\/action-automatic-releases|elgohr\/Github-Release-Action|mathieudutour\/github-tag-action|anothrNick\/github-tag-action|rickstaa\/action-create-tag)$/;
 const RELEASE_TOOL_ACTIONS =
@@ -186,9 +252,43 @@ const RELEASE_TOOL_ACTIONS =
 const FASTLANE_WRITERS =
   /^\s*(?:increment_build_number|increment_version_number|increment_version_code|android_set_version_code|android_set_version_name|increment_version_name)\b|set_info_plist_value[^\n]*CFBundle(?:Short)?Version/;
 const DOC_LINES = /\bnpm\s+version\b|\bgit\s+tag\b|\bchangesets?\b/i;
-/** Steps that publish or deploy something (for unfiltered `push` workflows). */
-export const PUBLISH_COMMAND =
-  /\b(?:npm|pnpm|yarn)\s+publish\b|\bgh\s+release\b|\bdocker\s+(?:buildx\s+build[^\n]*--push|push)\b|\bkubectl\s+(?:apply|set\s+image|rollout)\b|\bhelm\s+(?:upgrade|install)\b|\b(?:vercel|netlify|flyctl|fly|wrangler|firebase|eas)\s+(?:deploy|publish|submit)\b|\baws\s+s3\s+(?:sync|cp)\b|\bfastlane\b|\btwine\s+upload\b|\bcargo\s+publish\b/;
+
+/** Commands that publish or deploy something (matched at the start of a simple command). */
+const PUBLISH_COMMANDS: RegExp[] = [
+  /^(?:npm|pnpm|yarn|bun)\s+(?:-\S+\s+)*(?:npm\s+)?publish\b/,
+  /^gh\s+release\s+(?:create|upload)\b/,
+  /^docker\s+(?:(?:buildx\s+)?build\b.*\s--push\b|buildx\s+bake\b.*\s--push\b|push\b|image\s+push\b|manifest\s+push\b)/,
+  /^(?:podman|buildah)\s+push\b|^crane\s+(?:push|copy|cp)\b|^skopeo\s+copy\b/,
+  /^kubectl\s+(?:apply|set\s+image|rollout)\b/,
+  /^helm\s+(?:upgrade|install|push)\b/,
+  /^(?:vercel|netlify|flyctl|fly|wrangler|firebase|eas|surge)\b.*\s(?:deploy|publish|submit)\b|^vercel\b.*\s--prod\b/,
+  /^aws\s+(?:s3\s+(?:sync|cp)|ecs\s+update-service|lambda\s+update-function-code|cloudformation\s+deploy|deploy)\b/,
+  /^gcloud\s+(?:app|run|functions)\s+deploy\b|^az\s+\S+.*\sdeploy\b/,
+  /^fastlane\b/,
+  /^(?:twine\s+upload|cargo\s+publish|gem\s+push|(?:uv|poetry|hatch|flit|pdm)\s+publish|(?:dotnet\s+)?nuget\s+push|(?:vsce|ovsx)\s+publish)\b/,
+  /^goreleaser(?:\s+release\b|\s*$|\s+-)/,
+  /^(?:mvn|mvnw)\b.*\sdeploy\b|^(?:gradle|gradlew)\b.*\s(?:publish|upload)\w*\b/,
+  /^electron-builder\b.*\s--publish(?:\s+|=)(?:always|onTag|onTagOrDraft)\b/,
+  /^(?:rsync|scp)\b.*\s[^\s:/]+:\S*/,
+  /^curl\b.*\s(?:--upload-file|-T)\s/,
+  /^(?:serverless|sls|cdk|pulumi|terraform|sam)\s+(?:deploy|up|apply)\b/,
+  // `make deploy`, `npm run release`, `pnpm deploy:prod`, `./scripts/publish.sh`, `bash deploy.sh`.
+  /^(?:make|just|task|mage)\s+(?:\S+\s+)*?(?:[\w.]*[-:_])?(?:deploy|release|publish|upload)\b/,
+  /^(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:[\w.]*[-:])?(?:deploy|release|publish|upload)(?:[-:]\S*)?(?:\s|$)/,
+  /^[\w.-]*(?:deploy|release|publish|upload)[\w.-]*\.(?:sh|bash|py|rb|js|mjs|cjs|ts|mts|ps1)(?:\s|$)/,
+  /^(?:sh|bash|zsh|node|python3?|ruby|pwsh|tsx|bun|deno|uv)\b.*\s(?:\S*\/)?[\w.-]*(?:deploy|release|publish|upload)[\w.-]*\.(?:sh|bash|py|rb|js|mjs|cjs|ts|mts|ps1)(?:\s|$)/,
+  /\s--push(?:=\S*)?(?:\s|$)/,
+];
+/** Flags that make a publish command a check or a help text. */
+const NOT_PUBLISHING = /\s(?:--dry-run|--help|-h|--snapshot|--version)\b/;
+
+/** The first command of `script` that publishes or deploys something, or undefined. */
+export function publishCommand(script: string): string | undefined {
+  return simpleCommands(script)
+    .find((c) => PUBLISH_COMMANDS.some((p) => p.test(c.text)) && !NOT_PUBLISHING.test(c.text))
+    ?.text.replaceAll(QUOTED_SPACE, " ");
+}
+
 const PUBLISH_ACTION =
   /deploy|gh-pages|action-gh-release|create-release|release-action|publish|upload-google-play|upload-testflight|vercel|netlify|wrangler|firebase|ssh-action/i;
 
@@ -198,7 +298,7 @@ const REASON: Record<MachineryKind, string> = {
   "release-trigger":
     "fires when launchset's finalize creates the GitHub Release, so its steps run for every release",
   changesets:
-    "runs Changesets, which opens its own release PR and bumps versions; launchset's release PR replaces it",
+    'runs Changesets, which opens its own release PR and bumps versions; launchset\'s release PR replaces it (keep it instead if it versions npm packages of their own: see "Alongside Changesets" in the docs)',
   "release-tool":
     "runs another release tool (semantic-release, release-it, standard-version or release-please), which bumps versions and creates tags or releases; launchset does that now",
   "tag-creation":
@@ -229,55 +329,164 @@ const SHORT: Record<MachineryKind, string> = {
   "package-publish": "launchset publishes when a release ships",
 };
 
-/**
- * The text that `echo` and `printf` print: a message, not a command. `echo "create it with
- * 'git tag -a'"` mentions a tag command but doesn't run it. A `$(…)` or backticks inside run
- * a command, so those messages are kept.
- */
-const PRINTED_MESSAGE =
-  /\b(echo|printf)\b(?:\s+(?:'[^']*'|"(?:[^"\\$`]|\\.|\$(?!\())*"|(?:[^\s;&|'"$`()<>]|\$(?!\())+))+/g;
+const KIND_ORDER: MachineryKind[] = [
+  "changesets",
+  "release-tool",
+  "tag-creation",
+  "version-writer",
+];
 
-/** A shell command without the messages it prints. */
-function withoutMessages(command: string): string {
-  return command.replace(PRINTED_MESSAGE, "$1");
-}
-
-/** The machinery kinds a shell command matches. */
-export function commandKinds(full: string): MachineryKind[] {
-  const command = withoutMessages(full);
+/** The machinery kinds of one simple command's text (see shell.ts). */
+function simpleCommandKinds(text: string): MachineryKind[] {
   const kinds: MachineryKind[] = [];
-  if (CHANGESET_COMMAND.test(command)) kinds.push("changesets");
-  if (RELEASE_TOOL_COMMAND.test(command)) kinds.push("release-tool");
-  if (TAG_COMMANDS.some((t) => t.test(command))) kinds.push("tag-creation");
+  if (CHANGESET_COMMAND.test(text)) kinds.push("changesets");
+  if (RELEASE_TOOL_COMMAND.test(text)) kinds.push("release-tool");
+  if (TAG_COMMANDS.some((t) => t.test(text)) || bumpsVersion(text)) kinds.push("tag-creation");
   if (
-    VERSION_WRITE_COMMANDS.some((p) => p.test(command)) ||
-    (/\bsed\b/.test(command) && /\s-i\b|\s-i['"]/.test(command) && VERSION_KEYS.test(command))
+    VERSION_WRITE_COMMANDS.some((p) => p.test(text)) ||
+    (IN_PLACE.test(text) && VERSION_KEYS.test(text))
   ) {
     kinds.push("version-writer");
   }
   return kinds;
 }
 
-/** The machinery kinds of a script file's content. */
-export function scriptFileKinds(text: string): { kinds: MachineryKind[]; line: number } {
-  const kinds: MachineryKind[] = [];
-  let line = 0;
-  const lines = linesOf(text);
-  const first = (pattern: RegExp) =>
-    lines.find((l) => pattern.test(withoutMessages(l.text)))?.number ?? 0;
+/** The machinery kinds a shell command matches (only what it runs, see shell.ts). */
+export function commandKinds(full: string): MachineryKind[] {
+  const found = new Set(simpleCommands(full).flatMap((c) => simpleCommandKinds(c.text)));
+  return KIND_ORDER.filter((k) => found.has(k));
+}
+
+/** The language of a script file, for what counts as a comment and a command. */
+export function scriptLanguage(path: string | undefined, text: string): "shell" | "js" | "hash" {
+  const ext = /\.([A-Za-z]+)$/.exec(path ?? "")?.[1]?.toLowerCase();
+  if (ext === "sh" || ext === "bash" || ext === "zsh") return "shell";
+  if (ext && /^(?:js|mjs|cjs|ts|mts|cts|jsx|tsx)$/.test(ext)) return "js";
+  if (ext === "py" || ext === "rb") return "hash";
+  const shebang = /^#!\S*?(?:\/env(?:\s+-\S+)*)?\s*\/?(?:\S*\/)?([\w.-]+)/.exec(text);
+  const program = shebang?.[1] ?? "";
+  if (/^(?:sh|bash|zsh|dash|ksh)$/.test(program)) return "shell";
+  if (/^(?:node|deno|bun|tsx|ts-node)$/.test(program)) return "js";
+  return "hash";
+}
+
+/** A script's lines with comments blanked (`//` and block comments, or `#`). */
+function codeLines(text: string, language: "js" | "hash"): { number: number; text: string }[] {
+  let block = false;
+  return linesOf(text).map((l) => {
+    let t = l.text;
+    if (language === "hash") {
+      t = l.number === 1 && t.startsWith("#!") ? "" : t.replace(/(^|\s)#.*$/, "$1");
+    } else {
+      let out = "";
+      let i = 0;
+      while (i < t.length) {
+        if (block) {
+          const end = t.indexOf("*/", i);
+          if (end < 0) {
+            i = t.length;
+          } else {
+            block = false;
+            i = end + 2;
+          }
+        } else if (t.startsWith("/*", i)) {
+          block = true;
+          i += 2;
+        } else if (t.startsWith("//", i) && (i === 0 || /[\s;,{}()]/.test(t[i - 1] as string))) {
+          break;
+        } else {
+          out += t[i];
+          i++;
+        }
+      }
+      t = l.number === 1 && out.startsWith("#!") ? "" : out;
+    }
+    return { number: l.number, text: t };
+  });
+}
+
+/** Tag, release-tool and Changesets commands inside a (non-shell) script's strings. */
+const CODE_PATTERNS: [MachineryKind, RegExp][] = [
+  ["changesets", /\bchangeset\s+(?:version|status|publish|tag|pre)\b/],
+  [
+    "release-tool",
+    /\b(?:semantic-release|release-it|standard-version|release-please|commit-and-tag-version)\b/,
+  ],
+  [
+    "tag-creation",
+    /\bgit\s+tag\s+(?:-[A-Za-z]*[asfmu][A-Za-z]*\b|--(?:annotate|sign|force|message)\b|["'$\w])/,
+  ],
+  [
+    "tag-creation",
+    /\bgit\s+push\b[^\n]*(?:--tags|--follow-tags|refs\/tags\/|\s["']?v\$|\s["']?v\d)/,
+  ],
+  ["tag-creation", /\bgh\s+release\s+create\b|\bcreateRelease\b|\bcreateTag\b/],
+  ["tag-creation", /\b(?:npm|pnpm)\s+version\s+(?!-)\w(?![^\n]*--no-git-tag-version)/],
+];
+
+/** What a script file does that conflicts, with the commands (shell) or lines behind it. */
+export interface ScriptFileScan {
+  kinds: MachineryKind[];
+  /** First line with a finding (0 when none). */
+  line: number;
+  language: "shell" | "js" | "hash";
+  /** Shell: every command, and the conflicting ones. */
+  commands: RunCommand[];
+  matched: RunCommand[];
+  /** Lines with a finding. */
+  lines: number[];
+}
+
+export function scanScriptFile(text: string, path?: string): ScriptFileScan {
+  const language = scriptLanguage(path, text);
+  const found = new Map<MachineryKind, number>();
   const note = (kind: MachineryKind, at: number) => {
-    if (at === 0) return;
-    kinds.push(kind);
-    if (line === 0 || at < line) line = at;
+    const was = found.get(kind);
+    if (was === undefined || at < was) found.set(kind, at);
   };
-  note("changesets", first(CHANGESET_COMMAND));
-  note("release-tool", first(RELEASE_TOOL_COMMAND));
-  const tagLines = TAG_COMMANDS.map((t) => first(t)).filter((n) => n > 0);
-  note("tag-creation", tagLines.length > 0 ? Math.min(...tagLines) : 0);
-  if (FILE_WRITE.test(text)) {
-    note("version-writer", lines.find((l) => writesVersionKey(l.text))?.number ?? 0);
+  const lines = new Set<number>();
+  let commands: RunCommand[] = [];
+  const matched: RunCommand[] = [];
+  if (language === "shell") {
+    commands = shellCommands(linesOf(text));
+    for (const c of commands) {
+      const kinds = commandKinds(c.command);
+      if (/@changesets\/write/.test(c.command)) kinds.push("changesets-write");
+      if (kinds.length === 0) continue;
+      matched.push(c);
+      const at = c.lines[0]?.number ?? 0;
+      for (const k of kinds) note(k, at);
+      for (const l of c.lines) lines.add(l.number);
+    }
+  } else {
+    const code = codeLines(text, language);
+    const writes = code.some((l) => FILE_WRITE.test(l.text));
+    for (const l of code) {
+      if (l.text.trim() === "") continue;
+      const kinds: MachineryKind[] = [];
+      if (!LOG_CALL.test(l.text)) {
+        for (const [kind, pattern] of CODE_PATTERNS) {
+          if (pattern.test(l.text) && !kinds.includes(kind)) kinds.push(kind);
+        }
+      }
+      if (writes && writesVersionKey(l.text)) kinds.push("version-writer");
+      if (/@changesets\/write/.test(l.text)) kinds.push("changesets-write");
+      for (const k of kinds) note(k, l.number);
+      if (kinds.length > 0) lines.add(l.number);
+    }
   }
-  note("changesets-write", first(/@changesets\/write/));
+  const order: MachineryKind[] = [...KIND_ORDER, "changesets-write"];
+  const kinds = order.filter((k) => found.has(k));
+  const line = kinds.length > 0 ? Math.min(...kinds.map((k) => found.get(k) as number)) : 0;
+  return { kinds, line, language, commands, matched, lines: [...lines].sort((a, b) => a - b) };
+}
+
+/** The machinery kinds of a script file's content. */
+export function scriptFileKinds(
+  text: string,
+  path?: string,
+): { kinds: MachineryKind[]; line: number } {
+  const { kinds, line } = scanScriptFile(text, path);
   return { kinds, line };
 }
 
@@ -351,7 +560,7 @@ export function publishesOrDeploys(workflow: Workflow, builds: DockerBuild[]): b
       if (uses === "docker/build-push-action" && step.with.get("push")?.value !== "false") {
         return step.with.has("push");
       }
-      return step.run !== undefined && PUBLISH_COMMAND.test(step.run.value);
+      return step.run !== undefined && publishCommand(step.run.value) !== undefined;
     }),
   );
 }
@@ -436,13 +645,17 @@ function triggerDrafts(
       removePush(d, t.tagsIgnorePair, "tags-ignore");
       drafts.push(d);
     }
-  } else if (t.unfilteredPush && publishes) {
+  } else if (t.unfilteredPush && (publishes || workflow.jobs.some(tagGated))) {
     const line = lineOf(
       workflow.text,
       ((t.pushPair ?? t.pair)?.key as { range?: number[] } | undefined)?.range?.[0] ?? 0,
     );
     const d = base(line, "workflow trigger on: push (no branch or tag filter)");
-    d.reasons = ["runs on every push, including launchset's tags, and it publishes or deploys"];
+    d.reasons = [
+      publishes
+        ? "runs on every push, including launchset's tags, and it publishes or deploys"
+        : "runs on every push, including launchset's tags, and has jobs or steps that only run for tags",
+    ];
     d.evidence = [
       { path: workflow.path, line, note: "push without filters runs for every pushed tag too" },
     ];
@@ -493,12 +706,9 @@ function triggerDrafts(
   return drafts;
 }
 
-/** Lines of a run script that invoke one of the script files (handled by that file's item). */
+/** Lines of a run script that run one of the script files (handled by that file's item). */
 function invokesScriptFile(command: string, scriptPaths: string[], wd: string): boolean {
-  return scriptPaths.some((p) => {
-    const rel = wd === "." ? p : p.startsWith(`${wd}/`) ? p.slice(wd.length + 1) : p;
-    return command.includes(p) || command.includes(rel);
-  });
+  return scriptPaths.some((p) => runsFile(command, p, wd));
 }
 
 /**
@@ -765,20 +975,27 @@ const GITLAB_REASON: Partial<Record<MachineryKind, string>> = {
   "tag-creation":
     "creates release tags or GitLab releases, which launchset's finalize creates (it would create v{version} before finalize)",
 };
-const GITLAB_RELEASE_COMMAND = /\bglab\s+release\s+create\b|\brelease-cli\b[^\n]*\bcreate\b/;
-const PACKAGE_PUBLISH_COMMAND = /\b(?:npm|pnpm)\s+publish\b|\byarn\s+(?:npm\s+)?publish\b/;
+const GITLAB_RELEASE_COMMAND = /^glab\s+release\s+create\b|^release-cli\b.*\screate\b/;
+const PACKAGE_PUBLISH_COMMAND =
+  /^(?:npm|pnpm)\s+(?:-\S+\s+)*publish\b|^yarn\s+(?:npm\s+)?publish\b/;
 /** Script lines that only print: a job left with them does nothing. */
 const TRIVIAL_COMMAND = /^(?:echo|printf|true|:)(?:\s|$)/;
 
 /** The machinery kinds of a GitLab script command ({@link commandKinds} plus GitLab's tools). */
 export function gitlabCommandKinds(full: string): MachineryKind[] {
   const kinds = commandKinds(full);
-  const command = withoutMessages(full);
-  if (GITLAB_RELEASE_COMMAND.test(command) && !kinds.includes("tag-creation")) {
-    kinds.push("tag-creation");
-  }
-  if (PACKAGE_PUBLISH_COMMAND.test(command) && !kinds.includes("changesets")) {
-    kinds.push("package-publish");
+  for (const { text } of simpleCommands(full)) {
+    if (GITLAB_RELEASE_COMMAND.test(text) && !kinds.includes("tag-creation")) {
+      kinds.push("tag-creation");
+    }
+    if (
+      PACKAGE_PUBLISH_COMMAND.test(text) &&
+      !NOT_PUBLISHING.test(text) &&
+      !kinds.includes("changesets") &&
+      !kinds.includes("package-publish")
+    ) {
+      kinds.push("package-publish");
+    }
   }
   return kinds;
 }
@@ -890,12 +1107,12 @@ function gitlabJobDraft(
   const blocker = refs[0] ?? (job.anchored ? "it has a YAML anchor others may use" : undefined);
   if (tagged) {
     // Other rules start it too (a manual trial build, branch pushes): only the tag rules go.
-    const edit = tagRuleEdit(job);
+    const edit = tagRuleEdit(job, ci.releaseTags);
     if (edit) {
       const entries = edit.items.map((item) => {
         const value = (item as { toJSON(): unknown }).toJSON();
         return edit.key === "only"
-          ? "tags"
+          ? String(value)
           : `- if: ${String((value as Record<string, unknown>).if)}`;
       });
       draft.disable = [
@@ -1095,14 +1312,8 @@ export function scriptSegments(command: string): string[] {
 }
 
 function referencesFile(segment: string, file: string, packageDir: string): boolean {
-  const rel =
-    packageDir === "."
-      ? file
-      : file.startsWith(`${packageDir}/`)
-        ? file.slice(packageDir.length + 1)
-        : undefined;
-  if (rel === undefined) return false;
-  return new RegExp(`(?:^|[\\s"'=/])(?:\\./)?${escapeRegExp(rel)}(?:$|[\\s"'])`).test(segment);
+  if (packageDir !== "." && !file.startsWith(`${packageDir}/`)) return false;
+  return runsFile(segment, file, packageDir);
 }
 
 function scriptDrafts(pkg: PackageScripts, scriptPaths: string[]): Draft[] {
@@ -1148,11 +1359,30 @@ function scriptDrafts(pkg: PackageScripts, scriptPaths: string[]): Draft[] {
   return drafts;
 }
 
+/** Shell commands that only read, print or set up: they don't make a script more than machinery. */
+const SETUP_COMMAND =
+  /^(?:set|shopt|cd|pushd|popd|echo|printf|export|readonly|local|declare|typeset|exit|return|true|false|:|shift|trap|source|\.|test|\[\[?|\]\]?|unset|wait|sleep|logger|fi|done|esac|for|case|in|function|cat|grep|egrep|awk|cut|tr|head|tail|sort|uniq|wc|date|jq|yq|basename|dirname|realpath|printenv|mkdir|node\s+-p|git\s+(?:describe|rev-parse|log|fetch|config|status|diff|show|ls-remote|tag\s+(?:-l|--list|--points-at|--contains|--merged)))(?:\s|$)/;
+/** A shell function definition line (`release() {`, `function release {`). */
+const FUNCTION_LINE = /^\s*(?:function\s+[\w-]+(?:\s*\(\))?|[\w-]+\s*\(\))\s*\{?\s*$/;
+
+/** True when a shell command is only setup (see {@link SETUP_COMMAND}). */
+function setupOnly(command: RunCommand): boolean {
+  if (command.lines.length === 1 && FUNCTION_LINE.test(command.command)) return true;
+  return simpleCommands(command.command).every(
+    (c) => SETUP_COMMAND.test(c.text) || (c.words.length === 1 && /[*?|]|\)$/.test(c.text)),
+  );
+}
+
+/** A script file named for release machinery (`release.sh`, `sync-version.mjs`, `tag.js`). */
+const MACHINERY_NAME =
+  /(?:^|[-_.])(?:release|version|versions|bump|tag|tags|changeset|changesets)(?:[-_.]|$)/i;
+
 function scriptFileDraft(
   file: { path: string; text: string },
   input: MachineryInput,
 ): Draft | undefined {
-  const { kinds, line } = scriptFileKinds(file.text);
+  const scan = scanScriptFile(file.text, file.path);
+  const { kinds, line } = scan;
   if (kinds.length === 0) return undefined;
   const references: Edit[] = [];
   let unsafe = false;
@@ -1215,12 +1445,45 @@ function scriptFileDraft(
     },
     evidence,
   };
-  if (unsafe) {
+  const reason = SHORT[kinds[0] as MachineryKind];
+  // Stopping the script only when release machinery is all it does: otherwise its other work
+  // (a build, a deploy) would quietly stop too.
+  const onlyMachinery =
+    scan.language === "shell"
+      ? scan.commands.every((c) => scan.matched.includes(c) || setupOnly(c))
+      : MACHINERY_NAME.test(file.path.replace(/^.*\//, "").replace(/\.[^.]+$/, ""));
+  if (!onlyMachinery) {
+    if (scan.language === "shell" && scan.matched.every((c) => c.removal !== null)) {
+      const neutral = scan.matched.filter((c) => c.removal === "neutralize");
+      draft.disable = [
+        {
+          kind: "comment-lines",
+          path: file.path,
+          lines: scan.matched.flatMap((c) => c.lines.map((l) => l.number)),
+          reason,
+          ...(neutral.length > 0
+            ? {
+                noops: neutral.map((c) => ({
+                  line: c.lines[0]?.number as number,
+                  ...(c.trailingOp ? { trailingOp: c.trailingOp } : {}),
+                })),
+              }
+            : {}),
+        },
+      ];
+      draft.effects.disable = `comments out the conflicting ${scan.lines.length === 1 ? "line" : "lines"} in ${file.path} (# launchset: disabled — …); the rest of the script still runs`;
+    } else {
+      draft.why =
+        scan.language === "shell"
+          ? "a conflicting command is part of a heredoc or a compound line, and the script does more than that; edit it by hand"
+          : "the script does more than release machinery, so it can't simply stop running; edit the conflicting lines by hand";
+    }
+  } else if (unsafe) {
     draft.why = "a workflow runs it inside a heredoc or a compound line; edit that by hand";
   } else if (references.length > 0) {
     draft.disable = references;
     draft.effects.disable = `stops running it (${evidence
-      .slice(1)
+      .filter((e) => e.path !== file.path)
       .map((e) => `${e.path}:${e.line}`)
       .join(", ")}); the file stays`;
   } else {

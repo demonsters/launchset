@@ -216,8 +216,19 @@ describe("init --detect --json: Changesets pipeline", () => {
         },
       ],
     });
-    // Only a web target: nothing else to build.
-    expect(json.detection.targets.map((t) => [t.name, t.proposed])).toEqual([["web", "auto"]]);
+    // changesets/action publishes the package (`publish: pnpm release` runs `changeset publish`):
+    // retiring it would stop that, so an npm target takes over. Nothing else to build.
+    expect(json.detection.targets.map((t) => [t.name, t.proposed])).toEqual([
+      ["npm", "auto"],
+      ["web", "none"],
+    ]);
+    expect(json.detection.targets[0]?.builtBy).toEqual([
+      {
+        path: ".github/workflows/release.yml",
+        line: 17,
+        note: "changesets/action publishes (pnpm release)",
+      },
+    ]);
   });
 });
 

@@ -136,8 +136,16 @@ export function buildConfig(ctx: DetectContext, answers: Answers): ConfigPlan {
           steps: job.steps,
           ...(job.runsOn !== undefined ? { runsOn: job.runsOn } : {}),
           ...(job.checkoutWith ? { checkoutWith: job.checkoutWith } : {}),
+          ...(job.notes ? { notes: job.notes } : {}),
         },
       };
+    } else if (t.type === "custom" && t.npm) {
+      entry.verify = ["npm"];
+      if (t.npm.package !== "package.json") entry.npm = { package: t.npm.package };
+      const e = t.builtBy[0];
+      notes.push(
+        `Publishes ${t.npm.name} to npm${e ? `, as ${e.path}:${e.line} did before` : ""}; its publish step is in the release workflow. verify skips a version that is already on the registry.`,
+      );
     } else if (t.type === "custom") {
       notes.push(
         `Declared with --decide: add its build steps to the CI files, and "files" for the files that hold the version.`,

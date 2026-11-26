@@ -37,6 +37,7 @@ import {
 } from "./fs.ts";
 import { githubJobTargets } from "./github-targets.ts";
 import {
+  DEFAULT_RELEASE_TAGS,
   GITLAB_CI_FILE,
   type GitLabCi,
   type GitLabDockerBuild,
@@ -54,6 +55,7 @@ import {
   referencedScriptFiles,
   sampleTags,
 } from "./machinery.ts";
+import { simpleCommands } from "./shell.ts";
 import type {
   DetectedDocker,
   DetectedFile,
@@ -71,6 +73,7 @@ import {
   parseWorkflow,
   platformBuildSignals,
   type Workflow,
+  type WorkflowJob,
 } from "./workflow-scan.ts";
 
 /** Everything detection found, including what writing needs but JSON doesn't show. */
@@ -654,6 +657,12 @@ export async function detect(
   const { tags, gitTagPrefix } = classifyTags(tagNames);
   const { workflows, builds } = await readWorkflows(root, gitInfo, gitTagPrefix, notes);
   const gitlab = await readGitLabCi(root);
+  if (gitlab) {
+    gitlab.releaseTags = [
+      ...new Set([gitTagPrefix, "v"].flatMap((p) => [`${p}1.2.3`, `${p}1.2.3-alpha.0`])),
+      ...DEFAULT_RELEASE_TAGS.filter((t) => t.startsWith("launchset/")),
+    ];
+  }
   for (const n of gitlab?.notes ?? []) {
     notes.push({
       level: "warning",
@@ -689,20 +698,25 @@ export async function detect(
   const native = await detectNativeTargets(root, searchDirs, workflows, gitlab, used, notes);
   targets.push(...native.targets);
   if (host.host === "github") {
-    // Workflows that build a target found above aren't custom targets of their own.
-    const skipPaths = new Set(
-      targets.filter((t) => t.proposed !== "none").flatMap((t) => t.builtBy.map((e) => e.path)),
-    );
-    targets.push(
-      ...githubJobTargets(workflows, {
-        releaseTags: [...new Set([gitTagPrefix, "v"])].flatMap((p) => [
-          `${p}1.2.3`,
-          `${p}1.2.3-alpha.0`,
-        ]),
-        skipPaths,
-        name: (base) => uniqueName(slug(base), used),
-      }),
-    );
+    // Jobs that build a target found above aren't custom targets of their own (the other jobs
+    // of their workflow still can be).
+    const skipJobs = new Set<WorkflowJob>();
+    for (const e of targets.filter((t) => t.proposed !== "none").flatMap((t) => t.builtBy)) {
+      const workflow = workflows.find((w) => w.path === e.path);
+      if (!workflow) continue;
+      const job = workflow.jobs.filter((j) => j.line <= (e.line ?? 0)).at(-1);
+      for (const j of job ? [job] : workflow.jobs) skipJobs.add(j);
+    }
+    const fromJobs = githubJobTargets(workflows, {
+      releaseTags: [...new Set([gitTagPrefix, "v"])].flatMap((p) => [
+        `${p}1.2.3`,
+        `${p}1.2.3-alpha.0`,
+      ]),
+      skipJobs,
+      name: (base) => uniqueName(slug(base), used),
+    });
+    targets.push(...fromJobs.targets);
+    notes.push(...fromJobs.notes);
   }
   if (gitlab) {
     const dockerfiles = new Set(
@@ -715,6 +729,8 @@ export async function detect(
       }),
     );
   }
+  const npm = npmTarget(pkg, workflows, gitlab, targets, used);
+  if (npm) targets.push(npm);
   if (pkg) targets.push(webTarget(targets, used));
 
   const versions = await collectVersions(root, packageJson, targets, tags);
@@ -1122,6 +1138,125 @@ async function detectNativeTargets(
     });
   }
   return { targets, ciFiles, signals };
+}
+
+/** A command that publishes an npm package, or runs a tool that does (Changesets, semantic-release). */
+const NPM_PUBLISH =
+  /^(?:(?:npm|pnpm|bun)\s+(?:-\S+\s+)*publish\b|yarn\s+(?:npm\s+)?publish\b|changeset\s+publish\b|semantic-release\b|release-it\b)/;
+/** Only the release tools among {@link NPM_PUBLISH} (init retires them wherever they run). */
+const NPM_PUBLISH_TOOL = /^(?:changeset\s+publish\b|semantic-release\b|release-it\b)/;
+
+/**
+ * The commands of `script` that publish the root package to npm, following `npm run <x>` /
+ * `pnpm <x>` into the root package.json scripts (once).
+ */
+function publishesToNpm(
+  script: string,
+  scripts: Record<string, string>,
+  pattern = NPM_PUBLISH,
+  depth = 0,
+): boolean {
+  return simpleCommands(script).some(({ text }) => {
+    if (pattern.test(text) && !/\s(?:--dry-run|--help|-h)\b/.test(text)) return true;
+    if (depth > 0) return false;
+    const run = /^(?:npm\s+run|pnpm(?:\s+run)?|yarn(?:\s+run)?|bun\s+run)\s+([\w:.-]+)/.exec(text);
+    const name = run?.[1];
+    return (
+      name !== undefined &&
+      scripts[name] !== undefined &&
+      publishesToNpm(scripts[name], scripts, pattern, 1)
+    );
+  });
+}
+
+/**
+ * An `npm` target when the root package is published to npm today by release machinery init
+ * retires (`changesets/action`'s `publish`, `changeset publish`, semantic-release, a plain
+ * `npm publish` outside the jobs that became targets). Without it, retiring that machinery would
+ * quietly stop publishing the package. Private packages have nothing to publish.
+ */
+function npmTarget(
+  pkg: { text: string; tree?: JsonNode } | null,
+  workflows: readonly Workflow[],
+  gitlab: GitLabCi | null,
+  targets: readonly DetectedTarget[],
+  used: Set<string>,
+): DetectedTarget | undefined {
+  if (!pkg?.tree) return undefined;
+  if (findNodeAtLocation(pkg.tree, ["private"])?.value === true) return undefined;
+  const name = jsonString(pkg.tree, ["name"]);
+  if (!name) return undefined;
+  const scriptsNode = findNodeAtLocation(pkg.tree, ["scripts"]);
+  const scripts: Record<string, string> = {};
+  for (const prop of scriptsNode?.type === "object" ? (scriptsNode.children ?? []) : []) {
+    const [key, value] = prop.children ?? [];
+    if (typeof key?.value === "string" && typeof value?.value === "string") {
+      scripts[key.value] = value.value;
+    }
+  }
+  const covered = new Set(
+    targets.flatMap((t) =>
+      t.github
+        ? [`${t.github.path}#${t.github.job}`]
+        : t.gitlab
+          ? [`${t.gitlab.path}#${t.gitlab.job}`]
+          : [],
+    ),
+  );
+  const evidence: Evidence[] = [];
+  for (const w of workflows) {
+    // A plain `npm publish` only goes when init retires the workflow's trigger (tags, releases,
+    // every push); the release tools go wherever they run.
+    const t = w.triggers;
+    const retired = t.tagEvents || t.unfilteredPush || t.release !== undefined;
+    for (const job of w.jobs) {
+      if (covered.has(`${w.path}#${job.id}`)) continue;
+      for (const step of job.steps) {
+        const uses = step.uses?.replace(/@.*/, "");
+        const publishInput = uses === "changesets/action" ? step.with.get("publish") : undefined;
+        if (publishInput && publishesToNpm(publishInput.value, scripts)) {
+          evidence.push({
+            path: w.path,
+            line: step.line,
+            note: `changesets/action publishes (${publishInput.value})`,
+          });
+        } else if (uses && /^js-devtools\/npm-publish$/i.test(uses)) {
+          evidence.push({ path: w.path, line: step.line, note: `uses ${uses}` });
+        } else if (
+          step.run &&
+          publishesToNpm(step.run.value, scripts, retired ? NPM_PUBLISH : NPM_PUBLISH_TOOL)
+        ) {
+          evidence.push({ path: w.path, line: step.line, note: `${step.label} publishes to npm` });
+        }
+      }
+    }
+  }
+  for (const job of gitlab?.jobs.values() ?? []) {
+    if (job.hidden || covered.has(`${job.path}#${job.name}`)) continue;
+    const script = job.data.script;
+    const lines = (Array.isArray(script) ? script : [script]).filter(
+      (l): l is string => typeof l === "string",
+    );
+    if (lines.some((l) => publishesToNpm(l, scripts))) {
+      evidence.push({
+        path: job.path,
+        line: job.line,
+        note: `GitLab job "${job.name}" publishes to npm`,
+      });
+    }
+  }
+  if (evidence.length === 0) return undefined;
+  return {
+    name: uniqueName("npm", used),
+    type: "custom",
+    dir: ".",
+    files: [],
+    builtBy: evidence,
+    proposed: "auto",
+    ask: true,
+    reason: `${evidence[0]?.note} (${evidence[0]?.path}:${evidence[0]?.line}); init retires that release machinery, so launchset publishes ${name} to npm when a release ships`,
+    npm: { package: "package.json", name },
+  };
 }
 
 /** The web target of a repo with a package.json: `auto` unless another target ships it. */

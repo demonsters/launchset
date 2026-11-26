@@ -529,16 +529,26 @@ export function editScripts(
   return out;
 }
 
-/** Comment lines out (`#` languages), keeping their indentation. */
-export function commentLines(text: string, numbers: number[], reason: string): string {
+/**
+ * Comment lines out (`#` languages), keeping their indentation. A line in `noops` becomes the
+ * shell no-op `:` (with its trailing `&&` / `||` / `|`) followed by the comment.
+ */
+export function commentLines(
+  text: string,
+  numbers: number[],
+  reason: string,
+  noops: { line: number; trailingOp?: string }[] = [],
+): string {
   const set = new SpliceSet();
   for (const line of linesOf(text)) {
     if (!numbers.includes(line.number)) continue;
     const indent = /^[ \t]*/.exec(line.text)?.[0] ?? "";
+    const noop = noops.find((n) => n.line === line.number);
+    const prefix = noop ? `:${noop.trailingOp ? ` ${noop.trailingOp}` : ""} ` : "";
     set.add({
       start: line.start,
       end: line.start + line.text.length,
-      text: `${indent}# launchset: disabled — ${reason}: ${line.text.trim()}`,
+      text: `${indent}${prefix}# launchset: disabled — ${reason}: ${line.text.trim()}`,
     });
   }
   return set.apply(text);
@@ -617,7 +627,7 @@ export async function applyRetirement(
       );
     }
     for (const e of forPath) {
-      if (e.kind === "comment-lines") text = commentLines(text, e.lines, e.reason);
+      if (e.kind === "comment-lines") text = commentLines(text, e.lines, e.reason, e.noops);
     }
     const scripts = forPath.filter((e) => e.kind === "script");
     if (scripts.length > 0) text = editScripts(text, scripts, path);

@@ -116,7 +116,20 @@ export interface GitLabCi {
   /** Every job by name (the first definition found wins). */
   jobs: Map<string, GitLabJob>;
   notes: { path: string; line?: number; message: string }[];
+  /**
+   * Tags launchset would push (release, prerelease and marker tags), to test tag conditions
+   * like `$CI_COMMIT_TAG =~ /^helm-/` against; {@link DEFAULT_RELEASE_TAGS} when not set.
+   */
+  releaseTags?: string[];
 }
+
+/** Tags launchset pushes with the default formats (see {@link GitLabCi.releaseTags}). */
+export const DEFAULT_RELEASE_TAGS = [
+  "v1.2.3",
+  "v1.2.3-alpha.0",
+  "launchset/web@1.2.3",
+  "launchset/partial/1.2.3",
+];
 
 const MAX_INCLUDE_DEPTH = 5;
 
@@ -394,6 +407,53 @@ export function templatesOf(ci: GitLabCi, job: GitLabJob): GitLabJob[] {
 }
 
 const TAG_CONDITION = /(?<![!])\$\{?CI_COMMIT_TAG\}?(?!\s*==\s*null)(?!\s*==\s*"")/;
+/** `$CI_COMMIT_TAG =~ /re/`, `$CI_COMMIT_REF_NAME !~ /re/i`. */
+const REF_REGEX =
+  /\$\{?(CI_COMMIT_TAG|CI_COMMIT_REF_NAME)\}?\s*(=~|!~)\s*\/((?:\\.|[^\\/])*)\/([a-z]*)/g;
+
+/** A GitLab regex (`/re/flags`) as a RegExp; undefined when JS can't read it. */
+function gitlabRegExp(source: string, flags: string): RegExp | undefined {
+  try {
+    return new RegExp(source, flags.replace(/[^ims]/g, ""));
+  } catch {
+    return undefined;
+  }
+}
+
+/** `only:` / `except:` ref given as a regex (`/^v\d+/`), as a RegExp. */
+function refRegExp(ref: string): RegExp | undefined {
+  const m = /^\/(.*)\/([a-z]*)$/.exec(ref);
+  return m ? gitlabRegExp(m[1] as string, m[2] as string) : undefined;
+}
+
+/**
+ * True when a rule condition can start a pipeline for one of `tags`: a `$CI_COMMIT_TAG` (or a
+ * `$CI_COMMIT_REF_NAME =~ /re/` that matches a tag) whose regexes some tag passes. Branches of
+ * `||` are tried one by one; a regex JS can't read counts as matching.
+ */
+export function firesOnTags(condition: string, tags: readonly string[]): boolean {
+  return condition.split("||").some((branch) => {
+    const tests: ((tag: string) => boolean)[] = [];
+    let refName = false;
+    for (const m of branch.matchAll(REF_REGEX)) {
+      const re = gitlabRegExp(m[3] as string, m[4] as string);
+      if (m[1] === "CI_COMMIT_REF_NAME") refName = true;
+      if (!re) continue;
+      tests.push(m[2] === "!~" ? (t) => !re.test(t) : (t) => re.test(t));
+    }
+    if (!TAG_CONDITION.test(branch) && !refName) return false;
+    return tags.some((tag) => tests.every((test) => test(tag)));
+  });
+}
+
+/** An `only:` ref that matches one of `tags` (`tags`, or a regex a tag passes). */
+function tagRef(ref: string, tags: readonly string[]): boolean {
+  if (ref === "tags") return true;
+  const re = refRegExp(ref);
+  return re !== undefined && tags.some((t) => re.test(t));
+}
+
+const tagsOf = (ci: GitLabCi) => ci.releaseTags ?? DEFAULT_RELEASE_TAGS;
 const BRANCH_CONDITION =
   /\$\{?(?:CI_COMMIT_BRANCH|CI_DEFAULT_BRANCH|CI_COMMIT_REF_NAME|CI_COMMIT_REF_SLUG|CI_COMMIT_REF_PROTECTED)\b|\$CI_PIPELINE_SOURCE\s*==\s*["']push["']/;
 /** `only` / `except` refs that aren't branches. */
@@ -427,12 +487,30 @@ function onlyRefs(value: unknown): string[] | undefined {
 
 /** True when the job runs in tag pipelines (`only: tags`, a `$CI_COMMIT_TAG` rule). */
 export function runsOnTags(ci: GitLabCi, job: GitLabJob): boolean {
+  const tags = tagsOf(ci);
   const only = onlyRefs(effective(ci, job, "only"));
-  if (only?.includes("tags")) return true;
+  if (only?.some((ref) => tagRef(ref, tags))) return true;
   const rules = rulesOf(effective(ci, job, "rules"));
   return (rules ?? []).some(
-    (r) => typeof r.if === "string" && TAG_CONDITION.test(r.if) && r.when !== "never",
+    (r) => typeof r.if === "string" && firesOnTags(r.if, tags) && r.when !== "never",
   );
+}
+
+/**
+ * True when only launchset's tags start the job: every rule that can start it is a tag rule
+ * (`only:` refs all match tags). Such a job stops running once its tag rules go.
+ */
+export function runsOnlyOnTags(ci: GitLabCi, job: GitLabJob): boolean {
+  if (!runsOnTags(ci, job)) return false;
+  const tags = tagsOf(ci);
+  const rules = rulesOf(effective(ci, job, "rules"));
+  if (rules) {
+    return rules.every(
+      (r) => r.when === "never" || (typeof r.if === "string" && firesOnTags(r.if, tags)),
+    );
+  }
+  const only = onlyRefs(effective(ci, job, "only"));
+  return only !== undefined && only.length > 0 && only.every((ref) => tagRef(ref, tags));
 }
 
 /** True when a branch push can start the job (no rules, a branch rule or `only` ref). */
@@ -760,7 +838,7 @@ export function workflowTagRules(ci: GitLabCi): WorkflowTagRule[] {
       if (!isMap(item)) continue;
       const rule = item as YAMLMap;
       const condition = rule.get("if");
-      if (typeof condition !== "string" || !TAG_CONDITION.test(condition)) continue;
+      if (typeof condition !== "string" || !firesOnTags(condition, tagsOf(ci))) continue;
       if (rule.get("when") === "never") continue;
       const range = (item as { range?: number[] }).range;
       out.push({ path: file.path, line: lineOf(file.text, range?.[0] ?? 0), condition });
@@ -800,7 +878,10 @@ const ONLY_TAG_RULE = /\|\|/;
  * can go while the rest still starts it. Undefined when the tag trigger comes from a template
  * (`extends`), a rule mixes tags with `||`, or nothing else would start the job.
  */
-export function tagRuleEdit(job: GitLabJob): TagRuleEdit | undefined {
+export function tagRuleEdit(
+  job: GitLabJob,
+  tags: readonly string[] = DEFAULT_RELEASE_TAGS,
+): TagRuleEdit | undefined {
   const rulesPair = pairOf(job.map, "rules");
   if (rulesPair) {
     const seq = rulesPair.value;
@@ -811,7 +892,7 @@ export function tagRuleEdit(job: GitLabJob): TagRuleEdit | undefined {
       if (!isMap(item)) return undefined;
       const rule = (item as YAMLMap).toJSON() as Record<string, unknown>;
       const condition = typeof rule.if === "string" ? rule.if : undefined;
-      if (condition !== undefined && TAG_CONDITION.test(condition) && rule.when !== "never") {
+      if (condition !== undefined && firesOnTags(condition, tags) && rule.when !== "never") {
         if (ONLY_TAG_RULE.test(condition)) return undefined;
         items.push(item as Node);
         continue;
@@ -829,9 +910,10 @@ export function tagRuleEdit(job: GitLabJob): TagRuleEdit | undefined {
   const onlyPair = pairOf(job.map, "only");
   if (onlyPair && isSeq(onlyPair.value)) {
     const seq = onlyPair.value as YAMLSeq;
-    const items = seq.items.filter((i) => isScalar(i) && i.value === "tags") as Node[];
+    const isTag = (i: unknown) => isScalar(i) && tagRef(String(i.value), tags);
+    const items = seq.items.filter(isTag) as Node[];
     const others = seq.items
-      .filter((i) => !(isScalar(i) && i.value === "tags"))
+      .filter((i) => !isTag(i))
       .map((i) => (isScalar(i) ? String(i.value) : "…"));
     if (items.length === 0 || others.length === 0) return undefined;
     return { seq, items, others: others.map((o) => `only: ${o}`), key: "only" };

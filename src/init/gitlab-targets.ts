@@ -14,11 +14,12 @@ import {
   type GitLabCi,
   type GitLabFile,
   type GitLabJob,
+  runsOnlyOnTags,
   runsOnTags,
   templatesOf,
   usersOf,
 } from "./gitlab-scan.ts";
-import { gitlabCommandKinds, PUBLISH_COMMAND } from "./machinery.ts";
+import { gitlabCommandKinds, publishCommand } from "./machinery.ts";
 import { commentsAbove } from "./retire.ts";
 import { pairLines } from "./text-edit.ts";
 import type { DetectedGitLabJob, DetectedTarget, Evidence } from "./types.ts";
@@ -101,10 +102,19 @@ function output(ci: GitLabCi, job: GitLabJob): string | undefined {
   }
   if (effective(ci, job, "environment") !== undefined) return "deploys to an environment";
   const script = flatStrings(effective(ci, job, "script"));
-  const push = script.find((l) => PUBLISH_COMMAND.test(l) || /--push\b|\bupload\b/i.test(l));
+  const push = script.find((l) => publishCommand(l) !== undefined);
   if (push !== undefined) {
     const line = push.replace(/\s+/g, " ").trim();
     return `publishes (\`${line.length > 72 ? `${line.slice(0, 71)}…` : line}\`)`;
+  }
+  // A job only release tags start is release work, whatever it does: once its tag rules go
+  // nothing runs it, so it becomes a target rather than quietly disappearing.
+  if (runsOnlyOnTags(ci, job)) {
+    const own = script.find((l) => !/^\s*(?:echo|printf|true|:)(?:\s|$)/.test(l));
+    if (own !== undefined) {
+      const line = own.replace(/\s+/g, " ").trim();
+      return `only runs for tags (\`${line.length > 72 ? `${line.slice(0, 71)}…` : line}\`)`;
+    }
   }
   return undefined;
 }

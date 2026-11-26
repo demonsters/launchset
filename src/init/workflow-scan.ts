@@ -21,6 +21,18 @@ import { lineOf } from "../core/text.ts";
 import { joinRel, linesOf, normalizeRel } from "./fs.ts";
 import type { DetectedPlatform } from "./types.ts";
 
+/** An `if:` that only matches tag refs (`startsWith(github.ref, 'refs/tags/')`). */
+export const TAG_REF =
+  /refs\/tags\/|github\.ref_type\s*==\s*['"]tag['"]|startsWith\(\s*github\.ref_name\s*,\s*['"]v/;
+
+/**
+ * True when a job only runs for tags (its `if:` checks for a tag ref). A tag-gated step that
+ * publishes already makes its workflow one that publishes.
+ */
+export function tagGated(job: WorkflowJob): boolean {
+  return TAG_REF.test(job.if ?? "");
+}
+
 export interface ScalarRef {
   value: string;
   node: Scalar;
@@ -55,6 +67,12 @@ export interface WorkflowJob {
   /** `needs` value nodes (scalar or sequence items). */
   needs: ScalarRef[];
   needsPair?: Pair;
+  /** Its `if:` condition. */
+  if?: string;
+  /** A reusable workflow it calls (`uses: ./.github/workflows/build.yml`) instead of steps. */
+  uses?: string;
+  /** Its deployment environment (`environment: production` or `environment.name`). */
+  environment?: string;
 }
 
 export interface WorkflowTriggers {
@@ -82,10 +100,14 @@ export interface WorkflowTriggers {
   hasBranchFilter: boolean;
   /** A `tags` / `tags-ignore` filter exists, so `github.ref_name` can be a tag. */
   tagEvents: boolean;
+  /** `on.workflow_run.workflows`: the workflows (by name) whose runs start this one. */
+  workflowRun: string[];
 }
 
 export interface Workflow {
   path: string;
+  /** Its top-level `name:`. */
+  name?: string;
   text: string;
   doc: Document;
   env: Record<string, string>;
@@ -133,6 +155,7 @@ function parseTriggers(text: string, root: YAMLMap): WorkflowTriggers {
     onBranchPush: false,
     hasBranchFilter: false,
     tagEvents: false,
+    workflowRun: [],
   };
   const pair = pairOf(root, "on");
   if (!pair) return triggers;
@@ -148,6 +171,9 @@ function parseTriggers(text: string, root: YAMLMap): WorkflowTriggers {
   }
   if (!isMap(value)) return triggers;
   triggers.map = value;
+  const run = pairOf(value, "workflow_run")?.value;
+  const runWorkflows = isMap(run) ? pairOf(run as YAMLMap, "workflows") : undefined;
+  if (runWorkflows) triggers.workflowRun = scalars(text, runWorkflows.value).map((r) => r.value);
   const release = pairOf(value, "release");
   if (release) {
     const types = isMap(release.value) ? pairOf(release.value as YAMLMap, "types") : undefined;
@@ -261,6 +287,19 @@ function parseJobs(text: string, root: YAMLMap): { jobs: WorkflowJob[]; map?: YA
     };
     if (stepsSeq) job.stepsSeq = stepsSeq;
     if (needsPair) job.needsPair = needsPair;
+    const plainValue = (key: string, of: YAMLMap = node) => {
+      const v = pairOf(of, key)?.value;
+      return isScalar(v) && v.value !== null && v.value !== undefined ? String(v.value) : undefined;
+    };
+    const condition = plainValue("if");
+    if (condition !== undefined) job.if = condition;
+    const uses = plainValue("uses");
+    if (uses !== undefined) job.uses = uses;
+    const environment = pairOf(node, "environment")?.value;
+    const envName = isMap(environment)
+      ? plainValue("name", environment as YAMLMap)
+      : plainValue("environment");
+    if (envName !== undefined) job.environment = envName;
     jobs.push(job);
   }
   return { jobs, map: jobsPair.value as YAMLMap };
@@ -275,8 +314,10 @@ export function parseWorkflow(path: string, text: string): Workflow | { error: s
   const root = doc.contents;
   if (!isMap(root)) return { error: "the file has no top-level map" };
   const { jobs, map } = parseJobs(text, root as YAMLMap);
+  const nameNode = pairOf(root as YAMLMap, "name")?.value;
   const workflow: Workflow = {
     path,
+    ...(isScalar(nameNode) && typeof nameNode.value === "string" ? { name: nameNode.value } : {}),
     text,
     doc,
     env: envOf(pairOf(root as YAMLMap, "env")?.value),
@@ -540,6 +581,11 @@ function depthDelta(code: string): number {
  * Blank lines, comments and heredoc bodies (data, not commands) are skipped.
  */
 export function runCommands(run: ScalarRef, text: string): RunCommand[] {
+  return shellCommands(runLines(run, text));
+}
+
+/** {@link runCommands} for any shell lines (a script file's, with 1-based line numbers). */
+export function shellCommands(lines: { number: number; text: string }[]): RunCommand[] {
   const out: RunCommand[] = [];
   let current:
     | (RunCommand & { depth: number; prevContinues: boolean; heredoc: boolean })
@@ -547,7 +593,7 @@ export function runCommands(run: ScalarRef, text: string): RunCommand[] {
   let depth = 0;
   let heredoc: string | undefined;
   let prevContinues = false;
-  for (const line of runLines(run, text)) {
+  for (const line of lines) {
     const trimmed = line.text.trim();
     if (heredoc !== undefined) {
       if (trimmed === heredoc) heredoc = undefined;
