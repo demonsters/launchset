@@ -19,6 +19,8 @@
 #     another branch plans a `preview`-channel build and publishes nothing).
 #
 # npm auth: trusted publishing (OIDC), see the comment at the top of launchset-release.yml.
+# Its jobs run in the `release` environment (see there too), which only main, release/*.x and
+# next/* may use: a manual run on another branch stops at the plan job.
 name: Launchset preview
 
 on:
@@ -47,6 +49,7 @@ jobs:
   plan:
     name: Plan preview
     runs-on: ubuntu-latest
+    environment: release
     permissions:
       contents: read
     outputs:
@@ -88,6 +91,7 @@ jobs:
     needs: plan
     if: needs.plan.result == 'success' && needs.plan.outputs.matrix != '' && needs.plan.outputs.matrix != '[]'
     runs-on: ubuntu-latest
+    environment: release
     permissions:
       contents: read
       # npm trusted publishing (OIDC): `npm publish` gets a short-lived token.
@@ -160,6 +164,7 @@ jobs:
     # was skipped.
     if: always() && needs.plan.result != 'skipped'
     runs-on: ubuntu-latest
+    environment: release
     permissions:
       actions: read # lists the jobs of this run, for the per-target links
       contents: read
