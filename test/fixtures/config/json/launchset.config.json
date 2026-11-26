@@ -1,5 +1,5 @@
 {
-  "$schema": "./node_modules/@demonsters/launchset/dist/launchset.schema.json",
+  "$schema": "./node_modules/launchset/dist/launchset.schema.json",
   "version": { "file": "version.json" },
   "targets": {
     "ios": { "type": "ios", "source": { "kind": "plist", "files": ["ios/App/Info.plist", "ios/Widget/Info.plist"] } },

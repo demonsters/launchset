@@ -1,7 +1,7 @@
 # launchset's own preview workflow: installable prereleases of the npm package. A push to a
 # `next/*` branch publishes `X.Y.Z-next.N` to the npm dist-tag `next` and creates a GitHub
-# pre-release (spec 9.9), so other demonsters repos can try a change with
-# `npm i @demonsters/launchset@next` before it is released. Nothing is committed, no changesets
+# pre-release (spec 9.9), so anyone can try a change with `npm i launchset@next` before it is
+# released. Nothing is committed, no changesets
 # are consumed and no marker or release tags are created.
 #
 #   plan     decides the version, build number and targets (and reserves the prerelease tag)
@@ -121,8 +121,7 @@ jobs:
           target: ${{ matrix.target }}
           plan: ${{ needs.plan.outputs.plan }}
 
-      # No `verify` step: trusted-publishing tokens can't read the private package (see
-      # launchset-release.yml). The publish step is idempotent instead.
+      # No `verify` step (see launchset-release.yml): the publish step is idempotent instead.
 
       # ---------------------------------------------------------------------------------------
       # --- npm (npm package) ---
@@ -150,7 +149,7 @@ jobs:
           echo "$output"
           if [ "$status" -ne 0 ]; then
             if grep -qiE "cannot publish over the previously published versions|EPUBLISHCONFLICT" <<<"$output"; then
-              echo "::notice::This version of @demonsters/launchset is already on npm; nothing to publish."
+              echo "::notice::This version of launchset is already on npm; nothing to publish."
               exit 0
             fi
             exit "$status"

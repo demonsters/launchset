@@ -16,7 +16,7 @@ Add offline mode to the mobile app.
 - The text below the frontmatter is the changelog entry: one bullet about one change, with any further lines indented under it. A PR that adds a feature and fixes a bug adds two changesets.
 - Name the file with three random words, like `brave-lions-sing.md`.
 
-Create one with `npx @demonsters/launchset add`, or write the file by hand.
+Create one with `npx launchset add`, or write the file by hand.
 
 launchset collects the changesets into a release PR (`Release vX.Y.Z`). Merging that PR releases every target. Don't edit version numbers, build numbers or `CHANGELOG.md` by hand, and don't create `v*` or `launchset/*` tags (or whatever `tags` in `launchset.config.*` sets).
 

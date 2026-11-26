@@ -54,7 +54,7 @@ describe("PR check", () => {
     let comments = world.commentsOn(11);
     expect(comments).toHaveLength(1);
     expect(comments[0]?.body.startsWith(MARKER)).toBe(true);
-    expect(comments[0]?.body).toContain("npx @demonsters/launchset add");
+    expect(comments[0]?.body).toContain("npx launchset add");
     expect(comments[0]?.body).toContain("bump: patch");
 
     // The CLI says the same thing, with exit code 1.
@@ -75,7 +75,7 @@ describe("PR check", () => {
     expect(comments[0]?.body.startsWith(MARKER)).toBe(true);
     expect(comments[0]?.body).toContain("1.5.0");
     expect(comments[0]?.body).toContain("Add search to the dashboard.");
-    expect(comments[0]?.body).not.toContain("npx @demonsters/launchset add");
+    expect(comments[0]?.body).not.toContain("npx launchset add");
 
     // The CLI exits 0 now.
     expect((await prJob(world, "feature/search", 11).cli(["check", "--no-comment"])).code).toBe(0);

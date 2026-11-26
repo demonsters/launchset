@@ -207,9 +207,9 @@ export function ruleEntry(expression: string, extra: string[] = []): string {
 // Installing the CLI in a job
 
 /** The npm package of the CLI. */
-export const CLI_PACKAGE = "@demonsters/launchset";
+export const CLI_PACKAGE = "launchset";
 
-/** `@demonsters/launchset@<this version>`: what a job installs unless LAUNCHSET_CLI says else. */
+/** `launchset@<this version>`: what a job installs unless LAUNCHSET_CLI says else. */
 export function defaultCliSpec(): string {
   const version = packageVersion();
   return version === "unknown" ? CLI_PACKAGE : `${CLI_PACKAGE}@${version}`;
@@ -217,12 +217,9 @@ export function defaultCliSpec(): string {
 
 /**
  * The script lines that install the CLI (`$LAUNCHSET_CLI`) unless `launchset` is already on the
- * PATH. The package is private: with `NPM_TOKEN` set, npm gets it as the registry token first.
- * POSIX sh; each line is one command, so a failure fails the job.
+ * PATH. POSIX sh; each line is one command, so a failure fails the job.
  */
 export const INSTALL_LINES = [
-  // biome-ignore lint/suspicious/noTemplateCurlyInString: a shell expansion, not a JS template.
-  'if [ -n "${NPM_TOKEN:-}" ] && ! command -v launchset >/dev/null 2>&1; then npm config set "//registry.npmjs.org/:_authToken" "$NPM_TOKEN"; fi',
   'command -v launchset >/dev/null 2>&1 || npm install --global --no-fund --no-audit --loglevel=error "$LAUNCHSET_CLI"',
   "launchset --version",
 ];
@@ -264,7 +261,6 @@ const PS_FIND = "Get-Command launchset -ErrorAction SilentlyContinue";
  * PATH (a service account): then it is added for this job, so the new `launchset` is found.
  */
 export const POWERSHELL_INSTALL_LINES = [
-  `if ($env:NPM_TOKEN -and -not (${PS_FIND})) { npm config set "//registry.npmjs.org/:_authToken" "$env:NPM_TOKEN"; ${PS_CHECK} }`,
   `if (-not (${PS_FIND})) { npm install --global --no-fund --no-audit --loglevel=error "$env:LAUNCHSET_CLI"; ${PS_CHECK} }`,
   `if (-not (${PS_FIND})) { $env:Path = "$(npm prefix --global);$env:Path" }`,
   psChecked("launchset --version"),

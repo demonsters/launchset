@@ -6,13 +6,14 @@
  *   node scripts/build-action.ts --out <dir>     also write the publish directory for
  *                                                demonsters/launchset-action: action.yml,
  *                                                dist/index.js, dist/package.json,
+ *                                                dist/THIRD_PARTY_LICENSES.txt,
  *                                                README.md, LICENSE
  *   node scripts/build-action.ts --write-readme  regenerate the tables in action/README.md
  *                                                from action.yml
  */
 
-import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { copyFile, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build as esbuild, type Plugin } from "esbuild";
 import { parse } from "yaml";
@@ -28,16 +29,8 @@ export const BUNDLE = resolve(actionDir, "dist/index.js");
  */
 export const DIST_PACKAGE_JSON = `${JSON.stringify({ type: "module" })}\n`;
 
-export const LICENSE_TEXT = `Copyright (c) demonsters. All rights reserved.
-
-This repository contains the compiled launchset GitHub Action. It is proprietary software of
-demonsters, provided only for use in GitHub Actions workflows. No other right is granted: you
-may not copy, modify, redistribute or sublicense it, in whole or in part, without written
-permission from demonsters.
-
-The bundle includes third-party open source components under their own licenses. Their notices
-are in dist/index.js.LEGAL.txt.
-`;
+/** launchset's MIT licence (the repo root `LICENSE`), published with the action too. */
+export const LICENSE = resolve(root, "LICENSE");
 
 /**
  * jiti's ESM entry (`lib/jiti.mjs`) loads its Babel transform at runtime with
@@ -71,9 +64,12 @@ export interface BuildResult {
   bytes: number;
 }
 
-/** Bundle the action into `action/dist/index.js` (+ `index.js.LEGAL.txt` next to it). */
+/**
+ * Bundle the action into `action/dist/index.js`, with `THIRD_PARTY_LICENSES.txt` (every bundled
+ * package's license) next to it.
+ */
 export async function buildBundle(outfile: string = BUNDLE): Promise<BuildResult> {
-  await esbuild({
+  const result = await esbuild({
     entryPoints: [resolve(actionDir, "src/index.ts")],
     outfile,
     bundle: true,
@@ -83,7 +79,11 @@ export async function buildBundle(outfile: string = BUNDLE): Promise<BuildResult
     // Readable stack traces: no minification, source positions kept as comments off.
     minify: false,
     sourcemap: false,
-    legalComments: "external",
+    // License comments stay in the bundle, at the end. They also cover code a package vendored
+    // from another one (undici's copies of ws and formdata-polyfill), which the packages'
+    // license files don't.
+    legalComments: "eof",
+    metafile: true,
     banner: { js: BANNER },
     plugins: [jitiCjs],
     logLevel: "warning",
@@ -94,8 +94,136 @@ export async function buildBundle(outfile: string = BUNDLE): Promise<BuildResult
     packages: "bundle",
   });
   await writeFile(resolve(dirname(outfile), "package.json"), DIST_PACKAGE_JSON);
+  const packages = await bundledPackages(Object.keys(result.metafile.inputs));
+  await writeFile(resolve(dirname(outfile), NOTICES), renderNotices(packages));
   const text = await readFile(outfile);
   return { bundle: outfile, bytes: text.length };
+}
+
+// ---------------------------------------------------------------------------
+// Third-party licenses
+
+/** The notices file next to the bundle. */
+export const NOTICES = "THIRD_PARTY_LICENSES.txt";
+
+/**
+ * Licenses the bundle may contain. launchset is MIT, and the action is published as one file,
+ * so a copyleft dependency (GPL, LGPL, MPL) would change what users of the action may do: the
+ * build stops instead. An SPDX `OR` expression passes when one side is listed here.
+ */
+export const ALLOWED_LICENSES = [
+  "0BSD",
+  "Apache-2.0",
+  "BlueOak-1.0.0",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "CC0-1.0",
+  "ISC",
+  "MIT",
+  "Unlicense",
+];
+
+export interface BundledPackage {
+  name: string;
+  version: string;
+  /** The SPDX expression from package.json. */
+  license: string;
+  /** The package's license files (LICENSE, LICENCE, COPYING, NOTICE), in name order. */
+  files: { name: string; text: string }[];
+}
+
+const LICENSE_FILE = /^(licen[cs]e|copying|notice)([-._].*)?$/i;
+
+/**
+ * The package directory of a file inside `node_modules`: everything up to the last
+ * `node_modules/` plus the package name (two segments when scoped). Undefined for own code.
+ */
+export function packageDir(file: string): string | undefined {
+  const parts = resolve(root, file).split(sep);
+  const at = parts.lastIndexOf("node_modules");
+  if (at === -1 || at + 1 >= parts.length) return undefined;
+  const length = parts[at + 1]?.startsWith("@") ? 3 : 2;
+  return parts.slice(0, at + length).join(sep);
+}
+
+function licenseOf(pkg: Record<string, unknown>): string {
+  const { license, licenses } = pkg;
+  if (typeof license === "string") return license;
+  if (license && typeof license === "object" && "type" in license) return String(license.type);
+  if (Array.isArray(licenses)) {
+    return licenses.map((l) => (l && typeof l === "object" ? l.type : l)).join(" OR ");
+  }
+  return "";
+}
+
+/** Whether an SPDX expression is allowed: every `AND` part, and one side of each `OR`. */
+export function licenseAllowed(expression: string): boolean {
+  const clean = expression.replace(/[()]/g, " ").trim();
+  if (!clean) return false;
+  return clean
+    .split(/\s+OR\s+/i)
+    .some((option) =>
+      option.split(/\s+AND\s+/i).every((id) => ALLOWED_LICENSES.includes(id.trim())),
+    );
+}
+
+/** The packages the bundle's input files come from, with their licenses. */
+export async function bundledPackages(inputs: string[]): Promise<BundledPackage[]> {
+  const dirs = new Set(inputs.map(packageDir).filter((dir): dir is string => dir !== undefined));
+  const found = new Map<string, BundledPackage>();
+  const problems: string[] = [];
+  for (const dir of dirs) {
+    const pkg = JSON.parse(await readFile(join(dir, "package.json"), "utf8")) as Record<
+      string,
+      unknown
+    >;
+    const name = String(pkg.name);
+    const version = String(pkg.version);
+    const license = licenseOf(pkg);
+    const names = (await readdir(dir)).filter((file) => LICENSE_FILE.test(file)).sort();
+    const files = await Promise.all(
+      names.map(async (file) => ({
+        name: file,
+        text: (await readFile(join(dir, file), "utf8")).trim(),
+      })),
+    );
+    const where = relative(root, dir);
+    if (!licenseAllowed(license)) {
+      problems.push(`${name}@${version} (${where}): license "${license || "none"}" isn't allowed`);
+    } else if (files.length === 0) {
+      problems.push(`${name}@${version} (${where}): no LICENSE file to copy its notice from`);
+    }
+    found.set(`${name}@${version}`, { name, version, license, files });
+  }
+  if (problems.length > 0) {
+    throw new Error(
+      `The action bundle can't include these packages:\n  ${problems.join("\n  ")}\nSee ALLOWED_LICENSES in scripts/build-action.ts.`,
+    );
+  }
+  return [...found.values()].sort((a, b) =>
+    a.name === b.name ? a.version.localeCompare(b.version) : a.name.localeCompare(b.name),
+  );
+}
+
+/** `THIRD_PARTY_LICENSES.txt`: each bundled package with its license files. */
+export function renderNotices(packages: BundledPackage[]): string {
+  const rule = "-".repeat(78);
+  const head = [
+    "The launchset GitHub Action (dist/index.js) bundles the third-party packages below.",
+    "Each one keeps its own license, copied here from the package. launchset itself is MIT:",
+    "see LICENSE.",
+  ].join("\n");
+  const sections = packages.map((pkg) =>
+    [
+      rule,
+      `${pkg.name}@${pkg.version} (${pkg.license})`,
+      rule,
+      ...pkg.files.map((file) =>
+        pkg.files.length > 1 ? `${file.name}:\n\n${file.text}` : file.text,
+      ),
+    ].join("\n\n"),
+  );
+  return `${[head, ...sections].join("\n\n")}\n`;
 }
 
 // ---------------------------------------------------------------------------
@@ -183,16 +311,16 @@ export async function writePublishDir(out: string, bundle: string = BUNDLE): Pro
     "action.yml",
     "dist/index.js",
     "dist/package.json",
-    "dist/index.js.LEGAL.txt",
+    `dist/${NOTICES}`,
     "README.md",
     "LICENSE",
   ];
   await copyFile(resolve(actionDir, "action.yml"), resolve(dir, "action.yml"));
   await copyFile(bundle, resolve(dir, "dist/index.js"));
   await writeFile(resolve(dir, "dist/package.json"), DIST_PACKAGE_JSON);
-  await copyFile(`${bundle}.LEGAL.txt`, resolve(dir, "dist/index.js.LEGAL.txt"));
+  await copyFile(resolve(dirname(bundle), NOTICES), resolve(dir, "dist", NOTICES));
   await writeFile(resolve(dir, "README.md"), await expectedReadme());
-  await writeFile(resolve(dir, "LICENSE"), LICENSE_TEXT);
+  await copyFile(LICENSE, resolve(dir, "LICENSE"));
   return files;
 }
 

@@ -18,7 +18,7 @@ if (!node && process.env.CI) {
 }
 const suite = node ? describe : describe.skip;
 
-const CONFIG = `import { defineConfig } from "@demonsters/launchset";
+const CONFIG = `import { defineConfig } from "launchset";
 
 export default defineConfig({
   targets: {
@@ -110,13 +110,23 @@ suite("action bundle on Node 24", () => {
   it("runs on Node 24 from the publish layout (no node_modules)", () => {
     expect(execFileSync(node as string, ["--version"], { encoding: "utf8" })).toMatch(/^v24\./);
     const published = dirname(dirname(bundle));
-    for (const file of ["action.yml", "README.md", "LICENSE", "dist/index.js"]) {
+    for (const file of [
+      "action.yml",
+      "README.md",
+      "LICENSE",
+      "dist/index.js",
+      "dist/THIRD_PARTY_LICENSES.txt",
+    ]) {
       expect(existsSync(join(published, file))).toBe(true);
     }
     expect(existsSync(join(published, "package.json"))).toBe(false);
     // The only package.json: it makes dist/index.js an ES module whatever is above it.
     expect(readFileSync(join(published, "dist/package.json"), "utf8")).toBe('{"type":"module"}\n');
-    expect(readFileSync(join(published, "LICENSE"), "utf8")).toContain("All rights reserved");
+    expect(readFileSync(join(published, "LICENSE"), "utf8")).toContain("MIT License");
+    const notices = readFileSync(join(published, "dist/THIRD_PARTY_LICENSES.txt"), "utf8");
+    for (const name of ["@octokit/rest", "jiti", "yaml", "zod"]) {
+      expect(notices).toMatch(new RegExp(`^${name}@\\d\\S* \\(`, "m"));
+    }
   });
 
   it("release: a release commit is mode publish with a matrix (loads launchset.config.ts)", () => {

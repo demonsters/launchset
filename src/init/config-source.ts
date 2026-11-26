@@ -264,5 +264,5 @@ function hasComments(path: string, value: unknown, comments: Map<string, string[
 /** The `launchset.config.ts` text. */
 export function renderConfigSource(plan: ConfigPlan): string {
   const header = (plan.comments.get("") ?? []).map((l) => `// ${l}\n`).join("");
-  return `import { defineConfig } from "@demonsters/launchset";\n\n${header}export default defineConfig(${render(plan.config, "", "", plan.comments)});\n`;
+  return `import { defineConfig } from "launchset";\n\n${header}export default defineConfig(${render(plan.config, "", "", plan.comments)});\n`;
 }

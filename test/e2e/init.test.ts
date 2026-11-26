@@ -273,7 +273,7 @@ describe("init --yes --decide", () => {
         cwd: dir,
       }),
     );
-    expect(read(dir, "lefthook.yml")).toContain("npx @demonsters/launchset check --push");
+    expect(read(dir, "lefthook.yml")).toContain("npx launchset check --push");
     const config = read(dir, "launchset.config.ts");
     for (const target of [
       "api",

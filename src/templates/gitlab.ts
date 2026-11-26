@@ -66,7 +66,7 @@ export interface GitLabTemplateInput {
    * one that exists in the project's `stages:`.
    */
   stage?: string;
-  /** What jobs install with npm (`LAUNCHSET_CLI`), default `@demonsters/launchset@<this version>`. */
+  /** What jobs install with npm (`LAUNCHSET_CLI`), default `launchset@<this version>`. */
   cliSpec?: string;
   /** Extra info init found per target, e.g. Dockerfile path and build context. */
   hints?: Record<string, { dockerfile?: string; context?: string; platforms?: string }>;

@@ -145,7 +145,7 @@ export function commitsWithoutChangesetWarning(
     "",
     ...lines,
     "",
-    "Add a changeset (`npx @demonsters/launchset add`) to release them, or `--empty` if they need no release.",
+    "Add a changeset (`npx launchset add`) to release them, or `--empty` if they need no release.",
   ].join("\n");
 }
 

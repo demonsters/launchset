@@ -422,7 +422,7 @@ describe("hooks", () => {
 
   it("adds the command to lefthook configs with and without a pre-push section", () => {
     expect(addLefthookCommand("pre-push:\n  commands:\n    test:\n      run: pnpm test\n")).toBe(
-      "pre-push:\n  commands:\n    launchset:\n      run: npx @demonsters/launchset check --push\n    test:\n      run: pnpm test\n",
+      "pre-push:\n  commands:\n    launchset:\n      run: npx launchset check --push\n    test:\n      run: pnpm test\n",
     );
     expect(addLefthookCommand("pre-push:\n  scripts:\n    a.sh:\n      runner: bash\n")).toBeNull();
   });
@@ -436,8 +436,18 @@ describe("hooks", () => {
     expect(hook).toEqual({ tool: "simple-git-hooks", path: "package.json", installed: false });
     await installHook(dir, hook as never);
     expect(readFileSync(join(dir, "package.json"), "utf8")).toBe(
-      '{\n  "name": "x",\n  "simple-git-hooks": {\n    "pre-push": "pnpm test && npx @demonsters/launchset check --push"\n  }\n}\n',
+      '{\n  "name": "x",\n  "simple-git-hooks": {\n    "pre-push": "pnpm test && npx launchset check --push"\n  }\n}\n',
     );
+    expect(await detectHooks(dir)).toEqual([
+      { tool: "simple-git-hooks", path: "package.json", installed: true },
+    ]);
+  });
+
+  it("counts a hook that runs the package's old name as installed", async () => {
+    const dir = tempDir({
+      "package.json":
+        '{\n  "name": "x",\n  "simple-git-hooks": {\n    "pre-push": "npx @demonsters/launchset check --push"\n  }\n}\n',
+    });
     expect(await detectHooks(dir)).toEqual([
       { tool: "simple-git-hooks", path: "package.json", installed: true },
     ]);
@@ -522,9 +532,7 @@ describe("small helpers", () => {
   });
 
   it("finds the package files from the source tree", () => {
-    expect(readFileSync(packageFile("package.json"), "utf8")).toContain(
-      '"name": "@demonsters/launchset"',
-    );
+    expect(readFileSync(packageFile("package.json"), "utf8")).toContain('"name": "launchset"');
     expect(packageRoot()).toBe(join(import.meta.dirname, "../.."));
   });
 });

@@ -137,7 +137,7 @@ function howToAdd(docsUrl: string, dir: string): string {
     "Add one with:",
     "",
     "```sh",
-    "npx @demonsters/launchset add",
+    "npx launchset add",
     "```",
     "",
     `or write a file like \`${dir}/brave-lions-sing.md\` by hand:`,

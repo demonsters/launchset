@@ -211,7 +211,7 @@ const CONFLICT = [
 function publishesIdempotently(step: () => Step | undefined) {
   it("publishes with the dist-tag", () => {
     const result = runPublish(step()?.run ?? "", {
-      output: "+ @demonsters/launchset@1.0.0",
+      output: "+ launchset@1.0.0",
       status: 0,
     });
     expect(result.status).toBe(0);

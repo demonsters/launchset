@@ -50,9 +50,7 @@ describe("init --yes: tag-triggered docker workflow", () => {
       ].sort(),
     );
 
-    expect(
-      read(dir, "launchset.config.ts"),
-    ).toBe(`import { defineConfig } from "@demonsters/launchset";
+    expect(read(dir, "launchset.config.ts")).toBe(`import { defineConfig } from "launchset";
 
 // launchset configuration, written by \`launchset init\`.
 // Options left out use their defaults: see the configuration reference in the launchset docs.
@@ -299,9 +297,7 @@ jobs:
   it("--hook adds launchset check --push to the husky pre-push hook", async () => {
     const dir = repo();
     await runInit(options(dir, { yes: true, hook: true }));
-    expect(read(dir, ".husky/pre-push")).toBe(
-      "pnpm test\nnpx @demonsters/launchset check --push\n",
-    );
+    expect(read(dir, ".husky/pre-push")).toBe("pnpm test\nnpx launchset check --push\n");
   });
 
   it("keeps a release tag format the repo already uses when decided", async () => {
@@ -372,9 +368,7 @@ describe("init --yes: Capacitor app with a version-sync script", () => {
     // The k8s pin is deploy state by default.
     expect(read(dir, "deploy/k8s/app.yaml")).toBe(fixture("capacitor-sync", "deploy/k8s/app.yaml"));
 
-    expect(
-      read(dir, "launchset.config.ts"),
-    ).toBe(`import { defineConfig } from "@demonsters/launchset";
+    expect(read(dir, "launchset.config.ts")).toBe(`import { defineConfig } from "launchset";
 
 // launchset configuration, written by \`launchset init\`.
 // Options left out use their defaults: see the configuration reference in the launchset docs.
@@ -528,7 +522,7 @@ describe("init --yes: workspace", () => {
 pre-push:
   commands:
     launchset:
-      run: npx @demonsters/launchset check --push
+      run: npx launchset check --push
 `);
     expect(read(dir, "apps/expo-app/app.json")).toBe(
       edit(

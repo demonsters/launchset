@@ -2,7 +2,7 @@
  * Files that ship inside the launchset package (`templates/`, `skills/`), found relative to
  * this module. It runs from `src/init/` in the repo and from a bundled file in `dist/` (one
  * level below the package root, maybe deeper for shared chunks) in the npm package, so it
- * walks up to the directory whose package.json is `@demonsters/launchset`.
+ * walks up to the directory whose package.json is `launchset`.
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -10,7 +10,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { LaunchsetError } from "../core/errors.ts";
 
-const PACKAGE_NAME = "@demonsters/launchset";
+const PACKAGE_NAME = "launchset";
 
 let cachedRoot: string | undefined;
 

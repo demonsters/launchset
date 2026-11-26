@@ -69,7 +69,7 @@ export interface ChildPipelineInput {
    * retry of an unfinished release, a merged results pipeline), every job checks it out first.
    */
   currentSha?: string;
-  /** What jobs install with npm (`LAUNCHSET_CLI`), default `@demonsters/launchset@<this version>`. */
+  /** What jobs install with npm (`LAUNCHSET_CLI`), default `launchset@<this version>`. */
   cliSpec?: string;
   /** Why nothing is built (a skipped preview's reason); a default is derived from the plan. */
   reason?: string;
