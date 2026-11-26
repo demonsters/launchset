@@ -4,7 +4,7 @@
  * what, the awkward cases, and how to start. Colours of the four example targets match the
  * trails in the hero.
  */
-import { Code } from "@astrojs/starlight/components";
+import { Code, Icon } from "@astrojs/starlight/components";
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 const to = (path: string) => `${base}/${path}`;
@@ -163,9 +163,136 @@ const cases = [
     body: "React Native, Capacitor and Expo apps use the same Android and iOS targets, pointed at their own files.",
   },
 ];
+
+const hosts = [
+  {
+    icon: "github",
+    name: "GitHub",
+    detail: "A public Action and your own GitHub App",
+    link: "getting-started/",
+  },
+  {
+    icon: "gitlab",
+    name: "GitLab",
+    detail: "GitLab.com and self-managed 18.2+",
+    link: "gitlab/getting-started/",
+  },
+] as const;
+
+const ships = [
+  { name: "Docker", trail: "sky", link: "targets/docker/" },
+  { name: "Web", trail: "hull", link: "targets/web/" },
+  { name: "Android", trail: "flame", link: "targets/android/" },
+  { name: "iOS", trail: "violet", link: "targets/ios/" },
+  { name: "React Native", trail: "flame", link: "targets/react-native/" },
+  { name: "Capacitor", trail: "violet", link: "targets/capacitor/" },
+  { name: "Expo", trail: "sky", link: "targets/expo/" },
+  { name: "Custom", trail: "none", link: "targets/custom/" },
+];
+
+const docs = [
+  {
+    title: "Start here",
+    trail: "sky",
+    blurb: "Set up a repo and cut a first release.",
+    links: [
+      ["Getting started", "getting-started/"],
+      ["Concepts", "concepts/"],
+      ["Writing changesets", "changesets/"],
+      ["GitHub App setup", "github-app/"],
+    ],
+  },
+  {
+    title: "Targets",
+    trail: "flame",
+    blurb: "What gets built, and where the version goes.",
+    links: [
+      ["All target types", "targets/"],
+      ["Docker", "targets/docker/"],
+      ["Android", "targets/android/"],
+      ["iOS", "targets/ios/"],
+    ],
+  },
+  {
+    title: "Guides",
+    trail: "violet",
+    blurb: "The release flow and the cases around it.",
+    links: [
+      ["Release flow", "guides/release-flow/"],
+      ["Previews and prereleases", "guides/previews/"],
+      ["Workflow recipes", "guides/recipes/"],
+      ["Migrating a repo", "guides/migrating/"],
+    ],
+  },
+  {
+    title: "GitLab",
+    trail: "flame",
+    blurb: "The same flow, run from GitLab CI.",
+    links: [
+      ["launchset on GitLab", "gitlab/getting-started/"],
+      ["Token and permissions", "gitlab/token/"],
+      ["Previews on GitLab", "gitlab/previews/"],
+      ["GitLab reference", "gitlab/reference/"],
+    ],
+  },
+  {
+    title: "Store pipelines",
+    trail: "violet",
+    blurb: "One-time setup for TestFlight and Google Play.",
+    links: [
+      ["Overview and secrets", "store-pipelines/"],
+      ["Apple", "store-pipelines/apple/"],
+      ["Google Play", "store-pipelines/google-play/"],
+    ],
+  },
+  {
+    title: "Reference",
+    trail: "sky",
+    blurb: "Generated from the code, so it can't drift.",
+    links: [
+      ["Configuration", "reference/configuration/"],
+      ["CLI", "reference/cli/"],
+      ["GitHub Action", "reference/action/"],
+      ["Troubleshooting", "reference/troubleshooting/"],
+    ],
+  },
+];
 ---
 
 <div class="ls-home not-content">
+  <section class="ls-strip" aria-label="Where launchset runs and what it ships">
+    <div class="ls-strip__group">
+      <h2 class="ls-strip__label">Runs on</h2>
+      <ul class="ls-hosts">
+        {
+          hosts.map((h) => (
+            <li>
+              <a href={to(h.link)} class="ls-host">
+                <Icon name={h.icon} size="1.5rem" />
+                <span>
+                  <strong>{h.name}</strong>
+                  <span class="ls-host__detail">{h.detail}</span>
+                </span>
+              </a>
+            </li>
+          ))
+        }
+      </ul>
+    </div>
+    <div class="ls-strip__group">
+      <h2 class="ls-strip__label">Ships</h2>
+      <ul class="ls-ships">
+        {
+          ships.map((s) => (
+            <li>
+              <a href={to(s.link)} class="ls-target" data-trail={s.trail}>{s.name}</a>
+            </li>
+          ))
+        }
+      </ul>
+    </div>
+  </section>
+
   <section class="ls-section" aria-labelledby="flow">
     <h2 id="flow" class="ls-h2">From pull request to release</h2>
     <ol class="ls-steps">
@@ -267,6 +394,39 @@ const cases = [
     </dl>
   </section>
 
+  <section class="ls-section ls-split" aria-labelledby="agents">
+    <div>
+      <h2 id="agents" class="ls-h2">Hand it to an agent</h2>
+      <p class="ls-intro">
+        launchset ships two agent skills. The adoption skill lets an agent such as Claude Code move
+        an existing repo onto launchset: it reads what <code>init</code> found, asks you only the
+        questions that matter and opens one PR. Once a repo uses launchset, <code>init</code>
+        installs a second skill: it tells every agent working there to add a changeset, pick the
+        right bump and leave version numbers, the changelog and tags alone.
+      </p>
+      <p class="ls-note">
+        The store pipeline pages are written for a person and an agent together. The agent guides
+        and checks; it never sees a secret. <a href={to("guides/migrating/#the-adoption-skill")}
+          >About the adoption skill</a
+        >
+      </p>
+    </div>
+    <div class="ls-step__artifact">
+      <Code
+        lang="sh"
+        title="What the agent runs"
+        code={[
+          "# 1. Look, and write nothing",
+          "npx @demonsters/launchset init --detect --json",
+          "",
+          "# 2. After asking you what it couldn't decide",
+          "npx @demonsters/launchset init --yes \\",
+          "  --decide version=1.4.2 --decide target.ios=manual",
+        ].join("\n")}
+      />
+    </div>
+  </section>
+
   <section class="ls-section ls-start" aria-labelledby="start">
     <h2 id="start" class="ls-h2">Set up a repo</h2>
     <p class="ls-intro">
@@ -276,13 +436,55 @@ const cases = [
     </p>
     <Code code="npx @demonsters/launchset init --detect" lang="sh" />
     <p class="ls-note">
-      The CLI is <code>@demonsters/launchset</code> on npm, private to the demonsters org. CI uses
-      the public action <code>demonsters/launchset-action@v1</code>, which needs no npm access.
+      For now the CLI is <code>@demonsters/launchset</code> on npm, private to the demonsters org.
+      CI uses the public action <code>demonsters/launchset-action@v1</code>, which needs no npm
+      access.
     </p>
     <p>
       <a class="ls-start__link" href={to("getting-started/")}>Read Getting started</a>
     </p>
   </section>
+
+  <section class="ls-section" aria-labelledby="docs">
+    <h2 id="docs" class="ls-h2">Explore the docs</h2>
+    <div class="ls-docs">
+      {
+        docs.map((d) => (
+          <nav class="ls-doc" aria-label={d.title} data-trail={d.trail}>
+            <h3 class="ls-h3">
+              <a href={to(d.links[0][1])}>{d.title}</a>
+            </h3>
+            <p>{d.blurb}</p>
+            <ul>
+              {d.links.map(([label, link]) => (
+                <li>
+                  <a href={to(link)}>{label}</a>
+                </li>
+              ))}
+            </ul>
+          </nav>
+        ))
+      }
+    </div>
+  </section>
+
+  <footer class="ls-footer">
+    <div class="ls-footer__oss" id="open-source">
+      <h2 class="ls-footer__title">Going open source</h2>
+      <p>
+        launchset is built and used at demonsters. The source isn't public yet, but it will be, most
+        likely under the MIT license. The GitHub Action is public today, so any org can already use
+        it with its own GitHub App.
+      </p>
+    </div>
+    <div class="ls-footer__links">
+      <a href={to("getting-started/")}>Docs</a>
+      <a href={to("reference/cli/")}>CLI</a>
+      <a href={to("reference/configuration/")}>Configuration</a>
+      <a href="https://github.com/demonsters/launchset-action">GitHub Action</a>
+      <a href="https://github.com/demonsters">demonsters on GitHub</a>
+    </div>
+  </footer>
 </div>
 
 <style>
@@ -302,7 +504,7 @@ const cases = [
     max-width: 22ch;
     font-size: clamp(1.85rem, 4vw, 2.75rem);
     font-weight: 750;
-    font-stretch: var(--ls-stretch-display);
+    font-family: var(--ls-font-display);
     line-height: 1.05;
     letter-spacing: -0.015em;
     color: var(--sl-color-white);
@@ -311,7 +513,7 @@ const cases = [
     margin: 0 0 0.5rem;
     font-size: 1.25rem;
     font-weight: 650;
-    font-stretch: var(--ls-stretch-heading);
+    font-family: var(--ls-font-display);
     line-height: 1.25;
     color: var(--sl-color-white);
   }
@@ -345,6 +547,83 @@ const cases = [
     outline: 2px solid var(--sl-color-text-accent);
     outline-offset: 3px;
     border-radius: 0.2rem;
+  }
+
+  /* Runs on / Ships: the quick answer to "does it fit my repo?", right under the hero. */
+
+  .ls-strip {
+    display: grid;
+    gap: 1.5rem 3rem;
+    margin-top: clamp(2rem, 4vw, 3rem);
+    padding-bottom: clamp(2rem, 4vw, 3rem);
+    border-bottom: 1px solid var(--sl-color-hairline-light);
+  }
+  @media (min-width: 60rem) {
+    .ls-strip {
+      grid-template-columns: auto minmax(0, 1fr);
+      align-items: start;
+    }
+  }
+  .ls-strip__group {
+    display: grid;
+    gap: 0.75rem;
+  }
+  .ls-strip__label {
+    margin: 0;
+    font-size: 0.75rem;
+    font-weight: 650;
+    font-family: var(--ls-font-display);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-3);
+  }
+  .ls-hosts,
+  .ls-ships {
+    display: flex;
+    flex-wrap: wrap;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .ls-hosts {
+    gap: 1rem 2rem;
+  }
+  .ls-host {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    color: var(--sl-color-white) !important;
+    text-decoration: none;
+    line-height: 1.3;
+  }
+  .ls-host strong {
+    display: block;
+    font-weight: 650;
+    font-family: var(--ls-font-display);
+  }
+  .ls-host__detail {
+    font-size: 0.875rem;
+    color: var(--sl-color-gray-3);
+  }
+  .ls-host:hover strong {
+    text-decoration: underline;
+    text-underline-offset: 0.2em;
+  }
+  .ls-ships {
+    gap: 0.5rem;
+  }
+  .ls-ships .ls-target {
+    padding: 0.4rem 0.8rem 0.4rem 0.7rem;
+    border: 1px solid var(--sl-color-hairline-light);
+    border-radius: 999px;
+    font-size: 0.9375rem;
+  }
+  .ls-ships .ls-target::before {
+    width: 0.9rem;
+  }
+  .ls-ships .ls-target:hover {
+    text-decoration: none;
+    border-color: var(--trail, var(--sl-color-gray-4));
   }
 
   /* Steps: one triple trail runs down the numbers, like the logo's exhaust. */
@@ -391,7 +670,7 @@ const cases = [
     border: 3px solid var(--ls-trail-sky);
     color: var(--sl-color-white);
     font-weight: 750;
-    font-stretch: var(--ls-stretch-heading);
+    font-family: var(--ls-font-display);
     font-size: 1rem;
   }
   .ls-step__text p {
@@ -454,7 +733,7 @@ const cases = [
     align-items: center;
     gap: 0.6rem;
     font-weight: 650;
-    font-stretch: var(--ls-stretch-heading);
+    font-family: var(--ls-font-display);
     color: var(--sl-color-white) !important;
     text-decoration: none;
   }
@@ -542,7 +821,7 @@ const cases = [
   .ls-case dt {
     margin: 0 0 0.35rem;
     font-weight: 650;
-    font-stretch: var(--ls-stretch-heading);
+    font-family: var(--ls-font-display);
     font-size: 1.0625rem;
   }
   .ls-case dt a {
@@ -577,10 +856,129 @@ const cases = [
     background: var(--sl-color-text-accent);
     color: var(--sl-color-black) !important;
     font-weight: 650;
-    font-stretch: var(--ls-stretch-heading);
+    font-family: var(--ls-font-display);
     text-decoration: none;
   }
   .ls-start__link:hover {
     opacity: 0.88;
+  }
+
+  /* Explore the docs: each section gets a trail colour on its top edge. */
+
+  .ls-docs {
+    display: grid;
+    gap: 1rem;
+    margin-top: 2rem;
+  }
+  @media (min-width: 40rem) {
+    .ls-docs {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @media (min-width: 64rem) {
+    .ls-docs {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+  }
+  .ls-doc {
+    --trail: var(--sl-color-gray-4);
+    padding: 1.25rem 1.35rem 1.35rem;
+    border: 1px solid var(--sl-color-hairline-light);
+    border-top: 3px solid var(--trail);
+    border-radius: 0.9rem;
+    background: var(--sl-color-gray-7, var(--sl-color-gray-6));
+  }
+  :global(:root:not([data-theme="light"])) .ls-doc {
+    background: rgb(30 41 59 / 0.45);
+  }
+  .ls-doc[data-trail="sky"] { --trail: var(--ls-trail-sky); }
+  .ls-doc[data-trail="flame"] { --trail: var(--ls-trail-flame); }
+  .ls-doc[data-trail="violet"] { --trail: var(--ls-trail-violet); }
+  .ls-doc .ls-h3 {
+    margin-bottom: 0.25rem;
+  }
+  .ls-doc .ls-h3 a {
+    color: var(--sl-color-white);
+    text-decoration: none;
+  }
+  .ls-doc .ls-h3 a:hover {
+    text-decoration: underline;
+  }
+  .ls-doc p {
+    margin: 0 0 0.9rem;
+    font-size: 0.9375rem;
+    color: var(--sl-color-gray-3);
+  }
+  .ls-doc ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 0.35rem;
+    font-size: 0.9875rem;
+  }
+  .ls-doc li a {
+    text-decoration: none;
+  }
+  .ls-doc li a:hover {
+    text-decoration: underline;
+  }
+
+  /* Footer */
+
+  .ls-footer {
+    display: grid;
+    gap: 2rem;
+    margin-top: var(--gap-section);
+    padding: 2.5rem 0 1rem;
+    border-top: 1px solid var(--sl-color-hairline-light);
+    scroll-margin-top: 5rem;
+  }
+  @media (min-width: 60rem) {
+    .ls-footer {
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: end;
+      column-gap: 4rem;
+    }
+  }
+  .ls-footer__oss {
+    scroll-margin-top: 5rem;
+  }
+  .ls-footer__title {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin: 0 0 0.5rem;
+    font-size: 1.125rem;
+    font-weight: 650;
+    font-family: var(--ls-font-display);
+    color: var(--sl-color-white);
+  }
+  .ls-footer__title::before {
+    content: "";
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+    background: var(--ls-trail-flame);
+  }
+  .ls-footer__oss p {
+    margin: 0;
+    max-width: 60ch;
+    font-size: 0.9375rem;
+    color: var(--sl-color-gray-3);
+  }
+  .ls-footer__links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.5rem;
+    font-size: 0.9375rem;
+  }
+  .ls-footer__links a {
+    color: var(--sl-color-gray-2);
+    text-decoration: none;
+  }
+  .ls-footer__links a:hover {
+    color: var(--sl-color-white);
+    text-decoration: underline;
   }
 </style>

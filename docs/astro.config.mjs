@@ -40,14 +40,17 @@ export default defineConfig({
       description:
         "Changesets-style releases for repos where one version drives many targets: Docker images, Android, iOS and web apps.",
       customCss: [
-        "@fontsource-variable/archivo/wdth.css",
-        "@fontsource/ibm-plex-mono/400.css",
-        "@fontsource/ibm-plex-mono/500.css",
-        "@fontsource/ibm-plex-mono/600.css",
+        "@fontsource-variable/saira/wdth.css",
+        "@fontsource-variable/atkinson-hyperlegible-next/wght.css",
+        "@fontsource-variable/atkinson-hyperlegible-next/wght-italic.css",
+        "@fontsource-variable/atkinson-hyperlegible-mono/wght.css",
         "./src/styles/theme.css",
       ],
-      // The homepage hero: see src/components/Hero.astro.
-      components: { Hero: "./src/components/Hero.astro" },
+      // The homepage hero, and a header with the main sections: see src/components/.
+      components: {
+        Hero: "./src/components/Hero.astro",
+        Header: "./src/components/Header.astro",
+      },
       social: [
         { icon: "github", label: "GitHub", href: "https://github.com/demonsters/launchset" },
       ],
