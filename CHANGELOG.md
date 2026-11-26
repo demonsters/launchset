@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.5 (2026-11-26)
+
+### Patch changes
+- The CLI now runs on Node 24 or newer (it needed Node 26). ([#15](https://github.com/demonsters/launchset/pull/15), @rene-demonsters)
+
 ## 1.1.4 (2026-11-26)
 
 ### Patch changes
