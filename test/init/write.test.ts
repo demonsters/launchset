@@ -256,7 +256,9 @@ jobs:
     expect(read(dir, ".husky/pre-push")).toBe("pnpm test\n");
 
     const { config } = await loadConfig(dir);
-    expect(Object.keys(config.targets)).toEqual(["web"]);
+    // changesets/action published the package: an npm target publishes it now.
+    expect(Object.keys(config.targets)).toEqual(["npm"]);
+    expect(config.targets.npm).toMatchObject({ type: "custom", verify: ["npm"] });
     expect(config.tags.release).toBe("v{version}");
   });
 

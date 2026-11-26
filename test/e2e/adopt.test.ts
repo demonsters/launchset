@@ -19,7 +19,9 @@ describe("adopting launchset from Changesets", () => {
     world.copyDir(join(INIT_FIXTURES, "changesets"));
     dev.git("add", "--all");
     dev.git("commit", "--quiet", "--no-verify", "-m", "The repo, before launchset");
-    const init = await world.devCli(["init", "--yes", "--baseline"]);
+    // The fixture publishes its package with changesets/action, so init proposes an npm target;
+    // this test releases the web target alone (no npm registry here).
+    const init = await world.devCli(["init", "--yes", "--baseline", "--decide", "target.npm=none"]);
     expect(init.code, init.stdout + init.stderr).toBe(0);
     // 0.9.4 is marked as released by the baseline tag.
     expect(dev.git("tag")).toBe("v0.9.4");

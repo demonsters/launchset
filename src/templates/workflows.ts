@@ -45,6 +45,8 @@ export interface WorkflowHint {
     runsOn?: string;
     /** `with:` lines of its `actions/checkout` step. */
     checkoutWith?: string[];
+    /** More things to check (env, defaults, matrix, needs), one sentence each. */
+    notes?: string[];
   };
 }
 
@@ -366,6 +368,7 @@ function movedSteps(moved: NonNullable<WorkflowHint["moved"]>, condition: string
       `That job ran on \`${moved.runsOn}\`: change runs-on of this job if it needs that runner.`,
     );
   }
+  notes.push(...(moved.notes ?? []));
   const steps = moved.steps.replaceAll("@@if@@", condition);
   return [...notes, "", ...steps.split("\n")]
     .map((line) => (line === "" ? "#" : `# ${line}`))

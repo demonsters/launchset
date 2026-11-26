@@ -252,7 +252,8 @@ describe("6. workflows that fire on launchset's tags", () => {
         {
           path: ".github/workflows/p.yml",
           line: 3,
-          note: "tags-ignore doesn't exclude launchset/web@1.2.3, launchset/partial/1.2.3",
+          // The workflow publishes the package, so an npm target takes over (its marker too).
+          note: "tags-ignore doesn't exclude launchset/npm@1.2.3, launchset/web@1.2.3, launchset/partial/1.2.3",
         },
       ],
     });

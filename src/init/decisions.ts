@@ -300,7 +300,11 @@ export function decisionSpecs(ctx: DetectContext, explicit: Answers = {}): Spec[
               : t.type === "custom"
                 ? t.gitlab
                   ? `the custom target ${t.name} (the steps of GitLab job "${t.gitlab.job}")`
-                  : `the custom target ${t.name} (declared with --decide)`
+                  : t.github
+                    ? `the custom target ${t.name} (the steps of job "${t.github.job}" in ${t.github.path})`
+                    : t.npm
+                      ? `the custom target ${t.name} (publishes ${t.npm.name} to npm)`
+                      : `the custom target ${t.name} (declared with --decide)`
                 : `the ${t.type === "ios" ? "iOS" : "Android"} app in ${t.dir === "." ? "the repo root" : t.dir} (${String(t.source?.kind)})`;
         return {
           id: `target.${t.name}`,
