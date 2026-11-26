@@ -59,17 +59,17 @@ jobs:
     steps:
       # The App token is needed to push the reservation tag on prerelease branches.
       - id: app-token
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ secrets.LAUNCHSET_APP_ID }}
+          client-id: ${{ vars.LAUNCHSET_APP_CLIENT_ID || secrets.LAUNCHSET_APP_ID }}
           private-key: ${{ secrets.LAUNCHSET_APP_PRIVATE_KEY }}
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           token: ${{ steps.app-token.outputs.token }}
           fetch-depth: 0
       # Build the local action.
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v5
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm
@@ -97,12 +97,12 @@ jobs:
       matrix:
         target: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.plan.outputs.release-sha || github.sha }}
       # Build the local action, and install the dependencies the build steps need.
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v5
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm
@@ -127,7 +127,7 @@ jobs:
       - run: pnpm build
         if: matrix.target == 'npm' && steps.stamp.outputs.channel == 'prerelease'
       # Set up after `pnpm install`: its .npmrc would send a placeholder token to the registry.
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         if: matrix.target == 'npm' && steps.stamp.outputs.channel == 'prerelease'
         with:
           node-version: 24
@@ -166,17 +166,17 @@ jobs:
     steps:
       # On prerelease branches this job creates the GitHub pre-release, which needs the App.
       - id: app-token
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ secrets.LAUNCHSET_APP_ID }}
+          client-id: ${{ vars.LAUNCHSET_APP_CLIENT_ID || secrets.LAUNCHSET_APP_ID }}
           private-key: ${{ secrets.LAUNCHSET_APP_PRIVATE_KEY }}
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           token: ${{ steps.app-token.outputs.token }}
           fetch-depth: 0
       # Build the local action.
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v5
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm

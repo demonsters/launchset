@@ -223,9 +223,9 @@ describe("launchset-release.yml", () => {
 
   it("plans with a GitHub App token and exposes the plan outputs", () => {
     const [tokenStep, checkoutStep, actionStep] = launchset.steps;
-    expect(tokenStep?.uses).toBe("actions/create-github-app-token@v2");
+    expect(tokenStep?.uses).toBe("actions/create-github-app-token@v3");
     expect(tokenStep?.with).toEqual({
-      "app-id": "${{ secrets.LAUNCHSET_APP_ID }}",
+      "client-id": "${{ vars.LAUNCHSET_APP_CLIENT_ID || secrets.LAUNCHSET_APP_ID }}",
       "private-key": "${{ secrets.LAUNCHSET_APP_PRIVATE_KEY }}",
     });
     expect(checkoutStep?.with).toMatchObject({
@@ -370,7 +370,7 @@ describe("launchset-release.yml", () => {
       plan: "${{ needs.launchset.outputs.plan }}",
     });
     const tokenStep = build.steps.at(-2);
-    expect(tokenStep?.uses).toBe("actions/create-github-app-token@v2");
+    expect(tokenStep?.uses).toBe("actions/create-github-app-token@v3");
     expect(last?.with?.token).toBe(`\${{ steps.${tokenStep?.id}.outputs.token }}`);
     expect(last?.if).toBeUndefined();
   });
@@ -384,7 +384,7 @@ describe("launchset-release.yml", () => {
     expect(action?.with).toMatchObject({
       plan: "${{ needs.launchset.outputs.plan }}",
     });
-    expect(finalize.steps[0]?.uses).toBe("actions/create-github-app-token@v2");
+    expect(finalize.steps[0]?.uses).toBe("actions/create-github-app-token@v3");
   });
 });
 
@@ -468,7 +468,7 @@ describe("launchset-preview.yml", () => {
   });
 
   it("plans with the App token and passes the dispatch targets", () => {
-    expect(plan.steps[0]?.uses).toBe("actions/create-github-app-token@v2");
+    expect(plan.steps[0]?.uses).toBe("actions/create-github-app-token@v3");
     const action = plan.steps.find((s) => s.with?.command === "preview-plan");
     expect(action?.with).toMatchObject({
       command: "preview-plan",
@@ -526,7 +526,7 @@ describe("launchset-preview.yml", () => {
     });
     const action = comment.steps.find((s) => s.with?.command === "preview-comment");
     expect(action?.with).toMatchObject({ plan: "${{ needs.plan.outputs.plan }}" });
-    expect(comment.steps[0]?.uses).toBe("actions/create-github-app-token@v2");
+    expect(comment.steps[0]?.uses).toBe("actions/create-github-app-token@v3");
   });
 });
 

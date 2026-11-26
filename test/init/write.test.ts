@@ -1,9 +1,9 @@
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parse as parseYaml } from "yaml";
 import { loadConfig } from "../../src/config/load.ts";
-import { type InitDetectJson, runInit } from "../../src/init/index.ts";
+import { DEPENDABOT_HINT, type InitDetectJson, runInit } from "../../src/init/index.ts";
 import { packageFile } from "../../src/init/package-files.ts";
 import { checkConsistency } from "../../src/platforms/index.ts";
 import {
@@ -123,13 +123,29 @@ export default defineConfig({
     });
     expect(
       result.manualSteps.some(
-        (s) => s.includes("LAUNCHSET_APP_ID") && s.includes("LAUNCHSET_APP_PRIVATE_KEY"),
+        (s) => s.includes("LAUNCHSET_APP_CLIENT_ID") && s.includes("LAUNCHSET_APP_PRIVATE_KEY"),
       ),
     ).toBe(true);
     // The preview sweep is GitLab's: GitHub reacts to the label itself.
     expect(result.manualSteps.join("\n")).not.toContain("LAUNCHSET_PREVIEW_SWEEP");
+    // No Dependabot or Renovate config: suggested, never written.
+    expect(result.manualSteps).toContain(DEPENDABOT_HINT);
+    expect(existsSync(join(dir, ".github/dependabot.yml"))).toBe(false);
     // The human-readable report lists every change.
     for (const c of result.changes) expect(out.logs.some((l) => l.includes(c.path))).toBe(true);
+  });
+
+  it("doesn't suggest Dependabot when the repo has an update config already", async () => {
+    for (const file of [".github/dependabot.yml", "renovate.json"]) {
+      const dir = repo();
+      writeFileSync(join(dir, file), file.endsWith(".json") ? "{}\n" : "version: 2\n");
+      git(dir, "add", "-A");
+      git(dir, "commit", "-qm", "updater");
+      const result = await runInit(
+        options(dir, { yes: true, decide: { "image.deploy/k8s/api.yaml": "stamp" } }),
+      );
+      expect(result.manualSteps, file).not.toContain(DEPENDABOT_HINT);
+    }
   });
 
   it("--baseline creates the release tag at HEAD and prints the push command", async () => {

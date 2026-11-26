@@ -1,7 +1,7 @@
 # `stamp` wrote the version into this target's `files`, if it has any. Example, for an npm
 # package (and add `verify: ["npm"]` to the target to skip it when the version exists):
 #
-# - uses: actions/setup-node@v5
+# - uses: actions/setup-node@v7
 #   if: @@if@@
 #   with:
 #     node-version: 24

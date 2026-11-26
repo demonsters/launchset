@@ -78,7 +78,7 @@ Trusted publishing only covers publishing. Its short-lived tokens can't read a p
 Publish with the `dist-tag` output, so a hotfix doesn't move `latest`:
 
 ```yaml
-- uses: actions/setup-node@v5
+- uses: actions/setup-node@v7
   if: matrix.target == 'npm' && steps.verify.outputs.already-published != 'true'
   with:
     node-version: 24

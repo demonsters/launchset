@@ -49,11 +49,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - id: app-token
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ secrets.LAUNCHSET_APP_ID }}
+          client-id: ${{ vars.LAUNCHSET_APP_CLIENT_ID || secrets.LAUNCHSET_APP_ID }}
           private-key: ${{ secrets.LAUNCHSET_APP_PRIVATE_KEY }}
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           token: ${{ steps.app-token.outputs.token }}
       # Your own step: update the files in the repo.
@@ -65,7 +65,7 @@ jobs:
           command: add
           bump: patch            # or: none, if the update needs no release
           message: Update generated files.
-      - uses: peter-evans/create-pull-request@v7
+      - uses: peter-evans/create-pull-request@v8
         with:
           token: ${{ steps.app-token.outputs.token }}
           branch: sync/update

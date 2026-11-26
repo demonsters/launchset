@@ -154,6 +154,16 @@ If the workflow here is to push to the base branch without a PR, make sure a cha
 - **Never merge the release PR unless the human asked you to.** Merging it releases every target.
 - Don't push to the branches of Dependabot or Renovate PRs.
 
+## Changing workflows: check the action versions
+
+Your knowledge of GitHub Action versions is out of date. Do this when you add or change a `uses: owner/repo@vN` step in a workflow, or review a Dependabot or Renovate PR that bumps one.
+
+- **Look up the latest release.** Don't go by memory: `gh api repos/<owner>/<repo>/releases/latest --jq .tag_name` (a 404 means tags only: `gh api repos/<owner>/<repo>/tags --jq '.[].name'`). The majors in the launchset workflows were current when `launchset init` wrote them, so they may be behind by now.
+- **Check compatibility before you bump.** Read the release notes of every major in between (`gh api repos/<owner>/<repo>/releases/tags/<tag> --jq .body`). Check that each input and output the step uses still exists with the same meaning: read `action.yml` at the new tag and look for renamed, removed or deprecated inputs. Also check behaviour changes the workflow depends on, and the minimum runner version.
+- **Adapt or hold back.** Adapt the step when an input was renamed. If the new major needs a secret or variable the repo may not have, or a runner upgrade, keep the old major and tell the human what it would take. Never make a step depend on a secret that doesn't exist yet.
+- **Say what you checked** in the PR description: the old major, the new major and what changed.
+- **Outdated pins you didn't come for.** If the workflow you're editing, or another one you read, pins actions that are behind, don't update them silently and don't ignore them. Tell the human which ones they are (`path:line`, old and new major, compatible or not), recommend updating the compatible ones, and ask whether to do it now, in a separate commit, or later.
+
 ## Maintenance branches
 
 On a `release/X.Y.x` branch (a hotfix line; the pattern is `maintenanceBranches` in the config), only `patch` or `none` changesets are allowed. A `minor` or `major` fails the PR check. A feature belongs on the base branch. A fix there also has to reach the base branch through its own PR with its own changeset.

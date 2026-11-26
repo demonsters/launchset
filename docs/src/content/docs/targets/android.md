@@ -85,7 +85,7 @@ The secret `LAUNCHSET_PLAY_SERVICE_ACCOUNT_JSON` holds the service account's JSO
 ## Build steps
 
 ```yaml
-- uses: actions/setup-java@v5
+- uses: actions/setup-java@v6
   if: matrix.target == 'android' && steps.verify.outputs.already-published != 'true'
   with: { distribution: temurin, java-version: "21" }
 - name: Build the app bundle

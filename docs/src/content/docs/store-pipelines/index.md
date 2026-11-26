@@ -14,7 +14,7 @@ It is written so that **a person can follow it, with an agent guiding**. Most st
 
 | Secret | Used by | What it is |
 | --- | --- | --- |
-| `LAUNCHSET_APP_ID`, `LAUNCHSET_APP_PRIVATE_KEY` | Every workflow | The GitHub App. See [GitHub App setup](/github-app/). |
+| `LAUNCHSET_APP_PRIVATE_KEY` (with the variable `LAUNCHSET_APP_CLIENT_ID`) | Every workflow | The GitHub App. See [GitHub App setup](/github-app/). |
 | `ANDROID_KEYSTORE_BASE64` | Android build | The upload keystore, base64-encoded. |
 | `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` | Android build | Its passwords and alias. |
 | `LAUNCHSET_PLAY_SERVICE_ACCOUNT_JSON` | `verify`, and the Play upload | The service account key (JSON). |

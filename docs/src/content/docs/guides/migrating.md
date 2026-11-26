@@ -189,7 +189,7 @@ After `disable`, check what is left in the file. Example with a tag trigger and 
  jobs:
    release:
      steps:
-       - uses: actions/checkout@v4
+       - uses: actions/checkout@v7
 -      - uses: changesets/action@v1
 -        with:
 -          publish: npx changeset publish
