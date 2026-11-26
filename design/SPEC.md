@@ -1,10 +1,10 @@
 # launchset: specification (v1)
 
-Status: agreed design, ready to build. Last updated 2026-11-18.
+Status: the agreed v1 design that launchset was built from. Details settled during the build, and deviations from this spec, are in `design/DECISIONS.md`. Last updated 2026-11-26.
 
-Package: `@demonsters/launchset` (private npm package, demonsters org).
-Repo: https://github.com/demonsters/launchset (private). The CLI, the GitHub Action source, the docs site and the agent skills live in this repo.
-Action: https://github.com/demonsters/launchset-action (**public**). It contains only the released, bundled action (section 10), so any repo in any org can use it without access settings. launchset may be open-sourced later; the public bundle already makes the core readable, which is accepted.
+Package: `launchset` on npm (MIT). Up to 1.1.x it was the private package `@demonsters/launchset`.
+Repo: https://github.com/demonsters/launchset (public, MIT). The CLI, the GitHub Action source, the docs site and the agent skills live in this repo.
+Action: https://github.com/demonsters/launchset-action (public, MIT). It contains only the released, bundled action (section 10), so any repo in any org can use it without access settings.
 
 ---
 
@@ -110,7 +110,7 @@ The release bump is the highest bump among all pending changesets (`major` > `mi
 `launchset.config.ts` (or `.mjs`, `.js`, `.json`). The TypeScript config is loaded with `jiti` (bundled), so it works on any supported Node version. The package exports `defineConfig` for types. The config is validated with `zod`; errors name the exact field and say what is expected.
 
 ```ts
-import { defineConfig } from "@demonsters/launchset";
+import { defineConfig } from "launchset";
 
 export default defineConfig({
   version: { file: "package.json" },          // default
@@ -360,7 +360,7 @@ For `custom` targets that publish an npm package:
 
 Events caused by the default `GITHUB_TOKEN` don't trigger other workflows. A release PR opened with it would never run CI (so required checks block merging) and tags pushed with it wouldn't trigger tag workflows. So:
 
-- Each org that uses launchset has its own **GitHub App** (for demonsters: "launchset"), created by an org owner in the browser. The agent building launchset can't create it; the docs must explain how, step by step. Because the action is public (section 10), another org only needs to create its own App and secrets.
+- Each org that uses launchset has its own **GitHub App**, created by an org owner in the browser. The agent building launchset can't create it; the docs must explain how, step by step. Because the action is public (section 10), another org only needs to create its own App and secrets.
 - Repository permissions: **Contents: read & write**, **Pull requests: read & write**, Metadata: read (automatic). Verify during implementation whether anything else is needed (for example Issues: write for labels or comments, Checks: read) and document the final list.
 - Org variable `LAUNCHSET_APP_CLIENT_ID` and org secret `LAUNCHSET_APP_PRIVATE_KEY` (older setups: the secret `LAUNCHSET_APP_ID`, which the workflows still accept as a fallback).
 - Workflows mint a token with `actions/create-github-app-token` and pass it to the launchset action as `token`.
@@ -381,7 +381,7 @@ It also fails on: invalid changesets anywhere in `.launchset/`, `minor`/`major` 
 
 It maintains **one sticky comment** per PR (found by a hidden HTML marker, updated in place), like changeset-bot:
 - With changesets: the bump and the version this would produce, and the list of changeset summaries.
-- Without: how to add one (`npx @demonsters/launchset add`, or write the file by hand with an example), and a link to the docs.
+- Without: how to add one (`npx launchset add`, or write the file by hand with an example), and a link to the docs.
 
 ### 9.3 Release workflow (`launchset-release.yml`)
 
@@ -544,7 +544,7 @@ A push to a matching branch runs the preview workflow (9.7), with these differen
 
 ## 11. CLI
 
-Binary: `launchset`. Package `@demonsters/launchset` (private on npm, demonsters org). Node ≥ 24 (Maintenance LTS until April 2028; also the GitHub Actions runtime of the action).
+Binary: `launchset`. Package `launchset` on npm (public, MIT; `@demonsters/launchset` up to 1.1.x). Node ≥ 24 (Maintenance LTS until April 2028; also the GitHub Actions runtime of the action).
 
 Rules for every command: no interactive prompt when stdin isn't a TTY or `--yes`/flags are given; `--json` where output is data; non-zero exit on failure; no color when not a TTY or `NO_COLOR` is set; `--cwd <dir>`.
 
@@ -702,8 +702,8 @@ Keep `core/` free of I/O so it can be tested with plain inputs.
 ## 15. launchset releases itself
 
 launchset uses launchset (dogfooding):
-- Targets: `npm` (custom, no files, `verify: ["npm"]`; the workflow runs `npm publish` to the private `@demonsters` scope unless `already-published`) and `action` (custom; the workflow builds the bundle and publishes it to `demonsters/launchset-action`: commit, tag `v{version}`, move `v1`. It needs a token with write access to that repo, from the launchset App installed there).
-- npm auth for publishing: prefer npm trusted publishing (OIDC from GitHub Actions) if it works for a private package from a private repo; otherwise an `NPM_TOKEN` secret. Document which one was chosen.
+- Targets: `npm` (custom, no files; the workflow runs `npm publish` for `launchset`, and treats "already published" as done) and `action` (custom; the workflow builds the bundle and publishes it to `demonsters/launchset-action`: commit, tag `v{version}`, move `v1`. It needs a token with write access to that repo, from launchset's release App installed there).
+- npm auth for publishing: npm trusted publishing (OIDC from GitHub Actions), bound to the `release` environment (section 17). No `NPM_TOKEN`.
 
 ---
 
@@ -733,13 +733,13 @@ For humans. Every command, flag, config option and output shown must match the c
 - CLI reference
 - Troubleshooting / FAQ (e.g. "release PR has no CI runs" → App token missing)
 
-Hosting isn't decided yet: the site must build (`pnpm --filter docs build`), but don't deploy it.
+Hosted on GitHub Pages at https://demonsters.github.io/launchset/, published by `.github/workflows/docs.yml` on every push to `main`.
 
 ### 16.2 Agent skill (`skills/launchset/SKILL.md`)
 
 For AI agents working **in repos that use launchset** (not in the launchset repo itself). Claude Code skill format: frontmatter with `name: launchset` and a `description` that makes agents load it whenever they change code in a repo containing `launchset.config.*` or `.launchset/`, or when they're about to open a PR there. Content:
 
-- Every PR needs a changeset. Create it with `npx @demonsters/launchset add --bump <type> --message "<summary>"`, or write the file by hand (show the exact format) if the CLI isn't available (the package is private, so npm auth may be missing).
+- Every PR needs a changeset. Create it with `npx launchset add --bump <type> --message "<summary>"`, or write the file by hand (show the exact format) if the CLI isn't available (it needs Node 24 or newer and access to npm).
 - How to pick the bump: major (breaking for users or API clients), minor (new features), patch (fixes), none (no release needed: docs, CI, tests only).
 - How to write a good summary: user-facing, one line about one change, past or present tense consistently, no PR number (launchset adds it).
 - One changeset per change, not per commit and not per PR: a PR with several changes (a feature and two fixes) adds a changeset for each, with its own bump. Related changes with one bump may share a changeset as a lead line plus sub-bullets. Never several changes in one sentence or bullet. Show a bad and a good example.
@@ -747,7 +747,7 @@ For AI agents working **in repos that use launchset** (not in the launchset repo
 - Never edit version numbers, build numbers or `CHANGELOG.md` by hand; never create `v*` or `launchset/*` tags; never edit the release PR.
 - On a `release/X.Y.x` branch only patch or none.
 - Preview builds: add the `launchset:preview` label.
-- `npx @demonsters/launchset status` to check pending changes and the next version.
+- `npx launchset status` to check pending changes and the next version.
 - Manual targets (9.8): never ship one unasked. When `status` shows one is behind, mention it to the human, and point to the `workflow_dispatch` ship run or `launchset ship`.
 - Repos that also use Changesets (1.2): a PR that changes an npm package needs a `.changeset/` file and a `.launchset/` changeset; the launchset bump is about the targets (`none` when no target uses the package). Never edit or merge the `Version Packages` PR unasked.
 
@@ -757,7 +757,7 @@ The skill ships inside the npm package and is installed into consumer repos by `
 
 For AI agents moving an **existing repo** onto launchset. Repos will be migrated one at a time, mostly by agents. This skill must be available **before** the repo has launchset, so it's meant to be installed at user level (or as a Claude Code plugin from the launchset repo), not by `init`. Its `description` makes agents load it when asked to set up or migrate a repo to launchset. Content:
 
-- Run `npx @demonsters/launchset init --detect --json` first; never write anything before the human has seen the decisions.
+- Run `npx launchset init --detect --json` first; never write anything before the human has seen the decisions.
 - Present the decisions, grouped. Ask only the ones whose default isn't clearly right, with the evidence. Always ask about:
   - lowering any version;
   - a baseline tag for a version that has no release tag;
@@ -774,13 +774,19 @@ For AI agents moving an **existing repo** onto launchset. Repos will be migrated
 
 ---
 
-## 17. Manual steps for the demonsters team (not for the building agent)
+## 17. Maintainer setup (manual steps, not for an agent)
 
-1. Create the GitHub App, install it on the repos using launchset, add the org variable `LAUNCHSET_APP_CLIENT_ID` and the org secret `LAUNCHSET_APP_PRIVATE_KEY`.
-2. Create the public repo `demonsters/launchset-action` and install the App on it, so launchset's release can publish the action (sections 10, 15).
-3. Add store credentials as secrets where `verify: ["store"]` is used.
-4. Set up npm publishing auth for `@demonsters/launchset` (section 15).
-5. Decide where the docs site is hosted.
+For an org that uses launchset:
+
+1. Create a GitHub App (the docs' "GitHub App setup"), install it on the repos that use launchset, and add the variable `LAUNCHSET_APP_CLIENT_ID` and the secret `LAUNCHSET_APP_PRIVATE_KEY` (org-wide or per repo).
+2. Add store credentials as secrets where `verify: ["store"]` is used.
+
+For launchset's own repos (section 15):
+
+1. A dedicated GitHub App, `launchset-release`, installed only on `demonsters/launchset` and `demonsters/launchset-action`, with the same permissions as above. It is not the App other demonsters repos use, so its key reaches only these two repos. Its Client ID (variable `LAUNCHSET_APP_CLIENT_ID`) and key (secret `LAUNCHSET_APP_PRIVATE_KEY`) live in the `release` environment of `demonsters/launchset`, which only `main`, `release/*.x` and `next/*` may use.
+2. Rulesets on `demonsters/launchset-action`: `v*.*.*` tags can't be moved or deleted by anyone; only the release App may create tags, move `v1` and push `main`. On `demonsters/launchset`: `main` and `release/*.x` need a PR and the required checks; `v*` and `launchset/*` tags can't be moved or deleted, and only the release App creates them.
+3. npm trusted publishing for `launchset`: repository `demonsters/launchset`, workflows `launchset-release.yml` and `launchset-preview.yml`, environment `release`.
+4. The docs site on GitHub Pages (16.1).
 
 ---
 
