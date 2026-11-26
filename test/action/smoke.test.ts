@@ -18,7 +18,7 @@ if (!node && process.env.CI) {
 }
 const suite = node ? describe : describe.skip;
 
-const CONFIG = `import { defineConfig } from "@demonsters/launchset";
+const CONFIG = `import { defineConfig } from "launchset";
 
 export default defineConfig({
   targets: {
@@ -116,7 +116,7 @@ suite("action bundle on Node 24", () => {
     expect(existsSync(join(published, "package.json"))).toBe(false);
     // The only package.json: it makes dist/index.js an ES module whatever is above it.
     expect(readFileSync(join(published, "dist/package.json"), "utf8")).toBe('{"type":"module"}\n');
-    expect(readFileSync(join(published, "LICENSE"), "utf8")).toContain("All rights reserved");
+    expect(readFileSync(join(published, "LICENSE"), "utf8")).toContain("MIT License");
   });
 
   it("release: a release commit is mode publish with a matrix (loads launchset.config.ts)", () => {

@@ -72,7 +72,7 @@ describe("check (PR)", () => {
     const result = await check(await contextFor(project.repo, { event: prEvent(project, base) }));
     expect(result.ok).toBe(false);
     expect(result.data.result.failures.map((f) => f.code)).toEqual(["no-changeset"]);
-    expect(github.comments[0]?.body).toContain("npx @demonsters/launchset add");
+    expect(github.comments[0]?.body).toContain("npx launchset add");
     expect(result.lines[0]).toBe("launchset check: failed");
   });
 

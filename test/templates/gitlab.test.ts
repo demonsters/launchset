@@ -246,10 +246,9 @@ describe("renderGitLabCi", () => {
     expect(cli.stage).toBe("test");
     expect(cli.variables).toEqual({
       GIT_DEPTH: "0",
-      LAUNCHSET_CLI: `@demonsters/launchset@${packageVersion()}`,
+      LAUNCHSET_CLI: `launchset@${packageVersion()}`,
     });
     expect(cli.before_script).toEqual([
-      'if [ -n "${NPM_TOKEN:-}" ] && ! command -v launchset >/dev/null 2>&1; then npm config set "//registry.npmjs.org/:_authToken" "$NPM_TOKEN"; fi',
       'command -v launchset >/dev/null 2>&1 || npm install --global --no-fund --no-audit --loglevel=error "$LAUNCHSET_CLI"',
       "launchset --version",
     ]);
@@ -258,10 +257,8 @@ describe("renderGitLabCi", () => {
     for (const name of ["launchset-check", "launchset-release", "launchset-preview-plan"]) {
       expect(job(rendered.jobs.doc, name).extends).toBe(".launchset-cli");
     }
-    const custom = render(sampleConfig, { cliSpec: "@demonsters/launchset@next" });
-    expect(job(custom.jobs.doc, ".launchset-cli").variables?.LAUNCHSET_CLI).toBe(
-      "@demonsters/launchset@next",
-    );
+    const custom = render(sampleConfig, { cliSpec: "launchset@next" });
+    expect(job(custom.jobs.doc, ".launchset-cli").variables?.LAUNCHSET_CLI).toBe("launchset@next");
   });
 
   it("release: plan job with artifacts, a resource group and the mirrored trigger", () => {

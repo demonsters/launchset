@@ -67,6 +67,9 @@ export async function findConfigFile(dir: string): Promise<string> {
   return join(root, found[0] as string);
 }
 
+/** The module names a TS/JS config may import `defineConfig` from. */
+const CONFIG_MODULES = ["launchset", "@demonsters/launchset"];
+
 /** Loads the raw (unvalidated) config value from a file. */
 export async function readConfigFile(file: string): Promise<unknown> {
   const name = file.split(/[\\/]/).at(-1) ?? file;
@@ -90,8 +93,11 @@ export async function readConfigFile(file: string): Promise<unknown> {
     // The raw namespace, so a missing default export can be told apart from a config.
     interopDefault: false,
     // Configs import `defineConfig` from the package; this works even where the package
-    // isn't installed (the bundled GitHub Action).
-    virtualModules: { "@demonsters/launchset": { defineConfig, default: { defineConfig } } },
+    // isn't installed (the bundled GitHub Action). `@demonsters/launchset` is the package's
+    // old name, which older configs still import.
+    virtualModules: Object.fromEntries(
+      CONFIG_MODULES.map((name) => [name, { defineConfig, default: { defineConfig } }]),
+    ),
   });
   let mod: unknown;
   try {

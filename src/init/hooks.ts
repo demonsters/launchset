@@ -11,7 +11,7 @@ import { absolute, gitIgnored, isDirectory, readTextOrNull } from "./fs.ts";
 import { jsonFormatting } from "./text-edit.ts";
 import type { Change, DetectedHook } from "./types.ts";
 
-export const HOOK_COMMAND = "npx @demonsters/launchset check --push";
+export const HOOK_COMMAND = "npx launchset check --push";
 
 const installed = (text: string | null | undefined) =>
   text !== null && text !== undefined && /launchset(?:@\S+)?\s+check\s+--push/.test(text);

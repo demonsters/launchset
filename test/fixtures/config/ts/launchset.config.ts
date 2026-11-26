@@ -1,4 +1,4 @@
-import { defineConfig } from "@demonsters/launchset";
+import { defineConfig } from "launchset";
 import { imageName } from "./shared.ts";
 
 export default defineConfig({

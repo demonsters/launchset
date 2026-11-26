@@ -28,16 +28,8 @@ export const BUNDLE = resolve(actionDir, "dist/index.js");
  */
 export const DIST_PACKAGE_JSON = `${JSON.stringify({ type: "module" })}\n`;
 
-export const LICENSE_TEXT = `Copyright (c) demonsters. All rights reserved.
-
-This repository contains the compiled launchset GitHub Action. It is proprietary software of
-demonsters, provided only for use in GitHub Actions workflows. No other right is granted: you
-may not copy, modify, redistribute or sublicense it, in whole or in part, without written
-permission from demonsters.
-
-The bundle includes third-party open source components under their own licenses. Their notices
-are in dist/index.js.LEGAL.txt.
-`;
+/** launchset's MIT licence (the repo root `LICENSE`), published with the action too. */
+export const LICENSE = resolve(root, "LICENSE");
 
 /**
  * jiti's ESM entry (`lib/jiti.mjs`) loads its Babel transform at runtime with
@@ -192,7 +184,7 @@ export async function writePublishDir(out: string, bundle: string = BUNDLE): Pro
   await writeFile(resolve(dir, "dist/package.json"), DIST_PACKAGE_JSON);
   await copyFile(`${bundle}.LEGAL.txt`, resolve(dir, "dist/index.js.LEGAL.txt"));
   await writeFile(resolve(dir, "README.md"), await expectedReadme());
-  await writeFile(resolve(dir, "LICENSE"), LICENSE_TEXT);
+  await copyFile(LICENSE, resolve(dir, "LICENSE"));
   return files;
 }
 

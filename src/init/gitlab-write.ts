@@ -390,7 +390,6 @@ export function gitlabManualSteps(
 function gitlabBaseSteps(config: ResolvedConfig): string[] {
   return [
     "Create the CI/CD variable LAUNCHSET_TOKEN: a project access token (Settings > Access tokens) with the role Maintainer and the scopes api and write_repository, added under Settings > CI/CD > Variables as Masked. Don't make it Protected: protected variables don't reach merge request pipelines, so the check couldn't post its note. (Pushes made with CI_JOB_TOKEN never start pipelines, so launchset needs its own token.)",
-    "Add the CI/CD variable NPM_TOKEN (Masked): an npm token that can read the private @demonsters/launchset package, which every launchset job installs.",
     `Let the token's bot user push to the protected branches ${config.baseBranch} and ${config.maintenanceBranches} and create the release tags (Settings > Repository > Protected branches and Protected tags). With GitLab's default rules (Maintainers may push and create tags) the Maintainer role is enough.`,
     'For manual runs (manual targets, previews of any branch, release retries with variables), allow pipeline variables: Settings > CI/CD > Variables, "Minimum role to use pipeline variables" (new projects on GitLab.com start at no_one_allowed).',
   ];

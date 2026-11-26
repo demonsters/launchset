@@ -583,14 +583,14 @@ describe("init --yes on GitLab", () => {
 
     expect(result.manualSteps[1]).toContain("LAUNCHSET_TOKEN");
     expect(result.manualSteps[1]).toContain("api and write_repository");
-    expect(result.manualSteps[2]).toContain("NPM_TOKEN");
-    expect(result.manualSteps[3]).toContain("protected branches main and release/*.x");
-    expect(result.manualSteps[4]).toContain("Minimum role to use pipeline variables");
-    expect(result.manualSteps[5]).toBe(
+    expect(result.manualSteps.join("\n")).not.toContain("NPM_TOKEN");
+    expect(result.manualSteps[2]).toContain("protected branches main and release/*.x");
+    expect(result.manualSteps[3]).toContain("Minimum role to use pipeline variables");
+    expect(result.manualSteps[4]).toBe(
       "Add your build and upload steps for docker to .gitlab/launchset-targets.yml.",
     );
-    expect(result.manualSteps[6]).toContain("has no workflow: rules");
-    expect(result.manualSteps[6]).toContain("on_new_commit: interruptible");
+    expect(result.manualSteps[5]).toContain("has no workflow: rules");
+    expect(result.manualSteps[5]).toContain("on_new_commit: interruptible");
     expect(result.manualSteps.join("\n")).not.toContain("GitHub App");
     expect(result.manualSteps.join("\n")).not.toContain(".github/workflows");
     const sweep = result.manualSteps.filter((step) => step.includes("LAUNCHSET_PREVIEW_SWEEP"));

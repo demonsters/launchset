@@ -70,7 +70,7 @@ describe("PR check (9.2)", () => {
     );
     expect(result.ok).toBe(false);
     expect(result.failures.map((f) => f.code)).toEqual(["no-changeset"]);
-    expect(result.comment).toContain("npx @demonsters/launchset add");
+    expect(result.comment).toContain("npx launchset add");
     expect(result.comment).toContain("bump: patch");
     expect(result.comment).toContain("launchset docs");
     // The link points at a page that exists in this repo.

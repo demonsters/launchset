@@ -47,6 +47,11 @@ describe("loadConfig", () => {
     expect(config.targets.ios?.release).toBe("manual");
   });
 
+  it("loads a TypeScript config that imports defineConfig from the old @demonsters/launchset", async () => {
+    const { config } = await loadConfig(fixture("ts-old-name"));
+    expect(Object.keys(config.targets)).toEqual(["web"]);
+  });
+
   it("loads an .mjs config", async () => {
     const { config, file } = await loadConfig(fixture("mjs"));
     expect(file.endsWith("launchset.config.mjs")).toBe(true);

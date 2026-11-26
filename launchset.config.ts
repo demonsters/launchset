@@ -1,8 +1,7 @@
 /**
  * launchset releases itself (spec 15). One version (the root package.json) drives two targets:
  *
- *   npm     the CLI and library, `@demonsters/launchset`, published to the private @demonsters
- *           scope on npm.
+ *   npm     the CLI and library, the `launchset` package on npm.
  *   action  the bundled GitHub Action, published to the public repo demonsters/launchset-action
  *           (commit, tag v{version}, moving major tag).
  *
@@ -12,7 +11,7 @@
  *
  * The type-only import keeps this file free of runtime imports, so it also loads in jobs that
  * haven't run `pnpm install` (the CI smoke test). Other repos import `defineConfig` from
- * "@demonsters/launchset" instead.
+ * "launchset" instead.
  */
 
 import type { LaunchsetConfig } from "./src/index.ts";
@@ -25,10 +24,8 @@ export default {
       type: "custom",
       // The root package.json: its name and the registry come from there (spec 7.5).
       npm: { package: "package.json" },
-      // No `verify`: the package is private, and the workflow publishes with npm trusted
-      // publishing, whose tokens can't read packages. Without a read token, `verify` can't tell
-      // whether a version is published. The publish step is idempotent instead: it treats
-      // "already published" as done, see launchset-release.yml.
+      // No `verify`: the publish step is idempotent instead: it treats "already published" as
+      // done, see launchset-release.yml.
     },
     action: {
       type: "custom",
@@ -40,8 +37,8 @@ export default {
   // Previews of an npm CLI are only useful as installable prereleases. A PR label preview would
   // build nothing anyone can run, so launchset's own preview workflow has no pull_request
   // trigger. What it does have: pushes to `next/*` publish `X.Y.Z-next.N` to the npm dist-tag
-  // `next` (spec 9.9), so other demonsters repos can try a change with
-  // `npm i @demonsters/launchset@next` before it is released. The action isn't previewed: its
+  // `next` (spec 9.9), so anyone can try a change with `npm i launchset@next` before it is
+  // released. The action isn't previewed: its
   // `v1` tag must only ever point at real releases.
   preview: {
     branches: [{ branch: "next/*", prerelease: "next", targets: ["npm"] }],

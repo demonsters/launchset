@@ -1,7 +1,7 @@
 # launchset's own release workflow. A push to main (or a maintenance branch) either updates the
 # release PR or, when the release PR was just merged, builds and ships both targets:
 #
-#   npm     `@demonsters/launchset`, published to the private @demonsters scope on npm
+#   npm     the `launchset` package on npm
 #   action  the bundled GitHub Action, published to the public repo demonsters/launchset-action
 #
 #   launchset  decides the mode (publish, ship, release-pr, none) and the plan
@@ -22,11 +22,10 @@
 #
 # npm auth: trusted publishing (OIDC), no long-lived token. The `build` job has
 # `id-token: write`; `npm publish` exchanges the workflow's OIDC token for a short-lived npm
-# token. Set up once on npmjs.com: package @demonsters/launchset → Settings → Trusted publishing
+# token. Set up once on npmjs.com: package launchset → Settings → Trusted publishing
 # → GitHub Actions, repository demonsters/launchset, workflow launchset-release.yml (and
 # launchset-preview.yml for `next/*` prereleases). Needs npm >= 11.5.1 (Node 24 ships a newer
-# one). Those tokens can only publish, not read, so there is no `verify` step: reading the
-# private package would need a separate read token. The publish step is idempotent instead.
+# one). There is no `verify` step: the publish step is idempotent instead.
 name: Launchset release
 
 on:
@@ -162,9 +161,9 @@ jobs:
 
       # ---------------------------------------------------------------------------------------
       # --- npm (npm package) ---
-      # Builds and publishes @demonsters/launchset. The dist-tag is `latest` for base-branch
-      # releases, so a hotfix on a maintenance branch does not move `latest`. No --access flag:
-      # the package stays private.
+      # Builds and publishes launchset. The dist-tag is `latest` for base-branch releases, so a
+      # hotfix on a maintenance branch does not move `latest`. No --access flag: package.json's
+      # publishConfig makes it public.
       - run: pnpm build
         if: matrix.target == 'npm'
       # Set up after `pnpm install`: its .npmrc would send a placeholder token to the registry.
@@ -188,7 +187,7 @@ jobs:
           echo "$output"
           if [ "$status" -ne 0 ]; then
             if grep -qiE "cannot publish over the previously published versions|EPUBLISHCONFLICT" <<<"$output"; then
-              echo "::notice::This version of @demonsters/launchset is already on npm; nothing to publish."
+              echo "::notice::This version of launchset is already on npm; nothing to publish."
               exit 0
             fi
             exit "$status"

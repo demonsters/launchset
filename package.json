@@ -1,15 +1,33 @@
 {
-  "name": "@demonsters/launchset",
+  "name": "launchset",
   "version": "1.1.8",
   "description": "Changesets-style releases for lock-step monorepos: one version, many targets (Docker, Android, iOS, web).",
+  "keywords": [
+    "release",
+    "changesets",
+    "versioning",
+    "monorepo",
+    "build-numbers",
+    "docker",
+    "android",
+    "ios",
+    "react-native",
+    "capacitor",
+    "expo",
+    "github-actions",
+    "gitlab-ci"
+  ],
   "type": "module",
-  "license": "UNLICENSED",
+  "license": "MIT",
+  "author": "De Monsters",
+  "homepage": "https://demonsters.github.io/launchset/",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/demonsters/launchset.git"
   },
+  "bugs": "https://github.com/demonsters/launchset/issues",
   "publishConfig": {
-    "access": "restricted"
+    "access": "public"
   },
   "engines": {
     "node": ">=24"

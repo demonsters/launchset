@@ -26,11 +26,9 @@
 #     start pipelines, so the release MR would get none. If you mark it Protected, only pipelines
 #     of protected branches get it: MR checks then can't post their note, and MR previews can't
 #     comment.
-#   - The CI/CD variable NPM_TOKEN (masked): an npm token that may read the private
-#     @demonsters/launchset package, which every launchset job installs with npm.
 #     Fork MR pipelines that run in the fork have none of this project's variables, so
-#     launchset can't be installed there: launchset-check skips them (run the MR's pipeline in
-#     this project, from the MR's Pipelines tab, to check it).
+#     launchset-check can't post its note there and skips them (run the MR's pipeline in this
+#     project, from the MR's Pipelines tab, to check it).
 #   - Runners for the node:24 image. launchset needs Node 24 or later, npm and git.
 #
 # Starting a pipeline by hand (Build > Pipelines > Run pipeline), with pipeline variables:
@@ -79,7 +77,7 @@ launchset-check:
   rules:
     - if: $CI_PIPELINE_SOURCE != "merge_request_event"
       when: never
-    # Not in a fork MR's pipeline that runs in the fork: it has no NPM_TOKEN or LAUNCHSET_TOKEN.
+    # Not in a fork MR's pipeline that runs in the fork: it has no LAUNCHSET_TOKEN.
     - if: $CI_PROJECT_ID != $CI_MERGE_REQUEST_PROJECT_ID
       when: never
     # MRs into the base branch, the maintenance branches (hotfixes) and the prerelease branches.

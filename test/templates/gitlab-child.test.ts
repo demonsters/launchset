@@ -86,14 +86,14 @@ describe("renderChildPipeline", () => {
     expect(web.stage).toBe("test");
     expect(web.needs).toEqual([fromParent("launchset-release")]);
     expect(web.interruptible).toBe(false);
-    expect(web.variables).toEqual({ LAUNCHSET_CLI: `@demonsters/launchset@${packageVersion()}` });
+    expect(web.variables).toEqual({ LAUNCHSET_CLI: `launchset@${packageVersion()}` });
     const script = web.script ?? [];
     const lines = script.filter((line): line is string => typeof line === "string");
     expect(lines[0]).toBe('cd "$CI_PROJECT_DIR"');
     expect(lines).toContain(
       'command -v launchset >/dev/null 2>&1 || npm install --global --no-fund --no-audit --loglevel=error "$LAUNCHSET_CLI"',
     );
-    expect(lines.slice(4)).toEqual([
+    expect(lines.slice(3)).toEqual([
       "launchset stamp --target web --plan @plan.json --ci",
       ". ./launchset.sh",
       "launchset verify --target web --plan @plan.json --ci",
@@ -380,7 +380,6 @@ describe("renderChildPipeline: PowerShell targets (gitlab.shell)", () => {
     const windows = job(doc, "build-windows");
     expect(strings(windows)).toEqual([
       "Set-Location -LiteralPath $env:CI_PROJECT_DIR",
-      `if ($env:NPM_TOKEN -and -not (Get-Command launchset -ErrorAction SilentlyContinue)) { npm config set "//registry.npmjs.org/:_authToken" "$env:NPM_TOKEN"; ${check} }`,
       `if (-not (Get-Command launchset -ErrorAction SilentlyContinue)) { npm install --global --no-fund --no-audit --loglevel=error "$env:LAUNCHSET_CLI"; ${check} }`,
       'if (-not (Get-Command launchset -ErrorAction SilentlyContinue)) { $env:Path = "$(npm prefix --global);$env:Path" }',
       `launchset --version; ${check}`,

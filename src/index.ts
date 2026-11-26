@@ -1,4 +1,4 @@
-/** Public API of `@demonsters/launchset`. */
+/** Public API of `launchset`. */
 
 export { configJsonSchema } from "./core/config/json-schema.ts";
 export type {

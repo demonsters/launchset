@@ -50,10 +50,12 @@ describe("launchset's own config (spec 15)", () => {
     for (const line of imports) expect(line).toMatch(/^import type\b/);
   });
 
-  it("the package it releases is the root package.json, private and scoped", () => {
+  it("the package it releases is the root package.json, public and MIT", () => {
     const pkg = JSON.parse(read("package.json"));
-    expect(pkg.name).toBe("@demonsters/launchset");
-    expect(pkg.publishConfig).toEqual({ access: "restricted" });
+    expect(pkg.name).toBe("launchset");
+    expect(pkg.publishConfig).toEqual({ access: "public" });
+    expect(pkg.license).toBe("MIT");
+    expect(read("LICENSE")).toMatch(/^MIT License\n/);
     // The workflows run these.
     expect(pkg.scripts.build).toBeTypeOf("string");
     expect(pkg.scripts["build:action"]).toBeTypeOf("string");
