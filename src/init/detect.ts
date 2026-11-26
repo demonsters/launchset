@@ -35,6 +35,7 @@ import {
   readTextOrNull,
   statOrNull,
 } from "./fs.ts";
+import { githubJobTargets } from "./github-targets.ts";
 import {
   GITLAB_CI_FILE,
   type GitLabCi,
@@ -687,6 +688,22 @@ export async function detect(
   const searchDirs = [...new Set([".", ...workspaces])];
   const native = await detectNativeTargets(root, searchDirs, workflows, gitlab, used, notes);
   targets.push(...native.targets);
+  if (host.host === "github") {
+    // Workflows that build a target found above aren't custom targets of their own.
+    const skipPaths = new Set(
+      targets.filter((t) => t.proposed !== "none").flatMap((t) => t.builtBy.map((e) => e.path)),
+    );
+    targets.push(
+      ...githubJobTargets(workflows, {
+        releaseTags: [...new Set([gitTagPrefix, "v"])].flatMap((p) => [
+          `${p}1.2.3`,
+          `${p}1.2.3-alpha.0`,
+        ]),
+        skipPaths,
+        name: (base) => uniqueName(slug(base), used),
+      }),
+    );
+  }
   if (gitlab) {
     const dockerfiles = new Set(
       targets.flatMap((t) => (t.docker && t.proposed !== "none" ? [t.docker.dockerfile] : [])),

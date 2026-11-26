@@ -198,6 +198,19 @@ describe("shell commands", () => {
     expect(commandKinds("pnpm build")).toEqual([]);
   });
 
+  it("ignores commands that echo and printf only print", () => {
+    expect(
+      commandKinds(`echo "::error::\${tag} is a lightweight tag; create it with 'git tag -a'."`),
+    ).toEqual([]);
+    expect(commandKinds("echo run git tag -a v1.0.0 to release")).toEqual([]);
+    expect(commandKinds("printf '%s\\n' 'npm version patch'")).toEqual([]);
+    expect(commandKinds('echo "use gh release create" >&2')).toEqual([]);
+    // A command after the echo, or one the message runs, still counts.
+    expect(commandKinds('echo "tagging"; git tag -a "v$V" -m x')).toEqual(["tag-creation"]);
+    expect(commandKinds('echo "$(git tag -a v1 -m x)"')).toEqual(["tag-creation"]);
+    expect(scriptFileKinds("#!/bin/sh\necho 'create it with git tag -a'\n").kinds).toEqual([]);
+  });
+
   it("a script that only reads a version key from a plist isn't a version writer", () => {
     const reads = [
       "from pathlib import Path",

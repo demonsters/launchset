@@ -5,6 +5,7 @@
 
 import { LaunchsetError } from "../core/errors.ts";
 import { ciOf } from "../core/hosts.ts";
+import type { WorkflowHint } from "../templates/workflows.ts";
 import type { Answers } from "./decisions.ts";
 import { parseImages, parseTagList } from "./decisions.ts";
 import type { DetectContext } from "./detect.ts";
@@ -17,7 +18,7 @@ export interface ConfigPlan {
   /** Comment lines above a key, by dotted path (`targets.android`). `""` is the file header. */
   comments: Map<string, string[]>;
   /** Hints for the workflow templates, per target. */
-  hints: Record<string, { dockerfile?: string; context?: string; platforms?: string }>;
+  hints: Record<string, WorkflowHint>;
   /** Targets that are in the config, in order. */
   targets: DetectedTarget[];
 }
@@ -123,6 +124,20 @@ export function buildConfig(ctx: DetectContext, answers: Answers): ConfigPlan {
           `Built after ${after.join(" and ")}, with their artifacts ("${job.job}" needed their jobs).`,
         );
       }
+    } else if (t.type === "custom" && t.github) {
+      const job = t.github;
+      notes.push(
+        `Built by job "${job.job}" in ${job.path}:${job.line} before; its steps are in launchset-release.yml, commented out. Add "files" for the files that hold the version, so stamp writes it in CI.`,
+      );
+      hints[t.name] = {
+        moved: {
+          path: job.path,
+          job: job.job,
+          steps: job.steps,
+          ...(job.runsOn !== undefined ? { runsOn: job.runsOn } : {}),
+          ...(job.checkoutWith ? { checkoutWith: job.checkoutWith } : {}),
+        },
+      };
     } else if (t.type === "custom") {
       notes.push(
         `Declared with --decide: add its build steps to the CI files, and "files" for the files that hold the version.`,

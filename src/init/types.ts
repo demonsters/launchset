@@ -103,8 +103,23 @@ export interface DetectedTarget {
   docker?: DetectedDocker;
   /** A custom target from an existing GitLab job. */
   gitlab?: DetectedGitLabJob;
+  /** A custom target from a job in a GitHub workflow that release tags start. */
+  github?: DetectedGitHubJob;
   /** Declared with `--decide target.<name>=custom` (nothing detected it). */
   declared?: boolean;
+}
+
+/** The GitHub workflow job a custom target comes from (release tags start it, and it outputs something). */
+export interface DetectedGitHubJob {
+  job: string;
+  path: string;
+  line: number;
+  /** Its steps as YAML, without `actions/checkout`, each starting with `if: @@if@@`. */
+  steps: string;
+  /** Its `runs-on`, when it is a plain string. */
+  runsOn?: string;
+  /** The `with:` of its `actions/checkout` step (`lfs: true`), which launchset's checkout lacks. */
+  checkoutWith?: string[];
 }
 
 /** The GitLab job a custom target comes from (it runs on tags and builds or publishes). */
