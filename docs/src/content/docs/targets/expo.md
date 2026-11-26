@@ -1,7 +1,15 @@
 ---
 title: Expo
 description: Stamp app.json, read launchset values from app.config.js, or let EAS number the builds.
+sidebar:
+  badge:
+    text: Experimental
+    variant: caution
 ---
+
+:::caution[Experimental]
+Expo support is experimental. It has had less real-world use than the other targets, so its details may still change, and EAS Update (over-the-air updates, `runtimeVersion`) isn't supported yet ([#1](https://github.com/demonsters/launchset/issues/1)). If something doesn't work for your app, [open an issue](https://github.com/demonsters/launchset/issues/new/choose).
+:::
 
 Expo apps have three setups. Pick the one that matches yours.
 
