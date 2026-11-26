@@ -177,7 +177,7 @@ For each, choose:
 | `disable` | Removes only the conflicting trigger or step, or only the conflicting commands of a `run:` block or script. A script that does more than release keeps running: its conflicting lines are commented out, and one inside an `if`, a loop or an `&&` chain becomes the no-op `:`, so the script stays valid. In a `package.json` script it drops only the conflicting commands joined with `&&` or `;`, so `tsc; semantic-release` becomes `tsc`. Never deletes a file. Every other byte stays identical. |
 | `keep` | Does nothing. |
 
-The default with `--yes` is `disable`, and a list of the changes is printed. init never leaves a conflict in place silently. Where no minimal edit exists, the only choices are `keep` and `remove`, and the default is `keep` (marked `ask`). For example, a `package.json` script whose conflicting command is joined to the rest with `||`, a pipe or `&`, or shares an `sh -c '…'` or a `( … )` group with other work.
+The default with `--yes` is `disable`, and a list of the changes is printed. init never leaves a conflict in place silently. Where no minimal edit exists, the only choices are `keep` and `remove`, and the default is `keep` (marked `ask`). For example, a `package.json` script whose conflicting command is joined to the rest with `||`, a pipe or `&`, or shares an `sh -c '…'`, a `( … )` group, an `if`, a loop or a `case` with other work.
 
 After `disable`, check what is left in the file. Example with a tag trigger and a Changesets step:
 

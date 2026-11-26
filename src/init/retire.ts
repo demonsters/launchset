@@ -465,9 +465,10 @@ export function retireGitLab(text: string, ops: GitLabOp[]): string {
 }
 
 /**
- * Remove top-level commands (see `topLevelCommands`) from a script command. The commands left
- * are joined with `;` where a `;` stood anywhere between them (the later one ran regardless), and
- * with `&&` otherwise. Callers only drop commands joined with `&&` or `;` (see `droppable`).
+ * Remove top-level commands (see `topLevelCommands`) from a script command. Two commands that
+ * were next to each other keep the operator between them. Across dropped commands (which callers
+ * only drop when `&&` or `;` joins them, see `droppable`) the join is `;` when a `;` stood
+ * anywhere between them (the later one ran regardless), and `&&` otherwise.
  */
 export function removeSegments(command: string, segments: string[]): string | null {
   const { parts, ops } = topLevelCommands(command);
@@ -475,7 +476,11 @@ export function removeSegments(command: string, segments: string[]): string | nu
   let prev: number | undefined;
   parts.forEach((part, i) => {
     if (part === "" || segments.includes(part)) return;
-    if (prev !== undefined) out += ops.slice(prev, i).includes(";") ? "; " : " && ";
+    if (prev !== undefined) {
+      const between = ops.slice(prev, i);
+      const op = between.length === 1 ? (between[0] as string) : between.includes(";") ? ";" : "&&";
+      out += op === ";" ? "; " : ` ${op} `;
+    }
     out += part;
     prev = i;
   });

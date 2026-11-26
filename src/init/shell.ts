@@ -357,74 +357,138 @@ export function runsFile(script: string, path: string, dir = "."): boolean {
   });
 }
 
+/** Words that open a compound command, and the word that closes each. */
+const OPENS: Record<string, string> = {
+  if: "fi",
+  while: "done",
+  until: "done",
+  for: "done",
+  select: "done",
+  case: "esac",
+  "{": "}",
+};
+/** Openers whose next word is a command (`if cmd`), not a name or a word list (`for x in`). */
+const OPENS_COMMAND = new Set(["if", "while", "until", "{"]);
+/** Words after which a command starts. */
+const THEN = new Set(["then", "do", "else", "elif", "!"]);
+
+/** The end of the shell word starting at `i` (quotes, `$(…)` and backticks inside included). */
+function wordEnd(s: string, i: number): number {
+  let j = i;
+  while (j < s.length) {
+    const c = s[j] as string;
+    if (c === "\\") {
+      j += 2;
+    } else if (c === "'") {
+      const end = s.indexOf("'", j + 1);
+      j = end < 0 ? s.length : end + 1;
+    } else if (c === '"') {
+      let k = j + 1;
+      while (k < s.length && s[k] !== '"') {
+        if (s[k] === "\\") k++;
+        else if (s[k] === "$" && s[k + 1] === "(") k = closing(s, k + 1);
+        else if (s[k] === "`") {
+          const end = s.indexOf("`", k + 1);
+          k = end < 0 ? s.length : end;
+        }
+        k++;
+      }
+      j = k + 1;
+    } else if (c === "$" && s[j + 1] === "(") {
+      j = closing(s, j + 1) + 1;
+    } else if (c === "`") {
+      const end = s.indexOf("`", j + 1);
+      j = end < 0 ? s.length : end + 1;
+    } else if (c === "&" && (s[j - 1] === ">" || s[j - 1] === "<" || s[j + 1] === ">")) {
+      // `>&2`, `&>file`, `2>&1`: redirections, not separators.
+      j++;
+    } else if (/[\s;&|()]/.test(c)) {
+      break;
+    } else {
+      j++;
+    }
+  }
+  return j;
+}
+
 /**
  * A one-line script (a `package.json` script) split into its top-level commands, with the
  * operators between them: `ops[i]` (`&&`, `||`, `;`, `|` or `&`) joins `parts[i]` and
- * `parts[i + 1]`. Quoted strings, `$(…)`, backticks and `( … )` groups stay inside one part, so
- * `sh -c 'a && b'` is one command.
+ * `parts[i + 1]`. Quoted strings, `$(…)`, backticks, `( … )` groups and compound commands
+ * (`if … fi`, loops, `case … esac`, `{ …; }`) stay inside one part, so `sh -c 'a && b'` and
+ * `if a; then b; fi` are one command each.
  */
 export function topLevelCommands(script: string): { parts: string[]; ops: string[] } {
   const parts: string[] = [];
   const ops: string[] = [];
+  /** Open groups and compound commands: `(`, or the word that closes one (`fi`, `done`). */
+  const stack: string[] = [];
   let start = 0;
-  let depth = 0;
   let i = 0;
-  const cut = (op: string) => {
-    parts.push(script.slice(start, i).trim());
-    ops.push(op);
-    i += op === ";" ? 1 : op.length;
-    start = i;
-  };
+  let commandStart = true;
   while (i < script.length) {
     const c = script[i] as string;
     const next = script[i + 1];
-    if (c === "\\") {
-      i += 2;
-    } else if (c === "'") {
-      const end = script.indexOf("'", i + 1);
-      i = end < 0 ? script.length : end + 1;
-    } else if (c === '"') {
-      let j = i + 1;
-      while (j < script.length && script[j] !== '"') {
-        if (script[j] === "\\") j++;
-        else if (script[j] === "$" && script[j + 1] === "(") j = closing(script, j + 1);
-        else if (script[j] === "`") {
-          const end = script.indexOf("`", j + 1);
-          j = end < 0 ? script.length : end;
-        }
-        j++;
-      }
-      i = j + 1;
-    } else if (c === "$" && next === "(") {
-      i = closing(script, i + 1) + 1;
-    } else if (c === "`") {
-      const end = script.indexOf("`", i + 1);
-      i = end < 0 ? script.length : end + 1;
-    } else if (c === "(") {
-      depth++;
+    if (/\s/.test(c) && c !== "\n") {
       i++;
-    } else if (c === ")") {
-      depth--;
-      i++;
-    } else if (depth > 0) {
-      i++;
-    } else if (c === "#" && (i === 0 || /\s/.test(script[i - 1] as string))) {
-      break;
-    } else if ((c === "&" && next === "&") || (c === "|" && next === "|")) {
-      cut(c + next);
-    } else if (c === "&") {
-      // `>&2`, `&>file`, `2>&1`: redirections, not separators.
-      if (script[i - 1] === ">" || script[i - 1] === "<" || next === ">") i++;
-      else cut("&");
-    } else if (c === "|") {
-      cut("|");
-    } else if (c === ";" || c === "\n") {
-      cut(";");
-    } else {
-      i++;
+      continue;
     }
+    const two = c + (next ?? "");
+    const op =
+      two === "&&" || two === "||" || two === ";;"
+        ? two
+        : c === "&" || c === "|" || c === ";" || c === "\n"
+          ? c
+          : undefined;
+    if (op !== undefined) {
+      if (stack.length === 0 && op !== ";;") {
+        parts.push(script.slice(start, i).trim());
+        ops.push(op === "\n" ? ";" : op);
+        start = i + op.length;
+      }
+      i += op.length;
+      commandStart = true;
+      continue;
+    }
+    if (c === "(") {
+      stack.push(")");
+      i++;
+      commandStart = true;
+      continue;
+    }
+    if (c === ")") {
+      // In a `case`, `)` ends a pattern and a command follows.
+      if (stack[stack.length - 1] === ")") stack.pop();
+      i++;
+      commandStart = stack[stack.length - 1] === "esac";
+      continue;
+    }
+    if (c === "#") {
+      const nl = script.indexOf("\n", i);
+      if (stack.length === 0) {
+        parts.push(script.slice(start, i).trim());
+        start = nl < 0 ? script.length : nl;
+      }
+      i = nl < 0 ? script.length : nl;
+      continue;
+    }
+    const end = Math.max(wordEnd(script, i), i + 1);
+    const word = script.slice(i, end);
+    if (commandStart && OPENS[word] !== undefined) {
+      stack.push(OPENS[word] as string);
+      commandStart = OPENS_COMMAND.has(word);
+    } else if (commandStart && THEN.has(word)) {
+      commandStart = true;
+    } else if (commandStart && word === stack[stack.length - 1]) {
+      stack.pop();
+      commandStart = false;
+    } else {
+      commandStart = false;
+    }
+    i = end;
   }
-  parts.push(script.slice(start).trim());
+  if (start < script.length || parts.length === 0) parts.push(script.slice(start).trim());
+  else if (ops.length === parts.length) parts.push("");
   // A trailing `;` or `&` leaves an empty last part.
   while (parts.length > 1 && parts[parts.length - 1] === "") {
     parts.pop();

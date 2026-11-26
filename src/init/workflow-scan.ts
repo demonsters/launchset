@@ -59,6 +59,8 @@ export interface WorkflowStep {
   withPairs: Map<string, Pair>;
   env: Record<string, string>;
   workingDirectory?: string;
+  /** Where its `run` runs: `working-directory`, else `defaults.run.working-directory`. */
+  runDirectory?: string;
   /** The shell its `run` runs in: `shell:`, else `defaults.run.shell`, else the runner's. */
   shell: StepShell;
   /** The `shell:` value it comes from (`python`), or the runner's default (`pwsh`, `bash`). */
@@ -273,12 +275,12 @@ export function shellKind(value: string): StepShell {
   return "other";
 }
 
-/** `defaults.run.shell` of a workflow or job. */
-function defaultShell(node: YAMLMap): string | undefined {
+/** `defaults.run.<key>` (`shell`, `working-directory`) of a workflow or job. */
+function defaultRun(node: YAMLMap, key: string): string | undefined {
   const defaults = pairOf(node, "defaults")?.value;
   const run = isMap(defaults) ? pairOf(defaults as YAMLMap, "run")?.value : undefined;
-  const shell = isMap(run) ? pairOf(run as YAMLMap, "shell")?.value : undefined;
-  return isScalar(shell) && typeof shell.value === "string" ? shell.value : undefined;
+  const value = isMap(run) ? pairOf(run as YAMLMap, key)?.value : undefined;
+  return isScalar(value) && typeof value.value === "string" ? value.value : undefined;
 }
 
 const strings = (node: unknown): string[] => {
@@ -289,26 +291,31 @@ const strings = (node: unknown): string[] => {
   return [];
 };
 
+const MIXED = { shell: "mixed", name: "bash or pwsh" } as const;
+
 /**
- * The default shell of a job's runner: pwsh on Windows, bash elsewhere. A `runs-on` from the
- * matrix (`${{ matrix.os }}`) with Windows and other runners is `mixed`.
+ * The default shell of a job's runner: pwsh on Windows, bash elsewhere. A `runs-on` expression
+ * (`${{ matrix.os }}`, `${{ inputs.runner }}`) is resolved from the runner names in the matrix
+ * and in the expression itself. When those include Windows and other runners, or name none at
+ * all (an input, a variable), it is `mixed`: the step may run in either shell.
  */
 function runnerShell(job: YAMLMap): { shell: StepShell; name: string } {
   const labels = strings(pairOf(job, "runs-on")?.value);
   const windows = (s: string) => /windows/i.test(s);
-  if (labels.some((l) => l.includes("${{"))) {
+  const runner = /windows|ubuntu|macos|linux/i;
+  let names = labels.filter((l) => !l.includes("${{"));
+  if (names.length < labels.length) {
     const strategy = pairOf(job, "strategy")?.value;
     const matrix = isMap(strategy) ? strings(pairOf(strategy as YAMLMap, "matrix")?.value) : [];
-    const runners = matrix.filter((s) => /windows|ubuntu|macos|linux/i.test(s));
-    if (runners.some(windows)) {
-      return runners.every(windows)
-        ? { shell: "powershell", name: "pwsh" }
-        : { shell: "mixed", name: "bash or pwsh" };
-    }
+    const quoted = labels.flatMap((l) => [...l.matchAll(/'([^']*)'/g)].map((m) => m[1] as string));
+    const candidates = [...matrix, ...quoted].filter((s) => runner.test(s));
+    if (candidates.length === 0) return MIXED;
+    names = [...names, ...candidates];
   }
-  return labels.some(windows)
-    ? { shell: "powershell", name: "pwsh" }
-    : { shell: "posix", name: "bash" };
+  if (!names.some(windows)) return { shell: "posix", name: "bash" };
+  return names.some((n) => runner.test(n) && !windows(n))
+    ? MIXED
+    : { shell: "powershell", name: "pwsh" };
 }
 
 function parseJobs(text: string, root: YAMLMap): { jobs: WorkflowJob[]; map?: YAMLMap } {
@@ -318,7 +325,9 @@ function parseJobs(text: string, root: YAMLMap): { jobs: WorkflowJob[]; map?: YA
   for (const item of jobsPair.value.items) {
     if (!isScalar(item.key) || !isMap(item.value)) continue;
     const node = item.value as YAMLMap;
-    const fallbackShell = defaultShell(node) ?? defaultShell(root);
+    const fallbackShell = defaultRun(node, "shell") ?? defaultRun(root, "shell");
+    const fallbackDirectory =
+      defaultRun(node, "working-directory") ?? defaultRun(root, "working-directory");
     const runner = runnerShell(node);
     const stepsPair = pairOf(node, "steps");
     const steps: WorkflowStep[] = [];
@@ -338,6 +347,8 @@ function parseJobs(text: string, root: YAMLMap): { jobs: WorkflowJob[]; map?: YA
           parsed.shell = runner.shell;
           parsed.shellName = runner.name;
         }
+        const directory = parsed.workingDirectory ?? fallbackDirectory;
+        if (directory !== undefined) parsed.runDirectory = directory;
         steps.push(parsed);
       });
     }
@@ -949,7 +960,7 @@ function runDockerBuild(
     }
   }
   if (line === undefined) return undefined;
-  const wd = step.workingDirectory ? normalizeRel(step.workingDirectory) : ".";
+  const wd = step.runDirectory ? normalizeRel(step.runDirectory) : ".";
   const context = joinRel(wd, normalizeRel(buildCommand?.context ?? "."));
   const file = buildCommand?.file
     ? joinRel(wd, normalizeRel(buildCommand.file))

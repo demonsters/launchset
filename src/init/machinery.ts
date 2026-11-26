@@ -43,6 +43,7 @@ import {
   runsScript,
   simpleCommands,
   topLevelCommands,
+  unquoted,
 } from "./shell.ts";
 import { latestFlagRange } from "./text-edit.ts";
 import type { Evidence, MachineryAction, MachineryItem, MachineryKind } from "./types.ts";
@@ -248,7 +249,7 @@ const VERSION_WRITE_COMMANDS = [
   // fastlane's version actions run from the command line (`fastlane run increment_build_number`),
   // unless they write launchset's numbers.
   /^fastlane\s+run\s+(?:increment_build_number|increment_version_number|increment_version_code|android_set_version_code|android_set_version_name|increment_version_name)\b(?!.*LAUNCHSET_)/,
-  /^fastlane\s+run\s+set_info_plist_value\b(?!.*LAUNCHSET_).*CFBundle(?:Short)?Version\b/,
+  /^fastlane\s+run\s+set_info_plist_value\b(?!.*LAUNCHSET_).*CFBundle(?:ShortVersionString|Version)\b/,
 ];
 /** `sed -i` / `perl -pi`: edits a file in place. */
 const IN_PLACE = /^(?:sed|perl)\b.*\s(?:-[A-Za-z]*i|--in-place)/;
@@ -904,7 +905,7 @@ function stepDrafts(workflow: Workflow, builds: DockerBuild[], scriptPaths: stri
         otherShellStep(workflow, job, step, draftFor);
         continue;
       }
-      const wd = step.workingDirectory ? normalizeRel(step.workingDirectory) : ".";
+      const wd = step.runDirectory ? normalizeRel(step.runDirectory) : ".";
       const matched: RunCommand[] = [];
       const all = runCommands(step.run, workflow.text);
       const kindsFound: MachineryKind[] = [];
@@ -1461,7 +1462,7 @@ function scriptCallers(
   for (const workflow of input.workflows) {
     for (const job of workflow.jobs) {
       for (const step of job.steps) {
-        const wd = step.workingDirectory ? normalizeRel(step.workingDirectory) : ".";
+        const wd = step.runDirectory ? normalizeRel(step.runDirectory) : ".";
         if (step.run && wd === dir) {
           commandCallers(
             workflow.path,
@@ -1608,6 +1609,23 @@ function scriptFileDraft(
         s !== "" && referencesFile(s, file.path, pkg.dir) ? [i] : [],
       );
       if (hits.length === 0) continue;
+      // A part that runs the file next to other work (`sh -c 'bash tag.sh && npm run deploy'`)
+      // can't go without that work.
+      if (
+        hits.some((i) =>
+          simpleCommands(parts[i] as string).some(
+            (c) => !runsFile(unquoted(c.text), file.path, pkg.dir) && !SETUP_COMMAND.test(c.text),
+          ),
+        )
+      ) {
+        unsafe = true;
+        evidence.push({
+          path: pkg.path,
+          line: pkg.lines[name] ?? 1,
+          note: `script "${name}" runs it`,
+        });
+        continue;
+      }
       const rest = parts.filter((s, i) => s !== "" && !hits.includes(i));
       if (rest.length === 0) {
         const found = scriptCallers(pkg, name, input, gitlab);
@@ -1634,7 +1652,7 @@ function scriptFileDraft(
     for (const job of workflow.jobs) {
       for (const step of job.steps) {
         if (!step.run) continue;
-        const wd = step.workingDirectory ? normalizeRel(step.workingDirectory) : ".";
+        const wd = step.runDirectory ? normalizeRel(step.runDirectory) : ".";
         const all = runCommands(step.run, workflow.text);
         const hits = all.filter((c) => invokesScriptFile(c.command, [file.path], wd));
         if (hits.length === 0) continue;
@@ -1706,7 +1724,7 @@ function scriptFileDraft(
     }
   } else if (unsafe) {
     draft.why =
-      "a workflow or package.json script runs it inside a heredoc, a compound line, or joined with `||`, a pipe or `&`; edit that by hand";
+      "a workflow or package.json script runs it inside a heredoc or a compound line, joined with `||`, a pipe or `&`, or next to other work in one `sh -c`; edit that by hand";
   } else if (references.length > 0) {
     draft.disable = references;
     draft.effects.disable = `stops running it (${evidence
@@ -1906,7 +1924,7 @@ export function referencedScriptFiles(packages: PackageScripts[], workflows: Wor
     for (const job of workflow.jobs) {
       for (const step of job.steps) {
         if (!step.run) continue;
-        const wd = step.workingDirectory ? normalizeRel(step.workingDirectory) : ".";
+        const wd = step.runDirectory ? normalizeRel(step.runDirectory) : ".";
         for (const m of step.run.value.matchAll(pattern)) {
           const p = normalizeRel(m[1] as string);
           if (!p.includes("node_modules/")) found.add(joinRel(wd, p));
