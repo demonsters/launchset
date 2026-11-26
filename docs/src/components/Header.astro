@@ -1,0 +1,170 @@
+---
+/**
+ * Starlight's header with links to the docs and Getting started added. The homepage has no sidebar, so
+ * without these links a visitor there had no way into the docs except the hero buttons.
+ *
+ * Wide screens: title, search, the two links, GitHub and the theme picker.
+ * Narrow screens: docs pages keep Starlight's menu button; the homepage (no sidebar, so no menu
+ * button) gets a single "Docs" link instead.
+ */
+import Search from "@astrojs/starlight/components/Search.astro";
+import SiteTitle from "@astrojs/starlight/components/SiteTitle.astro";
+import SocialIcons from "@astrojs/starlight/components/SocialIcons.astro";
+import ThemeSelect from "@astrojs/starlight/components/ThemeSelect.astro";
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+const to = (path: string) => `${base}/${path}`;
+
+// "Getting started" is lit on that page; "Docs" on every other docs page.
+const id = Astro.locals.starlightRoute.id;
+const nav = [
+  { label: "Docs", link: "concepts/", current: id !== "" && id !== "getting-started" },
+  { label: "Getting started", link: "getting-started/", current: id === "getting-started" },
+];
+---
+
+<div class="header">
+  <div class="title-wrapper sl-flex"><SiteTitle /></div>
+  <div class="sl-flex search-group print:hidden">
+    <Search />
+    <a class="mobile-docs" href={to("concepts/")}>Docs</a>
+  </div>
+  <div class="sl-hidden md:sl-flex print:hidden right-group">
+    <nav class="ls-nav" aria-label="Main">
+      {
+        nav.map((item) => (
+          <a
+            href={to(item.link)}
+            class="ls-nav__link"
+            aria-current={item.current ? "page" : undefined}
+          >
+            {item.label}
+          </a>
+        ))
+      }
+    </nav>
+    <div class="sl-flex social-icons"><SocialIcons /></div>
+    <ThemeSelect />
+  </div>
+</div>
+
+<style>
+  .header {
+    display: flex;
+    gap: var(--sl-nav-gap);
+    justify-content: space-between;
+    align-items: center;
+    height: 100%;
+  }
+
+  .title-wrapper {
+    overflow: clip;
+    padding: 0.25rem;
+    margin: -0.25rem;
+    min-width: 0;
+  }
+
+  .search-group {
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .right-group,
+  .social-icons {
+    gap: 1rem;
+    align-items: center;
+  }
+  .social-icons::after {
+    content: "";
+    height: 2rem;
+    border-inline-end: 1px solid var(--sl-color-gray-5);
+  }
+
+  .ls-nav {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+  }
+  .ls-nav::after {
+    content: "";
+    height: 2rem;
+    margin-inline-start: 0.75rem;
+    border-inline-end: 1px solid var(--sl-color-gray-5);
+  }
+  .ls-nav__link {
+    position: relative;
+    padding: 0.4rem 0.65rem;
+    border-radius: 0.5rem;
+    color: var(--sl-color-gray-2);
+    font-family: var(--ls-font-display);
+    font-size: var(--sl-text-sm);
+    font-weight: 550;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .ls-nav__link:hover {
+    color: var(--sl-color-white);
+    background: var(--sl-color-gray-6);
+  }
+  .ls-nav__link[aria-current="page"] {
+    color: var(--sl-color-white);
+  }
+  .ls-nav__link[aria-current="page"]::after {
+    content: "";
+    position: absolute;
+    inset-inline: 0.65rem;
+    bottom: -0.1rem;
+    height: 2px;
+    border-radius: 1px;
+    background: var(--ls-trail-sky);
+  }
+  .ls-nav__link:focus-visible,
+  .mobile-docs:focus-visible {
+    outline: 2px solid var(--sl-color-text-accent);
+    outline-offset: 2px;
+  }
+
+  .mobile-docs {
+    display: none;
+    align-items: center;
+    min-height: 2.25rem;
+    padding: 0 0.9rem;
+    border-radius: 0.6rem;
+    background: var(--sl-color-text-accent);
+    color: var(--sl-color-black);
+    font-family: var(--ls-font-display);
+    font-size: var(--sl-text-sm);
+    font-weight: 600;
+    text-decoration: none;
+  }
+  @media (max-width: 49.99rem) {
+    :global(:root:not([data-has-sidebar])) .mobile-docs {
+      display: inline-flex;
+    }
+  }
+
+  @media (min-width: 50rem) {
+    :global(:root[data-has-sidebar]) {
+      --__sidebar-pad: calc(2 * var(--sl-nav-pad-x));
+    }
+    :global(:root:not([data-has-toc])) {
+      --__toc-width: 0rem;
+    }
+    .header {
+      --__sidebar-width: max(0rem, var(--sl-content-inline-start, 0rem) - var(--sl-nav-pad-x));
+      --__main-column-fr: calc(
+        (
+            100% + var(--__sidebar-pad, 0rem) - var(--__toc-width, var(--sl-sidebar-width)) -
+              (2 * var(--__toc-width, var(--sl-nav-pad-x))) - var(--sl-content-inline-start, 0rem) -
+              var(--sl-content-width)
+          ) / 2
+      );
+      display: grid;
+      grid-template-columns:
+        minmax(calc(var(--__sidebar-width) + max(0rem, var(--__main-column-fr) - var(--sl-nav-gap))), auto)
+        1fr
+        auto;
+      align-content: center;
+    }
+  }
+</style>

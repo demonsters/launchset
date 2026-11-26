@@ -1,7 +1,10 @@
 /*
  * The docs theme, taken from the logo: the badge's night navy, the rocket's hull white and the
- * three exhaust trails (sky, flame, violet). Archivo carries the type; headings use its expanded
- * width, like the lettering on a launch vehicle.
+ * three exhaust trails (sky, flame, violet).
+ *
+ * Type: Saira, a squared, engineered sans in the spirit of instrument-panel and flight-hardware
+ * lettering, sets headings, navigation and buttons. Atkinson Hyperlegible Next sets the reading
+ * text and its Mono sibling the code, so prose and commands read as one family.
  */
 
 :root {
@@ -19,10 +22,11 @@
   --ls-flame-ink: #c2410c;
   --ls-violet-ink: #6d28d9;
 
-  --sl-font: "Archivo Variable", "Archivo", sans-serif;
-  --sl-font-mono: "IBM Plex Mono", ui-monospace, monospace;
-  --ls-stretch-display: 125%;
-  --ls-stretch-heading: 112%;
+  --sl-font: "Atkinson Hyperlegible Next Variable", system-ui, sans-serif;
+  --sl-font-mono: "Atkinson Hyperlegible Mono Variable", ui-monospace, monospace;
+  --ls-font-display: "Saira Variable", var(--sl-font);
+  /* Atkinson's tall x-height needs a little less leading than Starlight's 1.75. */
+  --sl-line-height: 1.65;
 
   /* Dark: slate greys on the badge's night. */
   --sl-color-white: #f8fafc;
@@ -66,18 +70,31 @@
   --ls-trail-hull: #475569;
 }
 
-/* Headings everywhere get the slightly expanded width. */
-.sl-markdown-content :is(h1, h2, h3, h4),
-h1#_top,
-.site-title {
-  font-stretch: var(--ls-stretch-heading);
-  letter-spacing: -0.005em;
+/* Headings, the site title and the sidebar's section names are set in the display face. */
+.sl-markdown-content :is(h1, h2, h3, h4, h5, h6),
+h1#_top:not(.ls-hero__title),
+.site-title,
+.sidebar-content summary .large,
+.right-sidebar h2,
+.pagination-links .link-title {
+  font-family: var(--ls-font-display);
+  letter-spacing: -0.01em;
 }
 
-h1#_top {
+h1#_top:not(.ls-hero__title) {
   font-weight: 700;
+  line-height: 1.1;
 }
 
 .sl-markdown-content :is(h2, h3) {
   font-weight: 650;
+}
+
+.sl-markdown-content :is(h4, h5, h6) {
+  font-weight: 600;
+}
+
+/* Atkinson's mono runs wide; keep inline code in step with the surrounding text. */
+.sl-markdown-content :not(pre) > code {
+  font-size: 0.875em;
 }

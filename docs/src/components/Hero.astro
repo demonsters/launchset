@@ -59,6 +59,10 @@ const narrowFrac = (y: number) => (y - N.sy) / (N.ey - N.sy);
 
 <section class="ls-hero not-content" aria-labelledby={PAGE_TITLE_ID}>
   <div class="ls-hero__intro">
+    <a class="ls-hero__eyebrow" href="#open-source">
+      <span class="ls-hero__dot" aria-hidden="true"></span>
+      GitHub and GitLab · Going open source
+    </a>
     <h1 id={PAGE_TITLE_ID} class="ls-hero__title">
       {titleLines.map((line) => <span>{line}</span>)}
     </h1>
@@ -205,11 +209,43 @@ const narrowFrac = (y: number) => (y - N.sy) / (N.ey - N.sy);
     padding: clamp(1.75rem, 5vw, 3.5rem) clamp(1.25rem, 5vw, 3.5rem) 0;
   }
 
+  .ls-hero__eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin-bottom: clamp(1.25rem, 2.5vw, 1.75rem);
+    padding: 0.35rem 0.85rem 0.35rem 0.7rem;
+    border: 1px solid var(--panel-line);
+    border-radius: 999px;
+    background: rgb(11 18 32 / 0.5);
+    color: #cbd5e1;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    font-family: var(--ls-font-display);
+    letter-spacing: 0.01em;
+    text-decoration: none;
+  }
+  .ls-hero__eyebrow:hover {
+    border-color: var(--ls-nozzle);
+    color: var(--ls-hull);
+  }
+  .ls-hero__eyebrow:focus-visible {
+    outline: 2px solid var(--ls-flame);
+    outline-offset: 3px;
+  }
+  .ls-hero__dot {
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+    background: var(--ls-flame);
+    box-shadow: 0 0 0 3px rgb(251 146 60 / 0.25);
+  }
+
   .ls-hero__title {
     margin: 0;
     font-size: clamp(2.6rem, 8.2vw, 5.75rem);
     font-weight: 800;
-    font-stretch: var(--ls-stretch-display);
+    font-family: var(--ls-font-display);
     line-height: 0.96;
     letter-spacing: -0.02em;
     color: var(--ls-hull);
@@ -266,7 +302,7 @@ const narrowFrac = (y: number) => (y - N.sy) / (N.ey - N.sy);
     padding: 0 1.25rem;
     border-radius: 0.75rem;
     font-weight: 650;
-    font-stretch: var(--ls-stretch-heading);
+    font-family: var(--ls-font-display);
     text-decoration: none;
     transition: background-color 120ms, border-color 120ms;
   }
@@ -368,7 +404,7 @@ const narrowFrac = (y: number) => (y - N.sy) / (N.ey - N.sy);
   }
   .ls-flight__station text {
     fill: var(--ls-nozzle);
-    font-stretch: var(--ls-stretch-heading);
+    font-family: var(--ls-font-display);
   }
 
   .ls-flight__trail {
@@ -422,7 +458,7 @@ const narrowFrac = (y: number) => (y - N.sy) / (N.ey - N.sy);
   .ls-flight__label {
     fill: var(--ls-hull);
     font-weight: 650;
-    font-stretch: var(--ls-stretch-heading);
+    font-family: var(--ls-font-display);
     font-size: 15px !important;
   }
   .ls-flight__label--tag {
