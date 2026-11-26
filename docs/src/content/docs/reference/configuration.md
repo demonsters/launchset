@@ -7,10 +7,10 @@ launchset reads its configuration from one file at the root of the repo. It look
 
 `launchset.config.ts`, `launchset.config.mts`, `launchset.config.mjs`, `launchset.config.js`, `launchset.config.json`
 
-TypeScript and JavaScript configs are loaded with [jiti](https://github.com/unjs/jiti), so they work on any Node version, and `import { defineConfig } from "@demonsters/launchset"` works even where the package isn't installed (for example inside the GitHub Action). `defineConfig` only gives you types.
+TypeScript and JavaScript configs are loaded with [jiti](https://github.com/unjs/jiti), so they work on any Node version, and `import { defineConfig } from "launchset"` works even where the package isn't installed (for example inside the GitHub Action). `defineConfig` only gives you types.
 
 ```ts title="launchset.config.ts"
-import { defineConfig } from "@demonsters/launchset";
+import { defineConfig } from "launchset";
 
 export default defineConfig({
   version: { file: "package.json" },
@@ -72,14 +72,14 @@ A `launchset.config.json` gets completion and checking from the JSON Schema that
 
 ```json title="launchset.config.json"
 {
-  "$schema": "./node_modules/@demonsters/launchset/dist/launchset.schema.json",
+  "$schema": "./node_modules/launchset/dist/launchset.schema.json",
   "targets": {
     "web": { "type": "web" }
   }
 }
 ```
 
-The package also exports it as `@demonsters/launchset/schema.json`. A top-level `$schema` key is allowed in every config file. It is ignored.
+The package also exports it as `launchset/schema.json`. A top-level `$schema` key is allowed in every config file. It is ignored.
 
 ## Validation
 
@@ -116,7 +116,7 @@ The tables below are generated from the schema the code uses, so they always mat
 <!-- generated:config-options:start -->
 ### Top-level options
 
-Everything is optional except `targets`. `$schema` is only for editors: point it at `node_modules/@demonsters/launchset/dist/launchset.schema.json` in a `launchset.config.json` to get completion.
+Everything is optional except `targets`. `$schema` is only for editors: point it at `node_modules/launchset/dist/launchset.schema.json` in a `launchset.config.json` to get completion.
 
 | Option | Type | Default | What it does |
 | --- | --- | --- | --- |

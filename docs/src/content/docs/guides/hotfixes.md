@@ -9,7 +9,7 @@ Sometimes `main` is on `1.5.0` and you need a fix for `1.4.x` right now. A **mai
 
 ```sh
 git fetch --tags
-npx @demonsters/launchset hotfix 1.4
+npx launchset hotfix 1.4
 ```
 
 ```text

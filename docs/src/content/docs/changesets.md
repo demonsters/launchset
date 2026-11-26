@@ -8,13 +8,13 @@ Every pull request needs a changeset, and each changelog bullet should be about 
 ## Create one
 
 ```sh
-npx @demonsters/launchset add
+npx launchset add
 ```
 
 In a terminal this asks for the bump and a summary. To skip the questions:
 
 ```sh
-npx @demonsters/launchset add --bump minor --message "Add offline mode to the mobile app."
+npx launchset add --bump minor --message "Add offline mode to the mobile app."
 ```
 
 The command prints the path of the new file, for example `.launchset/sweet-boxes-draw.md`. Commit it with your PR.
@@ -38,7 +38,7 @@ Add offline mode to the mobile app.
 | `patch` | Bug fixes. |
 | `none` | A change that needs no release: docs, CI, tests, refactors. |
 
-`none` still satisfies the PR check. It never starts a release on its own, it doesn't appear in the changelog, and it is deleted by the next release. To create one: `npx @demonsters/launchset add --empty`. It needs no summary.
+`none` still satisfies the PR check. It never starts a release on its own, it doesn't appear in the changelog, and it is deleted by the next release. To create one: `npx launchset add --empty`. It needs no summary.
 
 With several changesets pending, the release gets the highest bump. If only `none` changesets are pending, there is no release.
 

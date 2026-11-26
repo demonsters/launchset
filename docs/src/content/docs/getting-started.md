@@ -15,7 +15,6 @@ You need:
 
 - A GitHub repository, and GitHub Actions turned on.
 - Node 24 or newer on the machine where you run the CLI. (The GitHub Action brings its own Node.)
-- Read access to the private `@demonsters/launchset` package on npm. If `npx @demonsters/launchset --version` fails with a 404 or 401, set up npm authentication for the `@demonsters` scope first.
 - Owner rights in the GitHub org, to create a GitHub App. See [GitHub App setup](/github-app/).
 
 :::note
@@ -27,7 +26,7 @@ The CLI is only needed for setup and for convenience. In CI, workflows call the 
 In the root of your repo:
 
 ```sh
-npx @demonsters/launchset init
+npx launchset init
 ```
 
 `init` looks at your repo and asks a few questions. It finds:
@@ -50,12 +49,12 @@ Then it writes:
 | `CHANGELOG.md` | Only if you have none. |
 | `.claude/skills/launchset/SKILL.md` and `AGENTS.md` | Instructions for AI agents (optional). |
 
-At the end it prints what is left to do by hand. Want to see what it would do first? Run `npx @demonsters/launchset init --detect`. That writes nothing.
+At the end it prints what is left to do by hand. Want to see what it would do first? Run `npx launchset init --detect`. That writes nothing.
 
 A minimal config looks like this:
 
 ```ts title="launchset.config.ts"
-import { defineConfig } from "@demonsters/launchset";
+import { defineConfig } from "launchset";
 
 export default defineConfig({
   targets: {
@@ -102,10 +101,10 @@ git push -u origin add-launchset
 Open the PR. The check runs and reports that the PR has no changeset. That is on purpose. Add one:
 
 ```sh
-npx @demonsters/launchset add --bump patch --message "Set up releases with launchset"
+npx launchset add --bump patch --message "Set up releases with launchset"
 ```
 
-Or, for a change that needs no release, `npx @demonsters/launchset add --empty`. Commit the file in `.launchset/` and push. The check turns green.
+Or, for a change that needs no release, `npx launchset add --empty`. Commit the file in `.launchset/` and push. The check turns green.
 
 ## 5. Your first release
 
@@ -135,7 +134,7 @@ Read the release notes before you merge a new major: inputs get renamed now and 
 ## Try the CLI
 
 ```sh
-npx @demonsters/launchset status
+npx launchset status
 ```
 
 ```text

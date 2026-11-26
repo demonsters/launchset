@@ -9,7 +9,7 @@ launchset releases repos where **one version** drives **many targets** (Docker i
 
 You are moving an **existing** repo onto it. This works on GitHub and on GitLab (GitLab.com or self-managed 18.2+); the steps below name both where they differ. The CLI does the detecting and the writing. Your job is to ask the human the right questions, deal with what conflicts, move the team's build steps, and deliver one reviewable PR.
 
-Use `npx @demonsters/launchset` (Node 24 or newer; the package is private, so npm needs access to the `@demonsters` scope. If `npx` fails with 401 or 404, tell the human and stop).
+Use `npx launchset` (Node 24 or newer). If `npx` can't run it, tell the human and stop.
 
 ## The rules
 
@@ -25,7 +25,7 @@ Use `npx @demonsters/launchset` (Node 24 or newer; the package is private, so np
 ## Step 1: Detect
 
 ```sh
-npx @demonsters/launchset init --detect --json > /tmp/launchset-init.json
+npx launchset init --detect --json > /tmp/launchset-init.json
 ```
 
 (For a human-readable summary: `init --detect`.) Read the JSON. Its shape:
@@ -92,7 +92,7 @@ For each, propose `disable` (remove only the conflicting trigger or step, never 
 
 Also check, by reading the repo:
 
-- **Long-lived Changesets pre-mode branches** (`.changeset/pre.json` on a branch): propose a prerelease branch entry (`preview.branches: [{ branch: "next", prerelease: "beta" }]`) and, on that branch, `npx @demonsters/launchset init --convert-only`. `pre.json` is ignored with a warning.
+- **Long-lived Changesets pre-mode branches** (`.changeset/pre.json` on a branch): propose a prerelease branch entry (`preview.branches: [{ branch: "next", prerelease: "beta" }]`) and, on that branch, `npx launchset init --convert-only`. `pre.json` is ignored with a warning.
 - **Deploy manifests that pin an image tag** (`imagePins[]`): ask per file. `image.<path>=stamp` makes the release PR update it to each release. `leave` keeps it as deploy state that is promoted by hand (for example a production overlay).
 - **Docker image names and tags**: keep what deploy tooling pulls (`v{version}`).
 
@@ -114,7 +114,7 @@ The **GitHub App** (the variable `LAUNCHSET_APP_CLIENT_ID` and the secret `LAUNC
 ## Step 5: Run init with the answers
 
 ```sh
-npx @demonsters/launchset init --yes \
+npx launchset init --yes \
   --decide version=1.4.0 \
   --decide target.android=manual \
   --decide docker.api.tags='v{version}, v{major}.{minor}, v{major}, latest' \
@@ -127,7 +127,7 @@ npx @demonsters/launchset init --yes \
 
 Then look at the result: `git status`, `git diff`. Init writes (files that already exist are kept unless `file.<path>=overwrite`) `launchset.config.ts`, `.launchset/README.md`, `.github/workflows/launchset-check.yml`, `launchset-release.yml` and `launchset-preview.yml` (on GitLab instead `.gitlab/launchset.yml`, `.gitlab/launchset-targets.yml`, `.gitlab/ci-templates.yml` when templates moved, and a `.gitlab-ci.yml`, or only `include:` entries added to yours; init doesn't edit your `workflow:` and prints the recommended `workflow: rules` as a manual step), `CHANGELOG.md` (only if missing), converted changesets (`.changeset/*.md` to `.launchset/`, the folder is left in place), and the agent skill and `AGENTS.md` section.
 
-Run `npx @demonsters/launchset status`, `version --dry-run` and `plan` to see that the config loads and the files are consistent.
+Run `npx launchset status`, `version --dry-run` and `plan` to see that the config loads and the files are consistent.
 
 ## Step 6: Move the team's build steps
 
@@ -196,7 +196,7 @@ Everything goes in **one PR**. Its description lists:
 - The action versions you checked, what you bumped and what you held back (see "Check the action versions").
 - Changes to versions (files that moved to the canonical version) and any lowered version.
 - The remaining manual steps: create the GitHub App and install it on the repo, add the variable `LAUNCHSET_APP_CLIENT_ID` and the secret `LAUNCHSET_APP_PRIVATE_KEY` (unless the org already has them, or the older secret `LAUNCHSET_APP_ID`; on GitLab: `LAUNCHSET_TOKEN` and `NPM_TOKEN`, protected branches and tags, pipeline variables, `workflow: rules` if init printed them), store credentials (`LAUNCHSET_PLAY_SERVICE_ACCOUNT_JSON`, `LAUNCHSET_ASC_KEY_ID`, `LAUNCHSET_ASC_ISSUER_ID`, `LAUNCHSET_ASC_PRIVATE_KEY`, keystore and signing secrets), and mark the **Changeset check** job as required once it runs (on GitLab: require the MR pipeline to succeed).
-- That the PR itself needs a changeset: add one (`npx @demonsters/launchset add --bump patch --message "Set up releases with launchset"`, or `--empty`).
+- That the PR itself needs a changeset: add one (`npx launchset add --bump patch --message "Set up releases with launchset"`, or `--empty`).
 
 Don't merge it. Merging may start a release if the PR changed the root version of a version without a release tag.
 

@@ -6,7 +6,7 @@ description: A bare React Native app is two targets, android and ios, in one rep
 A bare React Native app has an Android project and an iOS project. Make them two targets. Point `android` at the Gradle file and `ios` at the Xcode project:
 
 ```ts
-import { defineConfig } from "@demonsters/launchset";
+import { defineConfig } from "launchset";
 
 export default defineConfig({
   targets: {

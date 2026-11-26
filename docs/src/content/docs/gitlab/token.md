@@ -1,6 +1,6 @@
 ---
 title: Token and permissions
-description: Create the LAUNCHSET_TOKEN access token launchset needs on GitLab, and set up NPM_TOKEN, protected branches and pipeline variables.
+description: Create the LAUNCHSET_TOKEN access token launchset needs on GitLab, and set up protected branches and pipeline variables.
 ---
 
 launchset needs a token that can write to your project. You create it once per project (or per group), in the browser. An agent can't do this for you: it needs a Maintainer or Owner.
@@ -46,24 +46,17 @@ In **Settings → CI/CD → Variables**, add a variable:
 Don't mark `LAUNCHSET_TOKEN` as **Protected**. Protected variables are only passed to pipelines of protected branches and tags. MR pipelines run on the source branch, which is usually not protected, so the PR check couldn't post its note and MR previews couldn't comment. If you protect it anyway, the release jobs on the base branch still work, but the checks don't.
 :::
 
-A fork MR's pipeline runs in the fork, without your project's variables, so launchset can't be installed there (see [`NPM_TOKEN`](#npm_token)). `launchset-check` therefore skips those pipelines. To check a fork MR, run its pipeline in your project (**Run pipeline** on the MR's **Pipelines** tab), which has your variables. Forks get no previews.
+A fork MR's pipeline runs in the fork, without your project's variables, so `launchset-check` couldn't post its note there. It therefore skips those pipelines. To check a fork MR, run its pipeline in your project (**Run pipeline** on the MR's **Pipelines** tab), which has your variables. Forks get no previews.
 
 ## Why Maintainer
 
 Developer is enough for the API, including starting MR pipelines for the optional [preview sweep](/gitlab/previews/#start-previews-when-the-label-is-added-preview-sweep) (the `api` scope covers it). The reason for Maintainer is git: by default, only Maintainers may push to protected branches and create protected tags, and launchset pushes the base branch's release branch, marker tags, release tags, partial tags and prerelease tags. See [Protected branches and tags](#protected-branches-and-tags).
 
-## `NPM_TOKEN`
+## Installing the CLI
 
-Every launchset job installs the CLI with npm: `npm install --global "$LAUNCHSET_CLI"`, where `LAUNCHSET_CLI` is `@demonsters/launchset@<version>`, the version that wrote the files. The package is private. Add a second variable:
+Every launchset job installs the CLI with npm: `npm install --global "$LAUNCHSET_CLI"`, where `LAUNCHSET_CLI` is `launchset@<version>`, the version that wrote the files. The package is public on npm, so no token is needed. When `launchset` is already on the `PATH` of the image, the install is skipped. To use a build from another source (a tarball, a Git URL, a registry mirror), set the CI/CD variable `LAUNCHSET_CLI` to that spec.
 
-| Setting | Value |
-| --- | --- |
-| Key | `NPM_TOKEN` |
-| Value | an npm token that can read `@demonsters/launchset` |
-| Visibility | **Masked** |
-| Protect variable | off, for the same reason |
-
-The job sets it as the auth token for `registry.npmjs.org` before it installs. When `launchset` is already on the `PATH` of the image, the install is skipped and so is the login. To use a build from another source (a tarball, a Git URL, another registry), set the CI/CD variable `LAUNCHSET_CLI` to that spec. Then `NPM_TOKEN` may not be needed.
+Files written before 1.2 install `@demonsters/launchset`, the package's old name, and log in with an `NPM_TOKEN` variable first. They keep working. To move to `launchset`, change `LAUNCHSET_CLI` in the `.launchset-cli` job of `.gitlab/launchset.yml` to `launchset@<version>`; `NPM_TOKEN` is then no longer needed.
 
 ## Protected branches and tags
 

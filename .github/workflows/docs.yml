@@ -1,7 +1,7 @@
 name: Docs
 
 # Builds the docs site and publishes it to GitHub Pages: https://demonsters.github.io/launchset/
-# The site is public even though this repo is private.
+# Both the site and this repo are public.
 
 on:
   push:

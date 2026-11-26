@@ -20,7 +20,7 @@ There is no PR, so there is no PR check and no sticky comment. Everything else i
 Several commits often belong to one change. Write **one** changeset for the change, not one per commit. The other way round holds too: a push with several changes gets one changeset for each. If new work extends something that already has a pending changeset, edit that file instead of adding another.
 
 ```sh
-npx @demonsters/launchset add --bump minor --message "Add offline mode to the mobile app."
+npx launchset add --bump minor --message "Add offline mode to the mobile app."
 git add .launchset
 git commit -m "Add offline mode"
 git push
@@ -35,14 +35,14 @@ When commits exist since the last release and **no changeset at all** is pending
 - The release workflow's job summary shows: `3 commits since v1.4.0 and no pending changeset: they won't be released.` with the commit list.
 - `launchset status` prints the same warning.
 
-If those commits need no release, add an empty changeset: `npx @demonsters/launchset add --empty`.
+If those commits need no release, add an empty changeset: `npx launchset add --empty`.
 
 ## A pre-push hook
 
 To see the warning before the push instead of in CI, run `launchset check --push` in a pre-push hook:
 
 ```sh
-npx @demonsters/launchset check --push
+npx launchset check --push
 ```
 
 ```text
