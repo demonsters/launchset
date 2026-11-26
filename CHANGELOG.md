@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.4 (2026-11-26)
+
+### Patch changes
+- `launchset init` turns a job in a GitHub workflow that release tags start, and that uploads an artifact, publishes or deploys (an Electron desktop build, for example), into a custom target, with its steps copied, commented out, into `launchset-release.yml`. Before, init removed that workflow's tag trigger and nothing built the job for releases anymore. ([#13](https://github.com/demonsters/launchset/pull/13), @rene-demonsters)
+- `launchset init` no longer takes a command that a workflow step only prints, such as `echo "create it with 'git tag -a'"`, for release machinery, and no longer offers to remove that step. ([#13](https://github.com/demonsters/launchset/pull/13), @rene-demonsters)
+
 ## 1.1.3 (2026-11-24)
 
 ### Patch changes
