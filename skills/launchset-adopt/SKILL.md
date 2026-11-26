@@ -20,6 +20,7 @@ Use `npx @demonsters/launchset` (Node 24 or newer; the package is private, so np
 5. **Keep existing conventions** (tag format, Docker image tags) unless the human decides otherwise. Deploy tooling depends on them.
 6. **Remove or adapt conflicting machinery only after the human agrees.**
 7. **Don't migrate what doesn't fit**, and say why (see the end).
+8. **Look up action versions; don't trust what you remember.** Your knowledge of the latest GitHub Action releases is months or years old. Before you write or keep a `uses: owner/repo@vN`, check the latest release, and bump only after you've checked compatibility (see "Check the action versions" in Step 6).
 
 ## Step 1: Detect
 
@@ -138,6 +139,31 @@ The generated workflows have commented examples where the team's build steps go.
 - Give every step `if: matrix.target == '<name>' && steps.verify.outputs.already-published != 'true'` in the release workflow.
 - Custom targets from a GitHub workflow that release tags started: init already copied that job's steps, commented out, under the target's `Build steps missing` step in `launchset-release.yml` (and `launchset-preview.yml`), each with the `if:`. The `actions/checkout` step is left out: launchset's checks out the release commit, so add what the old one set (`lfs: true`, the note says) to it. Uncomment the steps, check them, then remove the guard. Previews run them too.
 
+### Check the action versions
+
+Do this for every `uses:` in the workflows the PR adds or changes: the steps init generated, the team's steps you moved, and anything you added. The generated pins were current when the launchset version you ran was released, which may be months ago. The team's pins are often older. Your own memory is older still.
+
+1. **Find the latest release** of each action:
+   ```sh
+   gh api repos/<owner>/<repo>/releases/latest --jq .tag_name
+   ```
+   A 404 means the action publishes tags only: `gh api repos/<owner>/<repo>/tags --jq '.[].name'`, or `git ls-remote --tags https://github.com/<owner>/<repo>` without `gh`. Compare majors (`v7` against `v7.1.0`). Pins to a SHA or branch are the team's choice: leave them.
+2. **Check compatibility before you bump.** For each major between the pin and the latest, read the release notes (`gh api repos/<owner>/<repo>/releases/tags/<tag> --jq .body`, or the action's CHANGELOG), and look for:
+   - **Inputs.** Every input the step passes must still exist and mean the same thing. Read `action.yml` at the new tag (`gh api 'repos/<owner>/<repo>/contents/action.yml?ref=<tag>' --jq .content | base64 -d`), and look for removed, renamed or `deprecationMessage` inputs and changed defaults.
+   - **Outputs** that later steps read (`steps.<id>.outputs.*`).
+   - **Behaviour** the workflow depends on: triggers it now refuses (for example `actions/checkout@v7` won't check out fork PRs under `pull_request_target` or `workflow_run`), where credentials are kept, caching, path layouts, and failures that used to be warnings.
+   - **Runner requirements**: the minimum runner version for self-hosted runners, and the Node runtime.
+3. **Decide per action.**
+   - Compatible: bump it.
+   - Needs a small edit: bump it and adapt the step (a renamed input, an output name).
+   - Needs something only the human can provide (a new secret or variable, a runner upgrade), or breaks a step: **don't bump.** Keep the working major and explain why in the PR.
+
+   Never make a step depend on a secret the repo may not have. For example, `actions/create-github-app-token@v3` deprecates `app-id` for `client-id`. The generated workflows pass `vars.LAUNCHSET_APP_CLIENT_ID || secrets.LAUNCHSET_APP_ID`, so an org with only the older secret keeps working.
+4. **Stay inside the migration.** Don't bump workflows the PR doesn't otherwise touch. List the outdated ones in the PR instead.
+5. **Report it.** In the PR description, list each action you checked: the old major, the new major and what you verified. Name the ones you held back and why.
+
+To keep the pins current after the migration, suggest Dependabot for `github-actions`. init lists it as a manual step when the repo has no Dependabot or Renovate configuration. A Dependabot PR for a new major needs the same check: it bumps the version, not the inputs.
+
 **On GitLab** the build steps go in `.gitlab/launchset-targets.yml`, in the hidden job `.launchset-<target>` of each target (init adds comments naming the old jobs that built each Docker image). Rules for those jobs: no `rules`, `when`, `needs` or `stage`; the image needs Node 24+, npm and git; one command per line (never `a && b`); no early `exit` (it would skip `mark`). `LAUNCHSET_VERSION`, `LAUNCHSET_BUILD_NUMBER`, `LAUNCHSET_CHANNEL`, `LAUNCHSET_DOCKER_TAGS` and `LAUNCHSET_DOCKER_LABELS` are set. There is no `if: matrix.target` guard to write: each target has its own job. Secrets are CI/CD variables.
 
 For custom targets from tag jobs, init already copied the job's keys into `.launchset-<target>` (not `rules`, `needs`, `stage`; `$CI_COMMIT_TAG` became `$LAUNCHSET_TAG`), turned a `needs` between them into `after`, and moved the templates they extend to `.gitlab/ci-templates.yml`. Check with the human:
@@ -155,6 +181,7 @@ Everything goes in **one PR**. Its description lists:
 
 - The decisions and what was chosen (and why, for the ones the human decided).
 - What was removed or disabled, with `path:line`.
+- The action versions you checked, what you bumped and what you held back (see "Check the action versions").
 - Changes to versions (files that moved to the canonical version) and any lowered version.
 - The remaining manual steps: create the GitHub App and install it on the repo, add the variable `LAUNCHSET_APP_CLIENT_ID` and the secret `LAUNCHSET_APP_PRIVATE_KEY` (unless the org already has them, or the older secret `LAUNCHSET_APP_ID`; on GitLab: `LAUNCHSET_TOKEN` and `NPM_TOKEN`, protected branches and tags, pipeline variables, `workflow: rules` if init printed them), store credentials (`LAUNCHSET_PLAY_SERVICE_ACCOUNT_JSON`, `LAUNCHSET_ASC_KEY_ID`, `LAUNCHSET_ASC_ISSUER_ID`, `LAUNCHSET_ASC_PRIVATE_KEY`, keystore and signing secrets), and mark the **Changeset check** job as required once it runs (on GitLab: require the MR pipeline to succeed).
 - That the PR itself needs a changeset: add one (`npx @demonsters/launchset add --bump patch --message "Set up releases with launchset"`, or `--empty`).
