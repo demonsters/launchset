@@ -104,4 +104,4 @@ Which outputs a command sets is listed in the description. Outputs that don't ap
 
 ## License
 
-MIT. See [LICENSE](LICENSE). The bundle includes third-party open source components under their own licenses.
+MIT. See [LICENSE](LICENSE). The bundle includes third-party open source packages under their own licenses: see [dist/THIRD_PARTY_LICENSES.txt](dist/THIRD_PARTY_LICENSES.txt).
