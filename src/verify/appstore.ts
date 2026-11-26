@@ -66,7 +66,7 @@ export async function createAscToken(ctx: VerifyContext): Promise<string> {
     );
   }
   const pem = normalizeP8(ctx.env[ASC_ENV.privateKey] ?? "");
-  let key: CryptoKey | undefined;
+  let key: Awaited<ReturnType<typeof importPKCS8>> | undefined;
   let reason = "not PEM or base64";
   if (pem) {
     try {

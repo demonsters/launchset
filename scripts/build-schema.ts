@@ -1,6 +1,6 @@
 /**
  * Writes `dist/launchset.schema.json` from the zod config schema.
- * Run with `node scripts/build-schema.ts` (Node 26 runs erasable TypeScript directly).
+ * Run with `node scripts/build-schema.ts` (Node 24 runs erasable TypeScript directly).
  */
 
 import { mkdir, writeFile } from "node:fs/promises";

@@ -37,7 +37,7 @@ The design is in [`design/SPEC.md`](design/SPEC.md) and [`design/DECISIONS.md`](
 
 ## Development
 
-Node 26 and pnpm.
+Node 24 and pnpm.
 
 ```sh
 pnpm install

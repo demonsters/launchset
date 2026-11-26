@@ -17,7 +17,7 @@ You need:
 - **Read access to the private `@demonsters/launchset` package on npm.** Jobs install it with npm. You give them an `NPM_TOKEN` variable, see [Token and permissions](/gitlab/token/#npm_token).
 - **A project or group access token** called `LAUNCHSET_TOKEN`. That is the counterpart of the GitHub App. See [Token and permissions](/gitlab/token/).
 
-Node 26 is only needed on your machine, to run `init`.
+Node 24 or newer is also needed on your machine, to run `init`.
 
 ## 1. Run init
 

@@ -3,7 +3,7 @@ title: CLI reference
 description: Every launchset command and flag, from the real --help output.
 ---
 
-The binary is `launchset`. Run it with `npx @demonsters/launchset <command>`, or install the package and run `launchset <command>`. It needs Node 26 or newer.
+The binary is `launchset`. Run it with `npx @demonsters/launchset <command>`, or install the package and run `launchset <command>`. It needs Node 24 or newer.
 
 The sections below are generated from the CLI itself: the text in each box is the output of `launchset <command> --help`.
 

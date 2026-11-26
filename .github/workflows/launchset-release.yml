@@ -22,7 +22,7 @@
 # `id-token: write`; `npm publish` exchanges the workflow's OIDC token for a short-lived npm
 # token. Set up once on npmjs.com: package @demonsters/launchset → Settings → Trusted publishing
 # → GitHub Actions, repository demonsters/launchset, workflow launchset-release.yml (and
-# launchset-preview.yml for `next/*` prereleases). Needs npm >= 11.5.1 (Node 26 ships a newer
+# launchset-preview.yml for `next/*` prereleases). Needs npm >= 11.5.1 (Node 24 ships a newer
 # one). Those tokens can only publish, not read, so there is no `verify` step: reading the
 # private package would need a separate read token. The publish step is idempotent instead.
 name: Launchset release
@@ -95,7 +95,7 @@ jobs:
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v5
         with:
-          node-version: 26
+          node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build:action
@@ -132,7 +132,7 @@ jobs:
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v5
         with:
-          node-version: 26
+          node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build:action
@@ -162,7 +162,7 @@ jobs:
       - uses: actions/setup-node@v5
         if: matrix.target == 'npm'
         with:
-          node-version: 26
+          node-version: 24
           registry-url: https://registry.npmjs.org
       # Idempotent: when this version is already on npm (published by an earlier attempt that
       # failed before `mark`, or by hand), npm refuses to publish over it, and that counts as
@@ -255,7 +255,7 @@ jobs:
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v5
         with:
-          node-version: 26
+          node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build:action

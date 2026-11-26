@@ -8,7 +8,7 @@ Entries marked **NEEDS REVIEW** deviate from the spec because it couldn't be don
 - iOS `plist` source takes `file` (one plist) or `files` (several). Why: "one or more Info.plist files", and `file` matches the other sources. (6.4)
 - `json` and `yaml` file entries require `key`. Why: explicit beats a guessed default. (6.6)
 - A `preview-plan` plan has `mode: "preview"`; the action's `mode` output keeps the four release modes. Why: one plan shape for both, as the spec asks, without pretending a preview is a release mode. (9.7, 10)
-- Development and tests run on Node 26; the action bundle targets Node 24 and is smoke-tested on Node 24. (11, 13)
+- The CLI requires Node 24+ (was 26; lowered so teams on the Node 24 LTS can run it). Development and tests run on Node 24; the action bundle targets Node 24 and is smoke-tested on Node 24. (11, 13)
 - `maintenanceBranches` must contain exactly one `*` (it stands for `<major>.<minor>`) and must not match `baseBranch`. Why: otherwise the version line can't be read from the branch name. (5, 8.2)
 - A top-level `$schema` key is allowed in config files. Why: editor support for `launchset.config.json`. (5)
 - The config loader provides `@demonsters/launchset` to TS/JS configs as a jiti virtual module. Why: the bundled action has no `node_modules`, and `defineConfig` is only a type helper. (5, 10)

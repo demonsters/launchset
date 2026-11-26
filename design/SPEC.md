@@ -542,7 +542,7 @@ A push to a matching branch runs the preview workflow (9.7), with these differen
 
 ## 11. CLI
 
-Binary: `launchset`. Package `@demonsters/launchset` (private on npm, demonsters org). Node ≥ 26 (the current Active LTS, "Lithium", since October 2026).
+Binary: `launchset`. Package `@demonsters/launchset` (private on npm, demonsters org). Node ≥ 24 (Maintenance LTS until April 2028; also the GitHub Actions runtime of the action).
 
 Rules for every command: no interactive prompt when stdin isn't a TTY or `--yes`/flags are given; `--json` where output is data; non-zero exit on failure; no color when not a TTY or `NO_COLOR` is set; `--cwd <dir>`.
 
@@ -647,7 +647,7 @@ Format, newest first, with a title line kept at the top:
 
 ## 13. Tech stack and repo layout (launchset repo)
 
-- TypeScript (strict), ESM. The CLI requires Node ≥ 26 (the current Active LTS). The action runs on `node24`, the newest runtime GitHub Actions offers; the action bundle targets Node 24, so the core must not use APIs newer than Node 24. Move the action to a newer runtime once GitHub supports one.
+- TypeScript (strict), ESM. The CLI requires Node ≥ 24 (Node 22 leaves support in April 2027). The action runs on `node24`, the newest runtime GitHub Actions offers; the action bundle targets Node 24, so the core must not use APIs newer than Node 24. Move the action to a newer runtime once GitHub supports one.
 - Package manager: pnpm. Tests: vitest. Lint/format: Biome.
 - Libraries (use current maintained versions): `zod` (config schema; also generates the JSON Schema for `launchset.config.json` and the docs' config reference), `jiti` (loading `launchset.config.ts`; the same loader ESLint uses for `eslint.config.ts`), `semver`, `jsonc-parser` (JSON offsets for text-preserving edits), `yaml` (YAML node ranges), `@clack/prompts` (interactive CLI), `@octokit/rest` (+ `@actions/core` for the action), `jose` (signs the store JWTs: RS256 for the Google service account token exchange, ES256 for App Store Connect; plain `fetch` for the HTTP calls, no `google-auth-library`), `msw` (HTTP mocking in tests).
 - Bundling: a current bundler (e.g. tsdown or esbuild) for the npm package and a single-file bundle for the action.

@@ -27,7 +27,7 @@ npx @demonsters/launchset add --empty
 
 The command prints the path of the new file, for example `.launchset/brave-lions-sing.md`. Commit it with your change. For a PR with three changes, run it three times.
 
-If `npx` can't run it (the package is private, so npm authentication may be missing, and it needs Node 26 or newer), write the file by hand. Name it with three lowercase words and `.md`, in `.launchset/`:
+If `npx` can't run it (the package is private, so npm authentication may be missing, and it needs Node 24 or newer), write the file by hand. Name it with three lowercase words and `.md`, in `.launchset/`:
 
 ```md
 ---

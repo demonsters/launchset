@@ -12,7 +12,7 @@
  *   <!-- generated:config-options:start -->
  *   <!-- generated:config-options:end -->
  *
- * Run with Node 26 (it runs TypeScript directly): `node scripts/generate.ts` writes, and
+ * Run with Node 24 (it runs TypeScript directly): `node scripts/generate.ts` writes, and
  * `node scripts/generate.ts --check` fails when a page is out of date (the docs build runs the
  * writing form first). Options without a hand-written description (scripts/descriptions.ts), and
  * descriptions of options that no longer exist, fail the run: that is how a config change shows

@@ -114,13 +114,13 @@ describe("launchset's own workflows", () => {
         const checkout = before.findIndex((s) => s.uses?.startsWith("actions/checkout@"));
         const pnpm = before.findIndex((s) => s.uses?.startsWith("pnpm/action-setup@"));
         const node = before.findIndex(
-          (s) => s.uses?.startsWith("actions/setup-node@") && s.with?.["node-version"] === 26,
+          (s) => s.uses?.startsWith("actions/setup-node@") && s.with?.["node-version"] === 24,
         );
         const install = before.findIndex((s) => s.run === "pnpm install --frozen-lockfile");
         const build = before.findIndex((s) => s.run === "pnpm build:action");
         expect(checkout, `${where}: checkout`).toBeGreaterThanOrEqual(0);
         expect(pnpm, `${where}: pnpm`).toBeGreaterThan(checkout);
-        expect(node, `${where}: node 26`).toBeGreaterThan(pnpm);
+        expect(node, `${where}: node 24`).toBeGreaterThan(pnpm);
         expect(install, `${where}: install`).toBeGreaterThan(node);
         expect(build, `${where}: build:action`).toBeGreaterThan(install);
       }
