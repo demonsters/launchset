@@ -20,6 +20,7 @@ import {
 import { lineOf } from "../core/text.ts";
 import { GITLAB_CUSTOM_TAGS, GitLabReference } from "../templates/gitlab-yaml.ts";
 import { absolute, globRel, joinRel, normalizeRel, readTextOrNull } from "./fs.ts";
+import type { DetectedGitLabJob, Evidence } from "./types.ts";
 import {
   pairOf,
   parseDockerCommands,
@@ -919,4 +920,46 @@ export function tagRuleEdit(
     return { seq, items, others: others.map((o) => `only: ${o}`), key: "only" };
   }
   return undefined;
+}
+
+/** PowerShell in a script: its variables, cmdlets and parameters. */
+const POWERSHELL =
+  /\$env:|\b(?:Invoke-(?:WebRequest|RestMethod|Expression)|Get-(?:CimInstance|Command|ChildItem|Content)|Start-(?:Process|Sleep)|Stop-Process|Set-(?:Location|Content)|Write-(?:Host|Error|Output)|Test-Path|Remove-Item|New-Item|Copy-Item|Join-Path|Resolve-Path)\b|\s-ErrorAction\b/;
+
+export const flatStrings = (value: unknown): string[] => {
+  if (typeof value === "string") return [value];
+  if (Array.isArray(value)) return value.flatMap(flatStrings);
+  if (value && typeof value === "object") return Object.values(value).flatMap(flatStrings);
+  return [];
+};
+
+/** The shell of a job's runner, from its scripts (through `extends`) and runner tags. */
+export function gitlabJobShell(
+  ci: GitLabCi,
+  job: GitLabJob,
+): Pick<DetectedGitLabJob, "shell" | "shellEvidence"> {
+  const evidence: Evidence[] = [];
+  for (const key of ["hooks", "before_script", "script"]) {
+    const found = effectiveFrom(ci, job, key);
+    if (!found) continue;
+    const line = flatStrings(found.value).find((l) => POWERSHELL.test(l));
+    if (line === undefined) continue;
+    const match = POWERSHELL.exec(line)?.[0]?.trim();
+    evidence.push({
+      path: found.job.path,
+      line: found.job.line,
+      note: `${key} of ${found.job === job ? "the job" : found.job.name} is PowerShell (${match})`,
+    });
+    break;
+  }
+  const tags = effectiveFrom(ci, job, "tags");
+  const windows = flatStrings(tags?.value).find((t) => /windows|\bwin(?:\d+)?\b/i.test(t));
+  if (tags && windows) {
+    evidence.push({
+      path: tags.job.path,
+      line: tags.job.line,
+      note: `${tags.job === job ? "the job runs" : `${tags.job.name} runs`} on runners tagged ${windows}`,
+    });
+  }
+  return { shell: evidence.length > 0 ? "powershell" : "sh", shellEvidence: evidence };
 }

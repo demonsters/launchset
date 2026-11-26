@@ -13,10 +13,14 @@
  * their own. Leading keywords (`if`, `then`, `do`, `!`), variable assignments, wrappers (`sudo`,
  * `env`, `time`) and package runners (`npx`, `pnpm dlx`, `bun x`, `corepack`) are dropped, so
  * every pattern can match at the start of a command. So are `xcrun` and `bundle exec`.
+ * The script of `sh -c '…'` (also `bash -ec`, `zsh -c`) runs too: its commands are read in place
+ * of the `sh -c` command.
  */
 
 /** Stands in for whitespace inside a quoted argument, so the argument stays one word. */
 export const QUOTED_SPACE = "␣";
+/** Stands in for a line break inside a quoted argument (a multi-line `sh -c '…'` script). */
+export const QUOTED_NEWLINE = "␤";
 
 export interface SimpleCommand {
   /** Its words, quotes removed (whitespace inside a quoted word is {@link QUOTED_SPACE}). */
@@ -47,7 +51,31 @@ function closing(s: string, open: number): number {
   return s.length;
 }
 
-const quoted = (body: string) => body.replace(/\s/g, QUOTED_SPACE);
+const quoted = (body: string) =>
+  body.replace(/\r?\n/g, QUOTED_NEWLINE).replace(/\s/g, QUOTED_SPACE);
+
+/** A quoted word's text as written (see {@link quoted}). */
+export const unquoted = (word: string) =>
+  word.replaceAll(QUOTED_NEWLINE, "\n").replaceAll(QUOTED_SPACE, " ");
+
+const SHELLS = /^(?:sh|bash|zsh|dash|ksh)$/;
+
+/** The script of `sh -c 'script' …` (options may come first: `bash -e -o pipefail -c`). */
+function inlineScript(words: string[]): string | undefined {
+  if (!SHELLS.test((words[0] ?? "").replace(/^.*\//, ""))) return undefined;
+  let command = false;
+  for (let i = 1; i < words.length; i++) {
+    const w = words[i] as string;
+    if (/^[-+]o$/.test(w)) {
+      i++;
+    } else if (/^-[A-Za-z]+$/.test(w)) {
+      if (w.includes("c")) command = true;
+    } else if (!/^(?:--[\w-]+|\+[A-Za-z]+)$/.test(w)) {
+      return command ? unquoted(w) : undefined;
+    }
+  }
+  return undefined;
+}
 
 /** Split `script` into raw simple commands (text), commands in substitutions included. */
 function scan(s: string, out: string[]): void {
@@ -258,6 +286,11 @@ export function simpleCommands(script: string): SimpleCommand[] {
   for (const text of raw) {
     const words = strip(text.split(/\s+/).filter((w) => w !== ""));
     if (words.length === 0) continue;
+    const inline = inlineScript(words);
+    if (inline !== undefined) {
+      out.push(...simpleCommands(inline));
+      continue;
+    }
     const head = (words[0] as string).replace(/^.*\//, "");
     out.push({ words, text: [head, ...words.slice(1)].join(" ") });
   }
@@ -321,5 +354,178 @@ export function runsFile(script: string, path: string, dir = "."): boolean {
     const program = head.replace(/^.*\//, "");
     if (!RUNNERS.has(program) && !/^python\d/.test(program)) return false;
     return rest.some((w) => names.has(plain(w)));
+  });
+}
+
+/** Words that open a compound command, and the word that closes each. */
+const OPENS: Record<string, string> = {
+  if: "fi",
+  while: "done",
+  until: "done",
+  for: "done",
+  select: "done",
+  case: "esac",
+  "{": "}",
+};
+/** Openers whose next word is a command (`if cmd`), not a name or a word list (`for x in`). */
+const OPENS_COMMAND = new Set(["if", "while", "until", "{"]);
+/** Words after which a command starts. */
+const THEN = new Set(["then", "do", "else", "elif", "!"]);
+
+/** The end of the shell word starting at `i` (quotes, `$(…)` and backticks inside included). */
+function wordEnd(s: string, i: number): number {
+  let j = i;
+  while (j < s.length) {
+    const c = s[j] as string;
+    if (c === "\\") {
+      j += 2;
+    } else if (c === "'") {
+      const end = s.indexOf("'", j + 1);
+      j = end < 0 ? s.length : end + 1;
+    } else if (c === '"') {
+      let k = j + 1;
+      while (k < s.length && s[k] !== '"') {
+        if (s[k] === "\\") k++;
+        else if (s[k] === "$" && s[k + 1] === "(") k = closing(s, k + 1);
+        else if (s[k] === "`") {
+          const end = s.indexOf("`", k + 1);
+          k = end < 0 ? s.length : end;
+        }
+        k++;
+      }
+      j = k + 1;
+    } else if (c === "$" && s[j + 1] === "(") {
+      j = closing(s, j + 1) + 1;
+    } else if (c === "`") {
+      const end = s.indexOf("`", j + 1);
+      j = end < 0 ? s.length : end + 1;
+    } else if (c === "&" && (s[j - 1] === ">" || s[j - 1] === "<" || s[j + 1] === ">")) {
+      // `>&2`, `&>file`, `2>&1`: redirections, not separators.
+      j++;
+    } else if (/[\s;&|()]/.test(c)) {
+      break;
+    } else {
+      j++;
+    }
+  }
+  return j;
+}
+
+/**
+ * A one-line script (a `package.json` script) split into its top-level commands, with the
+ * operators between them: `ops[i]` (`&&`, `||`, `;`, `|` or `&`) joins `parts[i]` and
+ * `parts[i + 1]`. Quoted strings, `$(…)`, backticks, `( … )` groups and compound commands
+ * (`if … fi`, loops, `case … esac`, `{ …; }`) stay inside one part, so `sh -c 'a && b'` and
+ * `if a; then b; fi` are one command each.
+ */
+export function topLevelCommands(script: string): { parts: string[]; ops: string[] } {
+  const parts: string[] = [];
+  const ops: string[] = [];
+  /** Open groups and compound commands: `(`, or the word that closes one (`fi`, `done`). */
+  const stack: string[] = [];
+  let start = 0;
+  let i = 0;
+  let commandStart = true;
+  while (i < script.length) {
+    const c = script[i] as string;
+    const next = script[i + 1];
+    if (/\s/.test(c) && c !== "\n") {
+      i++;
+      continue;
+    }
+    const two = c + (next ?? "");
+    const op =
+      two === "&&" || two === "||" || two === ";;"
+        ? two
+        : c === "&" || c === "|" || c === ";" || c === "\n"
+          ? c
+          : undefined;
+    if (op !== undefined) {
+      if (stack.length === 0 && op !== ";;") {
+        parts.push(script.slice(start, i).trim());
+        ops.push(op === "\n" ? ";" : op);
+        start = i + op.length;
+      }
+      i += op.length;
+      commandStart = true;
+      continue;
+    }
+    if (c === "(") {
+      stack.push(")");
+      i++;
+      commandStart = true;
+      continue;
+    }
+    if (c === ")") {
+      // In a `case`, `)` ends a pattern and a command follows.
+      if (stack[stack.length - 1] === ")") stack.pop();
+      i++;
+      commandStart = stack[stack.length - 1] === "esac";
+      continue;
+    }
+    if (c === "#") {
+      const nl = script.indexOf("\n", i);
+      if (stack.length === 0) {
+        parts.push(script.slice(start, i).trim());
+        start = nl < 0 ? script.length : nl;
+      }
+      i = nl < 0 ? script.length : nl;
+      continue;
+    }
+    const end = Math.max(wordEnd(script, i), i + 1);
+    const word = script.slice(i, end);
+    if (commandStart && OPENS[word] !== undefined) {
+      stack.push(OPENS[word] as string);
+      commandStart = OPENS_COMMAND.has(word);
+    } else if (commandStart && THEN.has(word)) {
+      commandStart = true;
+    } else if (commandStart && word === stack[stack.length - 1]) {
+      stack.pop();
+      commandStart = false;
+    } else {
+      commandStart = false;
+    }
+    i = end;
+  }
+  if (start < script.length || parts.length === 0) parts.push(script.slice(start).trim());
+  else if (ops.length === parts.length) parts.push("");
+  // A trailing `;` or `&` leaves an empty last part.
+  while (parts.length > 1 && parts[parts.length - 1] === "") {
+    parts.pop();
+    ops.pop();
+  }
+  return { parts, ops };
+}
+
+const MANAGERS = /^(?:npm|pnpm|yarn|bun)$/;
+/** Options of the package managers that take a value (`--filter app`, `npm -w app`). */
+const VALUE_OPTIONS = /^(?:--filter|-F|-C|--dir|--prefix|--cwd)$/;
+const NPM_VALUE_OPTIONS = /^(?:-w|--workspace)$/;
+
+/**
+ * True when `script` runs the `package.json` script `name` by name: `npm run name`,
+ * `pnpm name`, `yarn run name`, `bun run name` (npm runs only `start`, `test`, `stop` and
+ * `restart` without `run`).
+ */
+export function runsScript(script: string, name: string): boolean {
+  return simpleCommands(script).some(({ words }) => {
+    const [head, ...rest] = words;
+    if (head === undefined || !MANAGERS.test(head)) return false;
+    let i = 0;
+    const options = () => {
+      while (rest[i]?.startsWith("-")) {
+        const w = rest[i] as string;
+        i += VALUE_OPTIONS.test(w) || (head === "npm" && NPM_VALUE_OPTIONS.test(w)) ? 2 : 1;
+      }
+    };
+    options();
+    let explicit = false;
+    if (rest[i] === "run" || rest[i] === "run-script") {
+      i++;
+      explicit = true;
+      options();
+    }
+    if (rest[i] !== name) return false;
+    return explicit || head !== "npm" || /^(?:start|test|stop|restart)$/.test(name);
   });
 }

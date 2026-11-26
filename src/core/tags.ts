@@ -45,12 +45,17 @@ function templateMatcher(template: string, target?: string): RegExp {
   if (!regex) {
     const targetSource =
       target === undefined ? `(?<target>${TARGET_SOURCE})` : `(?<target>${escapeRegExp(target)})`;
+    // A placeholder that comes back (`release/{version}/v{version}`) must repeat the same
+    // value: a second named group with the same name isn't valid, so it's a backreference.
+    const seen = new Set<string>();
     const source = template
       .split(/(\{version\}|\{target\})/)
       .map((part) => {
-        if (part === "{version}") return `(?<version>${VERSION_SOURCE})`;
-        if (part === "{target}") return targetSource;
-        return escapeRegExp(part);
+        if (part !== "{version}" && part !== "{target}") return escapeRegExp(part);
+        const name = part.slice(1, -1);
+        if (seen.has(name)) return `\\k<${name}>`;
+        seen.add(name);
+        return name === "version" ? `(?<version>${VERSION_SOURCE})` : targetSource;
       })
       .join("");
     regex = new RegExp(`^${source}$`);

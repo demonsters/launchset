@@ -174,10 +174,10 @@ For each, choose:
 | Action | What it does |
 | --- | --- |
 | `remove` | Deletes the workflow or script file. |
-| `disable` | Removes only the conflicting trigger or step, or only the conflicting commands of a `run:` block or script. A script that does more than release keeps running: its conflicting lines are commented out, and one inside an `if`, a loop or an `&&` chain becomes the no-op `:`, so the script stays valid. Never deletes a file. Every other byte stays identical. |
+| `disable` | Removes only the conflicting trigger or step, or only the conflicting commands of a `run:` block or script. A script that does more than release keeps running: its conflicting lines are commented out, and one inside an `if`, a loop or an `&&` chain becomes the no-op `:`, so the script stays valid. In a `package.json` script it drops only the conflicting commands joined with `&&` or `;`, so `tsc; semantic-release` becomes `tsc`. Never deletes a file. Every other byte stays identical. |
 | `keep` | Does nothing. |
 
-The default with `--yes` is `disable`, and a list of the changes is printed. init never leaves a conflict in place silently. Where no minimal edit exists, the only choices are `keep` and `remove`, and the default is `keep` (marked `ask`).
+The default with `--yes` is `disable`, and a list of the changes is printed. init never leaves a conflict in place silently. Where no minimal edit exists, the only choices are `keep` and `remove`, and the default is `keep` (marked `ask`). For example, a `package.json` script whose conflicting command is joined to the rest with `||`, a pipe or `&`, or shares an `sh -c '…'`, a `( … )` group, an `if`, a loop or a `case` with other work.
 
 After `disable`, check what is left in the file. Example with a tag trigger and a Changesets step:
 
@@ -195,7 +195,9 @@ After `disable`, check what is left in the file. Example with a tag trigger and 
 -          publish: npx changeset publish
 ```
 
-A workflow with no trigger left gets `workflow_dispatch`. A removed step that other steps refer to (`steps.<id>...`, `needs.<job>...`) is listed as a manual follow-up.
+A workflow with no trigger left gets `workflow_dispatch`. A removed step that other steps refer to (`steps.<id>...`, `needs.<job>...`) is listed as a manual follow-up. So is a place that still runs a removed `package.json` script by name (`npm run release` in a workflow, GitLab job or another script), because that call now fails.
+
+init edits a step in the shell it runs in: the step's `shell:`, else `defaults.run.shell`, else the runner's default (pwsh on Windows, bash elsewhere). On GitLab, a job whose runner is tagged `windows` or whose script is PowerShell runs in PowerShell. A command inside a chain or a block becomes the no-op `:` in bash and `$null` in PowerShell. Where there's no safe no-op, init only takes out whole lines and otherwise leaves the step to you: in `cmd`, in a matrix of Windows and other runners, and next to a PowerShell line continuation (`` ` ``). A step in another language (`shell: python`, `node`) is read like a script file, and init doesn't edit it.
 
 Then **move the team's own build steps** into `launchset-release.yml`: the `docker/build-push-action` settings (context, file, platforms), signing, fastlane, deploy steps. Keep secrets and environments as they are.
 

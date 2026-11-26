@@ -29,13 +29,22 @@ import {
   type GitLabScriptItem,
   gitlabCiOf,
   gitlabDockerBuilds,
+  gitlabJobShell,
   referencesTo,
   referencingJobs,
   runsOnTags,
   tagRuleEdit,
   usersOf,
 } from "./gitlab-scan.ts";
-import { QUOTED_SPACE, runsFile, simpleCommands } from "./shell.ts";
+import {
+  QUOTED_NEWLINE,
+  QUOTED_SPACE,
+  runsFile,
+  runsScript,
+  simpleCommands,
+  topLevelCommands,
+  unquoted,
+} from "./shell.ts";
 import { latestFlagRange } from "./text-edit.ts";
 import type { Evidence, MachineryAction, MachineryItem, MachineryKind } from "./types.ts";
 import {
@@ -45,6 +54,7 @@ import {
   pairOf,
   type RunCommand,
   runCommands,
+  runLines,
   type ScalarRef,
   shellCommands,
   tagGated,
@@ -85,9 +95,16 @@ export type GitLabOp =
   /** Comment out a script line (a plain sequence item). */
   | { op: "comment-item"; item: GitLabScriptItem; inSeq: boolean; reason: string }
   /** Replace a script line with the no-op `":"` (the script would be empty otherwise). */
-  | { op: "noop-item"; item: GitLabScriptItem; inSeq: boolean; reason: string }
+  | { op: "noop-item"; item: GitLabScriptItem; inSeq: boolean; reason: string; noop?: string }
   /** Comment out (or neutralize) commands inside a block scalar script item. */
-  | { op: "commands"; item: GitLabScriptItem; commands: RunCommand[]; reason: string }
+  | {
+      op: "commands";
+      item: GitLabScriptItem;
+      commands: RunCommand[];
+      reason: string;
+      /** The shell's no-op: `:` (default), or `$null` in PowerShell. */
+      noop?: string;
+    }
   /** A key of a job, e.g. `release:`. */
   | { op: "remove-pair"; pair: Pair }
   /** A `-t <image>:latest` flag of a build that has other tags. */
@@ -106,8 +123,10 @@ export type Edit =
       /** The package.json. */
       path: string;
       script: string;
-      /** `&&`-separated parts to drop; undefined drops the whole entry. */
+      /** Top-level commands to drop (see `topLevelCommands`); undefined drops the whole entry. */
       segments?: string[];
+      /** Places that run the script by name, to check when the whole entry goes. */
+      callers?: ScriptCaller[];
     }
   /**
    * Comment out lines (Ruby/shell `#`), e.g. fastlane version actions. A line in `noops` (a
@@ -121,6 +140,16 @@ export type Edit =
       reason: string;
       noops?: { line: number; trailingOp?: string }[];
     };
+
+/** A place that runs a `package.json` script by name (`npm run release`). */
+export interface ScriptCaller {
+  path: string;
+  line: number;
+  /** What runs it, for the follow-up (`script "release"`, `step 2 in job "ship"`). */
+  what: string;
+  /** How to tell it still runs the script after the edits. */
+  check: { kind: "script"; script: string } | { kind: "line"; text: string };
+}
 
 export interface MachineryFinding {
   item: MachineryItem;
@@ -217,6 +246,10 @@ const VERSION_KEY_READS = new RegExp(
 const VERSION_WRITE_COMMANDS = [
   /^agvtool\s+(?:new-version|new-marketing-version|next-version|bump)\b/,
   /^PlistBuddy\b.*\bSet[\s\u2423]*:?[\s\u2423]*(?:CFBundleVersion|CFBundleShortVersionString)\b/,
+  // fastlane's version actions run from the command line (`fastlane run increment_build_number`),
+  // unless they write launchset's numbers.
+  /^fastlane\s+run\s+(?:increment_build_number|increment_version_number|increment_version_code|android_set_version_code|android_set_version_name|increment_version_name)\b(?!.*LAUNCHSET_)/,
+  /^fastlane\s+run\s+set_info_plist_value\b(?!.*LAUNCHSET_).*CFBundle(?:ShortVersionString|Version)\b/,
 ];
 /** `sed -i` / `perl -pi`: edits a file in place. */
 const IN_PLACE = /^(?:sed|perl)\b.*\s(?:-[A-Za-z]*i|--in-place)/;
@@ -286,7 +319,8 @@ const NOT_PUBLISHING = /\s(?:--dry-run|--help|-h|--snapshot|--version)\b/;
 export function publishCommand(script: string): string | undefined {
   return simpleCommands(script)
     .find((c) => PUBLISH_COMMANDS.some((p) => p.test(c.text)) && !NOT_PUBLISHING.test(c.text))
-    ?.text.replaceAll(QUOTED_SPACE, " ");
+    ?.text.replaceAll(QUOTED_NEWLINE, " ")
+    .replaceAll(QUOTED_SPACE, " ");
 }
 
 const PUBLISH_ACTION =
@@ -726,7 +760,17 @@ function commandEdits(
   if (commands.length === all.length) {
     return [workflowEdit(workflow, { op: "remove-step", job, step })];
   }
-  if (commands.some((c) => c.removal === null)) return undefined;
+  if (commands.some((c) => c.removal === null) || step.shell === "other") return undefined;
+  // The no-op that replaces a command inside a chain or block exists in sh (`:`) and
+  // PowerShell (`$null`), not in cmd, and a mixed matrix would need both.
+  const noop = step.shell === "posix" || step.shell === "powershell";
+  if (!noop && commands.some((c) => c.removal === "neutralize")) return undefined;
+  if (
+    (step.shell === "powershell" || step.shell === "mixed") &&
+    continuesWithBacktick(commands, all)
+  ) {
+    return undefined;
+  }
   const del = commands.filter((c) => c.removal === "delete");
   const neutral = commands.filter((c) => c.removal === "neutralize");
   const edits: Edit[] = [];
@@ -738,6 +782,16 @@ function commandEdits(
     );
   }
   return edits;
+}
+
+/**
+ * PowerShell continues a line with a backtick, which the shell reader doesn't know: true when
+ * one of `commands` (in `all`) ends with one, or follows a command that does, so it may span more
+ * lines than were found.
+ */
+function continuesWithBacktick(commands: RunCommand[], all: RunCommand[]): boolean {
+  const continues = (c: RunCommand | undefined) => /`\s*$/.test(c?.lines.at(-1)?.text ?? "");
+  return commands.some((c) => continues(c) || continues(all[all.indexOf(c) - 1]));
 }
 
 function commandEffect(edits: Edit[], step: WorkflowStep): string {
@@ -770,6 +824,35 @@ function stepReferences(workflow: Workflow, job: WorkflowJob, step: WorkflowStep
     });
   }
   return found;
+}
+
+/**
+ * A `run` step in another language (`shell: python`, `shell: node {0}`): its release commands
+ * are found in its strings, like a script file's, and init doesn't edit it.
+ */
+function otherShellStep(
+  workflow: Workflow,
+  job: WorkflowJob,
+  step: WorkflowStep,
+  draftFor: (job: WorkflowJob, step: WorkflowStep) => Draft,
+) {
+  const run = step.run as ScalarRef;
+  const js = /^(?:node|deno|bun|tsx)$/.test(step.shellName.replace(/^.*[\\/]/, ""));
+  const scan = scanScriptFile(run.value, js ? "step.js" : "step.py");
+  if (scan.kinds.length === 0) return;
+  const d = draftFor(job, step);
+  for (const k of scan.kinds) addKind(d, k);
+  const lines = runLines(run, workflow.text);
+  for (const n of scan.lines) {
+    const line = lines[n - 1];
+    d.evidence.push({
+      path: workflow.path,
+      line: line?.number ?? step.line,
+      note: `runs \`${(line?.text ?? run.value).trim().slice(0, 80)}\` (${step.shellName})`,
+    });
+  }
+  d.disable = undefined;
+  d.why = `the step runs in ${step.shellName}, not a shell, so init can't take single commands out of it; edit it by hand`;
 }
 
 function stepDrafts(workflow: Workflow, builds: DockerBuild[], scriptPaths: string[]): Draft[] {
@@ -818,7 +901,11 @@ function stepDrafts(workflow: Workflow, builds: DockerBuild[], scriptPaths: stri
         continue;
       }
       if (!step.run) continue;
-      const wd = step.workingDirectory ? normalizeRel(step.workingDirectory) : ".";
+      if (step.shell === "other") {
+        otherShellStep(workflow, job, step, draftFor);
+        continue;
+      }
+      const wd = step.runDirectory ? normalizeRel(step.runDirectory) : ".";
       const matched: RunCommand[] = [];
       const all = runCommands(step.run, workflow.text);
       const kindsFound: MachineryKind[] = [];
@@ -854,7 +941,9 @@ function stepDrafts(workflow: Workflow, builds: DockerBuild[], scriptPaths: stri
         } else {
           d.disable = undefined;
           d.why =
-            "a conflicting command is part of a heredoc or a compound line (if/case on one line); edit it by hand";
+            step.shell === "cmd" || step.shell === "mixed"
+              ? `a conflicting command is part of a chain or a block, and the step runs in ${step.shellName}, which has no no-op init can put in its place; edit it by hand`
+              : "a conflicting command is part of a heredoc or a compound line (if/case on one line); edit it by hand";
         }
       }
     }
@@ -1127,6 +1216,8 @@ function gitlabJobDraft(
     );
   }
 
+  // A PowerShell runner has no `:`; `$null` is its no-op statement.
+  const powershell = gitlabJobShell(ci, job).shell === "powershell";
   // Lines to comment out (plain items), commands to disable inside block scalars.
   const commented = new Set<GitLabScriptItem>();
   const inBlock = new Map<GitLabScriptItem, RunCommand[]>();
@@ -1142,6 +1233,9 @@ function gitlabJobDraft(
     }
     if (commands.some((c) => c.removal === null)) {
       return "a conflicting command is part of a heredoc or a compound line (if/case on one line); edit it by hand";
+    }
+    if (powershell && continuesWithBacktick(commands, item.commands)) {
+      return "a conflicting command is next to a PowerShell line continuation (`); edit it by hand";
     }
     const list = inBlock.get(item) ?? [];
     for (const c of commands) if (!list.includes(c)) list.push(c);
@@ -1196,6 +1290,7 @@ function gitlabJobDraft(
         item,
         inSeq: s.seq !== undefined,
         reason,
+        ...(powershell ? { noop: "$null" } : {}),
       });
     });
     if (s.seq === undefined && !singleLine(gone[0] as GitLabScriptItem, file.text)) {
@@ -1203,11 +1298,13 @@ function gitlabJobDraft(
     }
     parts.push(
       left === 0
-        ? `turns ${s.key} into the no-op ":" (# launchset: disabled — …)`
+        ? `turns ${s.key} into the no-op ${powershell ? "$null" : '":"'} (# launchset: disabled — …)`
         : `comments out the conflicting ${s.key} ${gone.length === 1 ? "line" : "lines"} (# launchset: disabled — …)`,
     );
   }
-  for (const [item, commands] of inBlock) ops.push({ op: "commands", item, commands, reason });
+  for (const [item, commands] of inBlock) {
+    ops.push({ op: "commands", item, commands, reason, ...(powershell ? { noop: "$null" } : {}) });
+  }
   if (inBlock.size > 0) {
     parts.push("disables the conflicting commands in its script (# launchset: disabled — …)");
   }
@@ -1308,7 +1405,18 @@ function gitlabDrafts(ci: GitLabCi, builds: readonly GitLabDockerBuild[]): Draft
 
 /** `&&`-separated parts of a script command. */
 export function scriptSegments(command: string): string[] {
-  return command.split(/\s*&&\s*/).filter((s) => s.trim() !== "");
+  return topLevelCommands(command).parts.filter((s) => s !== "");
+}
+
+/**
+ * True when the top-level commands at `indexes` can be dropped from a script without changing
+ * what the rest does: only `&&` and `;` join them to their neighbours (not `||`, a pipe or `&`).
+ */
+export function droppable(command: string, indexes: number[]): boolean {
+  const { ops } = topLevelCommands(command);
+  return indexes.every((i) =>
+    [ops[i - 1], ops[i]].every((op) => op === undefined || op === "&&" || op === ";"),
+  );
 }
 
 function referencesFile(segment: string, file: string, packageDir: string): boolean {
@@ -1316,45 +1424,150 @@ function referencesFile(segment: string, file: string, packageDir: string): bool
   return runsFile(segment, file, packageDir);
 }
 
-function scriptDrafts(pkg: PackageScripts, scriptPaths: string[]): Draft[] {
+/**
+ * Where the script `name` of `pkg` is run by name: the package's other scripts, and workflow
+ * steps and GitLab jobs that run in the package's directory.
+ */
+function scriptCallers(
+  pkg: PackageScripts,
+  name: string,
+  input: MachineryInput,
+  gitlab: GitLabCi | undefined,
+): ScriptCaller[] {
+  const callers: ScriptCaller[] = [];
+  for (const [other, command] of Object.entries(pkg.scripts)) {
+    if (other !== name && runsScript(command, name)) {
+      callers.push({
+        path: pkg.path,
+        line: pkg.lines[other] ?? 1,
+        what: `the script "${other}"`,
+        check: { kind: "script", script: other },
+      });
+    }
+  }
+  const dir = normalizeRel(pkg.dir);
+  const commandCallers = (path: string, what: string, commands: RunCommand[]) => {
+    for (const c of commands) {
+      const first = c.lines[0];
+      if (first && runsScript(c.command, name)) {
+        callers.push({
+          path,
+          line: first.number,
+          what,
+          check: { kind: "line", text: first.text.trim() },
+        });
+      }
+    }
+  };
+  for (const workflow of input.workflows) {
+    for (const job of workflow.jobs) {
+      for (const step of job.steps) {
+        const wd = step.runDirectory ? normalizeRel(step.runDirectory) : ".";
+        if (step.run && wd === dir) {
+          commandCallers(
+            workflow.path,
+            `${step.label} in job "${job.id}"`,
+            runCommands(step.run, workflow.text),
+          );
+        }
+      }
+    }
+  }
+  if (gitlab && dir === ".") {
+    for (const job of gitlab.jobs.values()) {
+      for (const script of job.scripts) {
+        for (const item of script.items)
+          commandCallers(job.path, `job "${job.name}"`, item.commands);
+      }
+    }
+  }
+  return callers;
+}
+
+/** The draft's `check …` note for callers of a removed script, and evidence for each. */
+function noteCallers(draft: Draft, callers: ScriptCaller[], name: string) {
+  if (callers.length === 0) return;
+  for (const c of callers) {
+    draft.evidence.push({
+      path: c.path,
+      line: c.line,
+      note: `${c.what} runs the script "${name}"`,
+    });
+  }
+  const where = callers.map((c) => `${c.path}:${c.line}`).join(", ");
+  for (const action of ["disable", "remove"] as const) {
+    if (draft.effects[action]?.startsWith(`removes the script "${name}"`)) {
+      draft.effects[action] =
+        `${draft.effects[action]} (check ${where}: ${callers.length === 1 ? "it runs" : "they run"} the script by name)`;
+    }
+  }
+}
+
+/** True when every simple command of a top-level command is machinery or setup. */
+function onlyMachineryOrSetup(part: string): boolean {
+  return simpleCommands(part).every(
+    (c) => simpleCommandKinds(c.text).length > 0 || SETUP_COMMAND.test(c.text),
+  );
+}
+
+function scriptDrafts(
+  pkg: PackageScripts,
+  scriptPaths: string[],
+  input: MachineryInput,
+  gitlab: GitLabCi | undefined,
+): Draft[] {
   const drafts: Draft[] = [];
   for (const [name, command] of Object.entries(pkg.scripts)) {
-    const segments = scriptSegments(command);
-    const matched: string[] = [];
+    const { parts } = topLevelCommands(command);
+    const matched: number[] = [];
     const kinds: MachineryKind[] = [];
-    for (const segment of segments) {
-      if (scriptPaths.some((p) => referencesFile(segment, p, pkg.dir))) continue;
-      const found = commandKinds(segment);
-      if (/@changesets\/write/.test(segment)) found.push("changesets-write");
-      if (found.length === 0) continue;
-      matched.push(segment);
+    /** A conflicting command shares a part (`sh -c '…'`, `( … )`) with other work. */
+    let mixed = false;
+    parts.forEach((part, i) => {
+      if (part === "") return;
+      if (scriptPaths.some((p) => referencesFile(part, p, pkg.dir))) return;
+      const found = commandKinds(part);
+      const writesChangesets = /@changesets\/write/.test(part);
+      if (writesChangesets) found.push("changesets-write");
+      if (found.length === 0) return;
+      matched.push(i);
       for (const k of found) if (!kinds.includes(k)) kinds.push(k);
-    }
+      if (!writesChangesets && !onlyMachineryOrSetup(part)) mixed = true;
+    });
     if (matched.length === 0) continue;
     const line = pkg.lines[name] ?? 1;
-    const everything = matched.length === segments.length;
-    drafts.push({
+    const everything =
+      !mixed && parts.every((p, i) => p === "" || matched.includes(i) || onlyMachineryOrSetup(p));
+    const callers = scriptCallers(pkg, name, input, gitlab);
+    const whole: Edit = { kind: "script", path: pkg.path, script: name, callers };
+    const segments = matched.map((i) => parts[i] as string);
+    const draft: Draft = {
       kinds,
       path: pkg.path,
       line,
       what: `script "${name}": ${command}`,
-      disable: [
-        everything
-          ? { kind: "script", path: pkg.path, script: name }
-          : { kind: "script", path: pkg.path, script: name, segments: matched },
-      ],
-      remove: [{ kind: "script", path: pkg.path, script: name }],
+      remove: [whole],
       effects: {
-        disable: everything
-          ? `removes the script "${name}"`
-          : `removes ${matched.map((m) => `\`${m}\``).join(", ")} from the script "${name}"`,
         remove: `removes the script "${name}"`,
         keep: "leaves it as is",
       },
       evidence: [
-        { path: pkg.path, line, note: `script "${name}" runs \`${matched.join(" && ")}\`` },
+        { path: pkg.path, line, note: `script "${name}" runs \`${segments.join("`, `")}\`` },
       ],
-    });
+    };
+    if (everything) {
+      draft.disable = [whole];
+      draft.effects.disable = `removes the script "${name}"`;
+    } else if (mixed) {
+      draft.why = `a conflicting command shares a subshell or \`sh -c\` with other work in the script "${name}"; edit it by hand`;
+    } else if (!droppable(command, matched)) {
+      draft.why = `a conflicting command is joined to the rest of the script "${name}" with \`||\`, a pipe or \`&\`; edit it by hand`;
+    } else {
+      draft.disable = [{ kind: "script", path: pkg.path, script: name, segments }];
+      draft.effects.disable = `removes ${segments.map((m) => `\`${m}\``).join(", ")} from the script "${name}"`;
+    }
+    noteCallers(draft, callers, name);
+    drafts.push(draft);
   }
   return drafts;
 }
@@ -1380,6 +1593,7 @@ const MACHINERY_NAME =
 function scriptFileDraft(
   file: { path: string; text: string },
   input: MachineryInput,
+  gitlab: GitLabCi | undefined,
 ): Draft | undefined {
   const scan = scanScriptFile(file.text, file.path);
   const { kinds, line } = scan;
@@ -1387,16 +1601,46 @@ function scriptFileDraft(
   const references: Edit[] = [];
   let unsafe = false;
   const evidence: Evidence[] = [{ path: file.path, line, note: "the script itself" }];
+  const callers: { callers: ScriptCaller[]; name: string }[] = [];
   for (const pkg of input.packages) {
     for (const [name, command] of Object.entries(pkg.scripts)) {
-      const segments = scriptSegments(command);
-      const hits = segments.filter((s) => referencesFile(s, file.path, pkg.dir));
-      if (hits.length === 0) continue;
-      references.push(
-        hits.length === segments.length
-          ? { kind: "script", path: pkg.path, script: name }
-          : { kind: "script", path: pkg.path, script: name, segments: hits },
+      const { parts } = topLevelCommands(command);
+      const hits = parts.flatMap((s, i) =>
+        s !== "" && referencesFile(s, file.path, pkg.dir) ? [i] : [],
       );
+      if (hits.length === 0) continue;
+      // A part that runs the file next to other work (`sh -c 'bash tag.sh && npm run deploy'`)
+      // can't go without that work.
+      if (
+        hits.some((i) =>
+          simpleCommands(parts[i] as string).some(
+            (c) => !runsFile(unquoted(c.text), file.path, pkg.dir) && !SETUP_COMMAND.test(c.text),
+          ),
+        )
+      ) {
+        unsafe = true;
+        evidence.push({
+          path: pkg.path,
+          line: pkg.lines[name] ?? 1,
+          note: `script "${name}" runs it`,
+        });
+        continue;
+      }
+      const rest = parts.filter((s, i) => s !== "" && !hits.includes(i));
+      if (rest.length === 0) {
+        const found = scriptCallers(pkg, name, input, gitlab);
+        if (found.length > 0) callers.push({ callers: found, name });
+        references.push({ kind: "script", path: pkg.path, script: name, callers: found });
+      } else if (droppable(command, hits)) {
+        references.push({
+          kind: "script",
+          path: pkg.path,
+          script: name,
+          segments: hits.map((i) => parts[i] as string),
+        });
+      } else {
+        unsafe = true;
+      }
       evidence.push({
         path: pkg.path,
         line: pkg.lines[name] ?? 1,
@@ -1408,7 +1652,7 @@ function scriptFileDraft(
     for (const job of workflow.jobs) {
       for (const step of job.steps) {
         if (!step.run) continue;
-        const wd = step.workingDirectory ? normalizeRel(step.workingDirectory) : ".";
+        const wd = step.runDirectory ? normalizeRel(step.runDirectory) : ".";
         const all = runCommands(step.run, workflow.text);
         const hits = all.filter((c) => invokesScriptFile(c.command, [file.path], wd));
         if (hits.length === 0) continue;
@@ -1479,13 +1723,27 @@ function scriptFileDraft(
           : "the script does more than release machinery, so it can't simply stop running; edit the conflicting lines by hand";
     }
   } else if (unsafe) {
-    draft.why = "a workflow runs it inside a heredoc or a compound line; edit that by hand";
+    draft.why =
+      "a workflow or package.json script runs it inside a heredoc or a compound line, joined with `||`, a pipe or `&`, or next to other work in one `sh -c`; edit that by hand";
   } else if (references.length > 0) {
     draft.disable = references;
     draft.effects.disable = `stops running it (${evidence
       .filter((e) => e.path !== file.path)
       .map((e) => `${e.path}:${e.line}`)
       .join(", ")}); the file stays`;
+    const named = callers.flatMap((c) => c.callers);
+    if (named.length > 0) {
+      draft.effects.disable += ` (check ${named.map((c) => `${c.path}:${c.line}`).join(", ")}: ${named.length === 1 ? "it runs" : "they run"} a removed script by name)`;
+      for (const { callers: found, name } of callers) {
+        for (const c of found) {
+          draft.evidence.push({
+            path: c.path,
+            line: c.line,
+            note: `${c.what} runs the script "${name}"`,
+          });
+        }
+      }
+    }
   } else {
     draft.why = "nothing in package.json or the workflows runs it, so there is nothing to disable";
   }
@@ -1575,8 +1833,9 @@ function docsDraft(file: { path: string; text: string }): Draft | undefined {
 /** Every conflicting piece of machinery, numbered per file. */
 export function detectMachinery(input: MachineryInput): MachineryFinding[] {
   const samples = input.samples ?? DEFAULT_SAMPLES;
+  const gitlab = input.gitlabCi ?? (input.gitlab ? gitlabCiOf([input.gitlab]) : undefined);
   const scriptItems = input.scriptFiles
-    .map((f) => scriptFileDraft(f, input))
+    .map((f) => scriptFileDraft(f, input, gitlab))
     .filter((d): d is Draft => d !== undefined);
   const scriptPaths = scriptItems.map((d) => d.path);
   const drafts: Draft[] = [];
@@ -1585,12 +1844,11 @@ export function detectMachinery(input: MachineryInput): MachineryFinding[] {
     drafts.push(...triggerDrafts(workflow, samples, publishesOrDeploys(workflow, builds)));
     drafts.push(...stepDrafts(workflow, builds, scriptPaths));
   }
-  const gitlab = input.gitlabCi ?? (input.gitlab ? gitlabCiOf([input.gitlab]) : undefined);
   if (gitlab) {
     const builds = input.gitlabBuilds ?? gitlabDockerBuilds(gitlab, { gitTagPrefix: "v" });
     drafts.push(...gitlabDrafts(gitlab, builds));
   }
-  for (const pkg of input.packages) drafts.push(...scriptDrafts(pkg, scriptPaths));
+  for (const pkg of input.packages) drafts.push(...scriptDrafts(pkg, scriptPaths, input, gitlab));
   drafts.push(...scriptItems);
   for (const f of input.fastfiles) {
     const d = fastfileDraft(f);
@@ -1666,7 +1924,7 @@ export function referencedScriptFiles(packages: PackageScripts[], workflows: Wor
     for (const job of workflow.jobs) {
       for (const step of job.steps) {
         if (!step.run) continue;
-        const wd = step.workingDirectory ? normalizeRel(step.workingDirectory) : ".";
+        const wd = step.runDirectory ? normalizeRel(step.runDirectory) : ".";
         for (const m of step.run.value.matchAll(pattern)) {
           const p = normalizeRel(m[1] as string);
           if (!p.includes("node_modules/")) found.add(joinRel(wd, p));
