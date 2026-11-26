@@ -11,7 +11,8 @@ import { isMap, isScalar, isSeq, type Pair, type Scalar, type YAMLMap, type YAML
 import { escapeRegExp } from "../core/regex.ts";
 import { detectEol, indentAt, lineEnd, lineOf, lineStart } from "../core/text.ts";
 import { absolute, linesOf, readTextOrNull } from "./fs.ts";
-import type { Edit, GitLabOp, MachineryFinding } from "./machinery.ts";
+import type { Edit, GitLabOp, MachineryFinding, ScriptCaller } from "./machinery.ts";
+import { runsScript, topLevelCommands } from "./shell.ts";
 import {
   itemLines,
   latestFlagRange,
@@ -461,17 +462,21 @@ export function retireGitLab(text: string, ops: GitLabOp[]): string {
   return edits.apply(text);
 }
 
-/** Remove `&&`-separated parts from a script command, keeping the other separators as written. */
+/**
+ * Remove top-level commands (see `topLevelCommands`) from a script command. The commands left
+ * are joined with `;` where a `;` stood anywhere between them (the later one ran regardless), and
+ * with `&&` otherwise. Callers only drop commands joined with `&&` or `;` (see `droppable`).
+ */
 export function removeSegments(command: string, segments: string[]): string | null {
-  const parts = command.split(/(\s*&&\s*)/);
-  const keep: string[] = [];
-  for (let i = 0; i < parts.length; i += 2) {
-    const segment = parts[i] as string;
-    if (segments.includes(segment.trim())) continue;
-    if (keep.length > 0) keep.push(parts[i - 1] ?? " && ");
-    keep.push(segment);
-  }
-  const out = keep.join("");
+  const { parts, ops } = topLevelCommands(command);
+  let out = "";
+  let prev: number | undefined;
+  parts.forEach((part, i) => {
+    if (part === "" || segments.includes(part)) return;
+    if (prev !== undefined) out += ops.slice(prev, i).includes(";") ? "; " : " && ";
+    out += part;
+    prev = i;
+  });
   return out.trim() === "" ? null : out;
 }
 
@@ -595,11 +600,14 @@ export async function applyRetirement(
   const paths = [...new Set(edits.map((e) => e.path))];
   const changes: Change[] = [];
   const followUps: string[] = [];
+  /** Each edited file's text after the edits (`null`: deleted). */
+  const finalTexts = new Map<string, string | null>();
   for (const path of paths) {
     const forPath = edits.filter((e) => e.path === path);
     const summary = summaries.get(path) ?? [];
     const file = absolute(root, path);
     if (forPath.some((e) => e.kind === "delete-file")) {
+      finalTexts.set(path, null);
       if (options.write) await rm(file, { force: true });
       changes.push({ path, action: "deleted", summary: summary.join("; ") || "deleted" });
       continue;
@@ -632,10 +640,59 @@ export async function applyRetirement(
     const scripts = forPath.filter((e) => e.kind === "script");
     if (scripts.length > 0) text = editScripts(text, scripts, path);
 
+    finalTexts.set(path, text);
     if (text !== original) {
       if (options.write) await writeFile(file, text);
       changes.push({ path, action: "updated", summary: [...summary, ...notes].join("; ") });
     }
   }
+  followUps.push(...(await callerFollowUps(root, edits, finalTexts)));
   return { changes, followUps };
+}
+
+/**
+ * Follow-ups for the places that still run a removed `package.json` script by name after the
+ * edits (`npm run release` in a workflow, another script), since that call now fails.
+ */
+async function callerFollowUps(
+  root: string,
+  edits: Edit[],
+  finalTexts: Map<string, string | null>,
+): Promise<string[]> {
+  const textOf = async (path: string) =>
+    finalTexts.has(path)
+      ? (finalTexts.get(path) ?? null)
+      : await readTextOrNull(absolute(root, path));
+  const out: string[] = [];
+  for (const e of edits) {
+    if (e.kind !== "script" || !e.callers) continue;
+    const pkg = await textOf(e.path);
+    const tree = pkg === null ? undefined : parseTree(pkg);
+    if (tree && typeof findNodeAtLocation(tree, ["scripts", e.script])?.value === "string")
+      continue;
+    for (const caller of e.callers) {
+      if (!(await stillCalls(caller, e.script, textOf))) continue;
+      const line = `${caller.path}:${caller.line}: ${caller.what} runs the script "${e.script}", which init removed from ${e.path}. Remove that call, or point it at what should run now.`;
+      if (!out.includes(line)) out.push(line);
+    }
+  }
+  return out;
+}
+
+async function stillCalls(
+  caller: ScriptCaller,
+  script: string,
+  textOf: (path: string) => Promise<string | null>,
+): Promise<boolean> {
+  const text = await textOf(caller.path);
+  if (text === null) return false;
+  if (caller.check.kind === "line") {
+    const wanted = caller.check.text;
+    return linesOf(text).some((l) => l.text.includes(wanted));
+  }
+  const tree = parseTree(text);
+  const value = tree
+    ? findNodeAtLocation(tree, ["scripts", caller.check.script])?.value
+    : undefined;
+  return typeof value === "string" && runsScript(value, script);
 }

@@ -14,7 +14,8 @@ import {
   publishCommand,
   scriptFileKinds,
 } from "../../src/init/machinery.ts";
-import { runsFile, simpleCommands } from "../../src/init/shell.ts";
+import { removeSegments } from "../../src/init/retire.ts";
+import { runsFile, runsScript, simpleCommands, topLevelCommands } from "../../src/init/shell.ts";
 import { options, read, repoFrom } from "./helpers.ts";
 
 const GITHUB = "https://github.com/acme/app.git";
@@ -583,5 +584,162 @@ describe("10. GitLab: a regex in only: that matches release tags", () => {
       ["tag-trigger", "package-publish"],
     ]);
     expect(customTargets(json)).toEqual(["publish"]);
+  });
+});
+
+describe("11. package.json scripts are read as shell, not split at every &&", () => {
+  const ci = (cmd: string) => `on:
+  push:
+    branches: [main]
+jobs:
+  ship:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: ${cmd}
+`;
+  const scripts = (s: Record<string, string>) => pkg({ scripts: s });
+  const scriptsOf = (dir: string) =>
+    (JSON.parse(read(dir, "package.json")) as { scripts?: Record<string, string> }).scripts;
+
+  it("splits at top-level operators only", () => {
+    expect(topLevelCommands("sh -c 'git tag v1 && git push --tags'")).toEqual({
+      parts: ["sh -c 'git tag v1 && git push --tags'"],
+      ops: [],
+    });
+    expect(topLevelCommands('tsc; semantic-release || echo "a && b" | tee log 2>&1')).toEqual({
+      parts: ["tsc", "semantic-release", 'echo "a && b"', "tee log 2>&1"],
+      ops: [";", "||", "|"],
+    });
+    expect(
+      topLevelCommands("(cd app && git tag v1) && echo $(git describe && true)").parts,
+    ).toEqual(["(cd app && git tag v1)", "echo $(git describe && true)"]);
+    expect(removeSegments("tsc; semantic-release", ["semantic-release"])).toBe("tsc");
+    expect(removeSegments("a && git tag v1; c", ["git tag v1"])).toBe("a; c");
+    expect(removeSegments("a && git tag v1 && c", ["git tag v1"])).toBe("a && c");
+  });
+
+  it("a sh -c script stays whole, and goes when it only tags", async () => {
+    const dir = repo({
+      "package.json": scripts({
+        build: "tsc",
+        release: "sh -c 'git tag v$npm_package_version && git push --tags'",
+      }),
+    });
+    await runInit(options(dir, { yes: true }));
+    expect(scriptsOf(dir)).toEqual({ build: "tsc" });
+  });
+
+  it("keeps the build in `tsc; semantic-release`", async () => {
+    const dir = repo({ "package.json": scripts({ release: "tsc; semantic-release" }) });
+    await runInit(options(dir, { yes: true }));
+    expect(scriptsOf(dir)).toEqual({ release: "tsc" });
+  });
+
+  it("leaves a script alone where no clean edit exists", async () => {
+    const files = {
+      "package.json": scripts({
+        a: "pnpm build && git tag v1 || true",
+        b: "sh -c 'pnpm build && git tag v1'",
+        c: "(pnpm build && git tag v1)",
+      }),
+    };
+    const json = await detect(repo(files));
+    const items = json.detection.machinery.filter((m) => m.path === "package.json");
+    expect(items).toHaveLength(3);
+    for (const item of items) expect(item.actions).not.toContain("disable");
+    const dir = repo(files);
+    await runInit(options(dir, { yes: true }));
+    expect(scriptsOf(dir)).toEqual({
+      a: "pnpm build && git tag v1 || true",
+      b: "sh -c 'pnpm build && git tag v1'",
+      c: "(pnpm build && git tag v1)",
+    });
+  });
+
+  it("finds scripts run by name", () => {
+    expect(runsScript("npm run ship", "ship")).toBe(true);
+    expect(runsScript("pnpm --filter app ship", "ship")).toBe(true);
+    expect(runsScript("yarn ship --verbose", "ship")).toBe(true);
+    expect(runsScript("npm -w app run-script ship", "ship")).toBe(true);
+    expect(runsScript("npm ship", "ship")).toBe(false);
+    expect(runsScript("npm test", "test")).toBe(true);
+    expect(runsScript('echo "npm run ship"', "ship")).toBe(false);
+  });
+
+  it("lists what still runs a removed script by name", async () => {
+    const dir = repo({
+      "package.json": scripts({
+        build: "tsc",
+        ship: "semantic-release",
+        release: "npm run build && npm run ship",
+      }),
+      [`${WF}release.yml`]: ci("npm run ship"),
+    });
+    const result = await runInit(options(dir, { yes: true }));
+    expect(scriptsOf(dir)).toEqual({ build: "tsc", release: "npm run build && npm run ship" });
+    const follow = result.manualSteps.filter((s) => s.includes('the script "ship"'));
+    expect(follow).toEqual([
+      expect.stringMatching(/^package\.json:\d+: the script "release" runs the script "ship"/),
+      expect.stringMatching(/^\.github\/workflows\/release\.yml:9: step 2 in job "ship" runs/),
+    ]);
+  });
+
+  it("also when the removed script ran a release script file", async () => {
+    const dir = repo({
+      "package.json": scripts({ release: "node scripts/release.mjs" }),
+      "scripts/release.mjs":
+        'import { execSync } from "node:child_process";\nexecSync("git push --tags");\n',
+      [`${WF}release.yml`]: ci("npm run release"),
+    });
+    const result = await runInit(options(dir, { yes: true }));
+    expect(scriptsOf(dir)).toEqual({});
+    expect(result.manualSteps).toContainEqual(
+      expect.stringMatching(
+        /^\.github\/workflows\/release\.yml:9: step 2 in job "ship" runs the script "release"/,
+      ),
+    );
+  });
+});
+
+describe("12. commands run through sh -c and fastlane run", () => {
+  it("reads the script of sh -c", () => {
+    expect(commandKinds('bash -c "git tag v1 && git push --tags"')).toEqual(["tag-creation"]);
+    expect(commandKinds("sh -ec 'npx semantic-release'")).toEqual(["release-tool"]);
+    expect(commandKinds("bash -e -o pipefail -c 'pnpm build\ngit tag v1'")).toEqual([
+      "tag-creation",
+    ]);
+    expect(commandKinds("bash -c 'echo \"git tag v1\"'")).toEqual([]);
+    expect(commandKinds("bash scripts/tag.sh")).toEqual([]);
+    expect(runsFile('bash -c "./scripts/build.sh --fast"', "scripts/build.sh")).toBe(true);
+  });
+
+  it("finds a workflow step that tags through bash -c", async () => {
+    const dir = repo({
+      [`${WF}tag.yml`]: `on:
+  push:
+    branches: [main]
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: bash -c "git tag v1 && git push --tags"
+`,
+    });
+    expect((await detect(dir)).detection.machinery.map((m) => m.kinds)).toEqual([["tag-creation"]]);
+  });
+
+  it("fastlane's version actions from the command line", () => {
+    expect(commandKinds("bundle exec fastlane run increment_build_number")).toEqual([
+      "version-writer",
+    ]);
+    expect(commandKinds("fastlane run set_info_plist_value key:CFBundleVersion value:3")).toEqual([
+      "version-writer",
+    ]);
+    expect(
+      commandKinds("fastlane run increment_build_number build_number:$LAUNCHSET_BUILD_NUMBER"),
+    ).toEqual([]);
+    expect(commandKinds("fastlane run upload_to_testflight")).toEqual([]);
   });
 });

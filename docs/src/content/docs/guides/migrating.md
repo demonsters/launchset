@@ -174,10 +174,10 @@ For each, choose:
 | Action | What it does |
 | --- | --- |
 | `remove` | Deletes the workflow or script file. |
-| `disable` | Removes only the conflicting trigger or step, or only the conflicting commands of a `run:` block or script. A script that does more than release keeps running: its conflicting lines are commented out, and one inside an `if`, a loop or an `&&` chain becomes the no-op `:`, so the script stays valid. Never deletes a file. Every other byte stays identical. |
+| `disable` | Removes only the conflicting trigger or step, or only the conflicting commands of a `run:` block or script. A script that does more than release keeps running: its conflicting lines are commented out, and one inside an `if`, a loop or an `&&` chain becomes the no-op `:`, so the script stays valid. In a `package.json` script it drops only the conflicting commands joined with `&&` or `;`, so `tsc; semantic-release` becomes `tsc`. Never deletes a file. Every other byte stays identical. |
 | `keep` | Does nothing. |
 
-The default with `--yes` is `disable`, and a list of the changes is printed. init never leaves a conflict in place silently. Where no minimal edit exists, the only choices are `keep` and `remove`, and the default is `keep` (marked `ask`).
+The default with `--yes` is `disable`, and a list of the changes is printed. init never leaves a conflict in place silently. Where no minimal edit exists, the only choices are `keep` and `remove`, and the default is `keep` (marked `ask`). For example, a `package.json` script whose conflicting command is joined to the rest with `||`, a pipe or `&`, or shares an `sh -c '…'` or a `( … )` group with other work.
 
 After `disable`, check what is left in the file. Example with a tag trigger and a Changesets step:
 
@@ -195,7 +195,7 @@ After `disable`, check what is left in the file. Example with a tag trigger and 
 -          publish: npx changeset publish
 ```
 
-A workflow with no trigger left gets `workflow_dispatch`. A removed step that other steps refer to (`steps.<id>...`, `needs.<job>...`) is listed as a manual follow-up.
+A workflow with no trigger left gets `workflow_dispatch`. A removed step that other steps refer to (`steps.<id>...`, `needs.<job>...`) is listed as a manual follow-up. So is a place that still runs a removed `package.json` script by name (`npm run release` in a workflow, GitLab job or another script), because that call now fails.
 
 Then **move the team's own build steps** into `launchset-release.yml`: the `docker/build-push-action` settings (context, file, platforms), signing, fastlane, deploy steps. Keep secrets and environments as they are.
 

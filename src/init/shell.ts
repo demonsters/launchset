@@ -13,10 +13,14 @@
  * their own. Leading keywords (`if`, `then`, `do`, `!`), variable assignments, wrappers (`sudo`,
  * `env`, `time`) and package runners (`npx`, `pnpm dlx`, `bun x`, `corepack`) are dropped, so
  * every pattern can match at the start of a command. So are `xcrun` and `bundle exec`.
+ * The script of `sh -c '…'` (also `bash -ec`, `zsh -c`) runs too: its commands are read in place
+ * of the `sh -c` command.
  */
 
 /** Stands in for whitespace inside a quoted argument, so the argument stays one word. */
 export const QUOTED_SPACE = "␣";
+/** Stands in for a line break inside a quoted argument (a multi-line `sh -c '…'` script). */
+export const QUOTED_NEWLINE = "␤";
 
 export interface SimpleCommand {
   /** Its words, quotes removed (whitespace inside a quoted word is {@link QUOTED_SPACE}). */
@@ -47,7 +51,31 @@ function closing(s: string, open: number): number {
   return s.length;
 }
 
-const quoted = (body: string) => body.replace(/\s/g, QUOTED_SPACE);
+const quoted = (body: string) =>
+  body.replace(/\r?\n/g, QUOTED_NEWLINE).replace(/\s/g, QUOTED_SPACE);
+
+/** A quoted word's text as written (see {@link quoted}). */
+export const unquoted = (word: string) =>
+  word.replaceAll(QUOTED_NEWLINE, "\n").replaceAll(QUOTED_SPACE, " ");
+
+const SHELLS = /^(?:sh|bash|zsh|dash|ksh)$/;
+
+/** The script of `sh -c 'script' …` (options may come first: `bash -e -o pipefail -c`). */
+function inlineScript(words: string[]): string | undefined {
+  if (!SHELLS.test((words[0] ?? "").replace(/^.*\//, ""))) return undefined;
+  let command = false;
+  for (let i = 1; i < words.length; i++) {
+    const w = words[i] as string;
+    if (/^[-+]o$/.test(w)) {
+      i++;
+    } else if (/^-[A-Za-z]+$/.test(w)) {
+      if (w.includes("c")) command = true;
+    } else if (!/^(?:--[\w-]+|\+[A-Za-z]+)$/.test(w)) {
+      return command ? unquoted(w) : undefined;
+    }
+  }
+  return undefined;
+}
 
 /** Split `script` into raw simple commands (text), commands in substitutions included. */
 function scan(s: string, out: string[]): void {
@@ -258,6 +286,11 @@ export function simpleCommands(script: string): SimpleCommand[] {
   for (const text of raw) {
     const words = strip(text.split(/\s+/).filter((w) => w !== ""));
     if (words.length === 0) continue;
+    const inline = inlineScript(words);
+    if (inline !== undefined) {
+      out.push(...simpleCommands(inline));
+      continue;
+    }
     const head = (words[0] as string).replace(/^.*\//, "");
     out.push({ words, text: [head, ...words.slice(1)].join(" ") });
   }
@@ -321,5 +354,114 @@ export function runsFile(script: string, path: string, dir = "."): boolean {
     const program = head.replace(/^.*\//, "");
     if (!RUNNERS.has(program) && !/^python\d/.test(program)) return false;
     return rest.some((w) => names.has(plain(w)));
+  });
+}
+
+/**
+ * A one-line script (a `package.json` script) split into its top-level commands, with the
+ * operators between them: `ops[i]` (`&&`, `||`, `;`, `|` or `&`) joins `parts[i]` and
+ * `parts[i + 1]`. Quoted strings, `$(…)`, backticks and `( … )` groups stay inside one part, so
+ * `sh -c 'a && b'` is one command.
+ */
+export function topLevelCommands(script: string): { parts: string[]; ops: string[] } {
+  const parts: string[] = [];
+  const ops: string[] = [];
+  let start = 0;
+  let depth = 0;
+  let i = 0;
+  const cut = (op: string) => {
+    parts.push(script.slice(start, i).trim());
+    ops.push(op);
+    i += op === ";" ? 1 : op.length;
+    start = i;
+  };
+  while (i < script.length) {
+    const c = script[i] as string;
+    const next = script[i + 1];
+    if (c === "\\") {
+      i += 2;
+    } else if (c === "'") {
+      const end = script.indexOf("'", i + 1);
+      i = end < 0 ? script.length : end + 1;
+    } else if (c === '"') {
+      let j = i + 1;
+      while (j < script.length && script[j] !== '"') {
+        if (script[j] === "\\") j++;
+        else if (script[j] === "$" && script[j + 1] === "(") j = closing(script, j + 1);
+        else if (script[j] === "`") {
+          const end = script.indexOf("`", j + 1);
+          j = end < 0 ? script.length : end;
+        }
+        j++;
+      }
+      i = j + 1;
+    } else if (c === "$" && next === "(") {
+      i = closing(script, i + 1) + 1;
+    } else if (c === "`") {
+      const end = script.indexOf("`", i + 1);
+      i = end < 0 ? script.length : end + 1;
+    } else if (c === "(") {
+      depth++;
+      i++;
+    } else if (c === ")") {
+      depth--;
+      i++;
+    } else if (depth > 0) {
+      i++;
+    } else if (c === "#" && (i === 0 || /\s/.test(script[i - 1] as string))) {
+      break;
+    } else if ((c === "&" && next === "&") || (c === "|" && next === "|")) {
+      cut(c + next);
+    } else if (c === "&") {
+      // `>&2`, `&>file`, `2>&1`: redirections, not separators.
+      if (script[i - 1] === ">" || script[i - 1] === "<" || next === ">") i++;
+      else cut("&");
+    } else if (c === "|") {
+      cut("|");
+    } else if (c === ";" || c === "\n") {
+      cut(";");
+    } else {
+      i++;
+    }
+  }
+  parts.push(script.slice(start).trim());
+  // A trailing `;` or `&` leaves an empty last part.
+  while (parts.length > 1 && parts[parts.length - 1] === "") {
+    parts.pop();
+    ops.pop();
+  }
+  return { parts, ops };
+}
+
+const MANAGERS = /^(?:npm|pnpm|yarn|bun)$/;
+/** Options of the package managers that take a value (`--filter app`, `npm -w app`). */
+const VALUE_OPTIONS = /^(?:--filter|-F|-C|--dir|--prefix|--cwd)$/;
+const NPM_VALUE_OPTIONS = /^(?:-w|--workspace)$/;
+
+/**
+ * True when `script` runs the `package.json` script `name` by name: `npm run name`,
+ * `pnpm name`, `yarn run name`, `bun run name` (npm runs only `start`, `test`, `stop` and
+ * `restart` without `run`).
+ */
+export function runsScript(script: string, name: string): boolean {
+  return simpleCommands(script).some(({ words }) => {
+    const [head, ...rest] = words;
+    if (head === undefined || !MANAGERS.test(head)) return false;
+    let i = 0;
+    const options = () => {
+      while (rest[i]?.startsWith("-")) {
+        const w = rest[i] as string;
+        i += VALUE_OPTIONS.test(w) || (head === "npm" && NPM_VALUE_OPTIONS.test(w)) ? 2 : 1;
+      }
+    };
+    options();
+    let explicit = false;
+    if (rest[i] === "run" || rest[i] === "run-script") {
+      i++;
+      explicit = true;
+      options();
+    }
+    if (rest[i] !== name) return false;
+    return explicit || head !== "npm" || /^(?:start|test|stop|restart)$/.test(name);
   });
 }
