@@ -1,0 +1,13 @@
+# Keeps the actions in launchset's own workflows (.github/workflows/) current. Dependabot does
+# not scan templates/ (the workflows `launchset init` writes into other repos): the weekly
+# "Action majors" workflow checks those, and a test fails a Dependabot PR until the templates
+# use the same majors. See design/DECISIONS.md.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]

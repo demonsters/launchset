@@ -16,6 +16,8 @@
 # Secrets (names only; values live in the repo or org settings):
 #   LAUNCHSET_APP_ID, LAUNCHSET_APP_PRIVATE_KEY  the "launchset" GitHub App (org secrets). It
 #                                                 must also be installed on demonsters/launchset-action.
+#                                                 The org variable LAUNCHSET_APP_CLIENT_ID, when set,
+#                                                 takes the place of LAUNCHSET_APP_ID.
 #   (npm needs no secret: trusted publishing, see below.)
 #
 # npm auth: trusted publishing (OIDC), no long-lived token. The `build` job has
@@ -90,17 +92,17 @@ jobs:
       # A GitHub App token, not GITHUB_TOKEN: events caused by GITHUB_TOKEN do not trigger other
       # workflows, so the release PR would never run its checks.
       - id: app-token
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ secrets.LAUNCHSET_APP_ID }}
+          client-id: ${{ vars.LAUNCHSET_APP_CLIENT_ID || secrets.LAUNCHSET_APP_ID }}
           private-key: ${{ secrets.LAUNCHSET_APP_PRIVATE_KEY }}
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           token: ${{ steps.app-token.outputs.token }}
           fetch-depth: 0
       # Build the local action.
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v5
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm
@@ -132,12 +134,12 @@ jobs:
         target: ${{ fromJSON(needs.launchset.outputs.matrix) }}
     steps:
       # Always build the release commit, never a later one.
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.launchset.outputs.release-sha }}
       # Build the local action, and install the dependencies the build steps need.
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v5
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm
@@ -166,7 +168,7 @@ jobs:
       - run: pnpm build
         if: matrix.target == 'npm'
       # Set up after `pnpm install`: its .npmrc would send a placeholder token to the registry.
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         if: matrix.target == 'npm'
         with:
           node-version: 24
@@ -200,14 +202,14 @@ jobs:
       # launchset App to be installed on demonsters/launchset-action.
       - id: action-repo-token
         if: matrix.target == 'action'
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ secrets.LAUNCHSET_APP_ID }}
+          client-id: ${{ vars.LAUNCHSET_APP_CLIENT_ID || secrets.LAUNCHSET_APP_ID }}
           private-key: ${{ secrets.LAUNCHSET_APP_PRIVATE_KEY }}
           owner: demonsters
           repositories: launchset-action
           permission-contents: write
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         if: matrix.target == 'action'
         with:
           repository: demonsters/launchset-action
@@ -228,9 +230,9 @@ jobs:
       # and also when the version was already published. The token is minted here, not at the
       # start of the job, because it expires after an hour.
       - id: mark-token
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ secrets.LAUNCHSET_APP_ID }}
+          client-id: ${{ vars.LAUNCHSET_APP_CLIENT_ID || secrets.LAUNCHSET_APP_ID }}
           private-key: ${{ secrets.LAUNCHSET_APP_PRIVATE_KEY }}
       - uses: ./action
         with:
@@ -249,18 +251,18 @@ jobs:
       contents: read
     steps:
       - id: app-token
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ secrets.LAUNCHSET_APP_ID }}
+          client-id: ${{ vars.LAUNCHSET_APP_CLIENT_ID || secrets.LAUNCHSET_APP_ID }}
           private-key: ${{ secrets.LAUNCHSET_APP_PRIVATE_KEY }}
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           token: ${{ steps.app-token.outputs.token }}
           ref: ${{ needs.launchset.outputs.release-sha }}
           fetch-depth: 0
       # Build the local action.
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v5
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm

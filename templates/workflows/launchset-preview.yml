@@ -74,11 +74,11 @@ jobs:
     steps:
       # The App token is needed to push the reservation tag on prerelease branches.
       - id: app-token
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ secrets.LAUNCHSET_APP_ID }}
+          client-id: ${{ vars.LAUNCHSET_APP_CLIENT_ID || secrets.LAUNCHSET_APP_ID }}
           private-key: ${{ secrets.LAUNCHSET_APP_PRIVATE_KEY }}
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           token: ${{ steps.app-token.outputs.token }}
           fetch-depth: 0
@@ -102,7 +102,7 @@ jobs:
       matrix:
         target: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.plan.outputs.release-sha || github.sha }}
       @@login_steps@@
@@ -139,11 +139,11 @@ jobs:
     steps:
       # On prerelease branches this job also creates the GitHub pre-release, which needs the App.
       - id: app-token
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ secrets.LAUNCHSET_APP_ID }}
+          client-id: ${{ vars.LAUNCHSET_APP_CLIENT_ID || secrets.LAUNCHSET_APP_ID }}
           private-key: ${{ secrets.LAUNCHSET_APP_PRIVATE_KEY }}
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           token: ${{ steps.app-token.outputs.token }}
           fetch-depth: 0

@@ -2,7 +2,7 @@
 # private package the registry check needs read access. The login also covers the push below.
 - name: Log in to @@registry_name@@
   if: @@if@@
-  uses: docker/login-action@v3
+  uses: docker/login-action@v4
   with:
     @@registry_line@@
     username: @@username@@

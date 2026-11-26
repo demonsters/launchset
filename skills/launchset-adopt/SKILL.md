@@ -99,14 +99,14 @@ Also check, by reading the repo:
 
 Signing certificates, provisioning profiles, the Google Play upload key, the App Store Connect API key, the Play service account and the GitHub secrets are set up by a **human**. Guide them step by step with the docs pages "Setting up native store pipelines" (Apple and Google Play). Check each step without seeing a secret:
 
-- Secret **names** exist: `gh secret list --repo <owner/repo>` (and `--org <org>`).
+- Secret **names** exist: `gh secret list --repo <owner/repo>` (and `--org <org>`). Variables: `gh variable list --repo <owner/repo>` (and `--org <org>`).
 - The workflow uses the same names: `grep -n "secrets\." .github/workflows/launchset-*.yml`.
 - The config has `verify: ["store"]` with `store.packageName` or `store.appId`.
 - A **preview build** passes: label a PR with `launchset:preview`, and read the PR comment and the job logs. A failing `verify` step prints what is wrong.
 
 Never ask for, read or store a key, password, certificate, token or service account file. If one is pasted into the chat, tell the human to rotate it.
 
-The **GitHub App** (secrets `LAUNCHSET_APP_ID` and `LAUNCHSET_APP_PRIVATE_KEY`) is also created by a human, an org owner. Point to the docs page "GitHub App setup". Permissions: Contents (read & write), Pull requests (read & write), Workflows (read & write), Actions (read), Metadata (read).
+The **GitHub App** (the variable `LAUNCHSET_APP_CLIENT_ID` and the secret `LAUNCHSET_APP_PRIVATE_KEY`; older setups have the secret `LAUNCHSET_APP_ID` instead of the variable, which the workflows still accept) is also created by a human, an org owner. Point to the docs page "GitHub App setup". Permissions: Contents (read & write), Pull requests (read & write), Workflows (read & write), Actions (read), Metadata (read).
 
 **On GitLab** a human creates a project or group access token (role Maintainer, scopes `api` and `write_repository`) and stores it as the masked, **not Protected** CI/CD variable `LAUNCHSET_TOKEN`, plus `NPM_TOKEN` (masked) for the private package. Point to the docs page "Token and permissions" (GitLab). You check variable names (`glab variable list` or the Settings page), never values. Protected branches and tags must let the token's bot push; "Minimum role to use pipeline variables" must allow manual runs.
 
@@ -156,7 +156,7 @@ Everything goes in **one PR**. Its description lists:
 - The decisions and what was chosen (and why, for the ones the human decided).
 - What was removed or disabled, with `path:line`.
 - Changes to versions (files that moved to the canonical version) and any lowered version.
-- The remaining manual steps: create the GitHub App and install it on the repo, add `LAUNCHSET_APP_ID` and `LAUNCHSET_APP_PRIVATE_KEY` (on GitLab: `LAUNCHSET_TOKEN` and `NPM_TOKEN`, protected branches and tags, pipeline variables, `workflow: rules` if init printed them), store credentials (`LAUNCHSET_PLAY_SERVICE_ACCOUNT_JSON`, `LAUNCHSET_ASC_KEY_ID`, `LAUNCHSET_ASC_ISSUER_ID`, `LAUNCHSET_ASC_PRIVATE_KEY`, keystore and signing secrets), and mark the **Changeset check** job as required once it runs (on GitLab: require the MR pipeline to succeed).
+- The remaining manual steps: create the GitHub App and install it on the repo, add the variable `LAUNCHSET_APP_CLIENT_ID` and the secret `LAUNCHSET_APP_PRIVATE_KEY` (unless the org already has them, or the older secret `LAUNCHSET_APP_ID`; on GitLab: `LAUNCHSET_TOKEN` and `NPM_TOKEN`, protected branches and tags, pipeline variables, `workflow: rules` if init printed them), store credentials (`LAUNCHSET_PLAY_SERVICE_ACCOUNT_JSON`, `LAUNCHSET_ASC_KEY_ID`, `LAUNCHSET_ASC_ISSUER_ID`, `LAUNCHSET_ASC_PRIVATE_KEY`, keystore and signing secrets), and mark the **Changeset check** job as required once it runs (on GitLab: require the MR pipeline to succeed).
 - That the PR itself needs a changeset: add one (`npx @demonsters/launchset add --bump patch --message "Set up releases with launchset"`, or `--empty`).
 
 Don't merge it. Merging may start a release if the PR changed the root version of a version without a release tag.

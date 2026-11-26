@@ -1,0 +1,63 @@
+name: Action majors
+
+# Weekly: is every action in templates/ (what `launchset init` writes into other repos) and in
+# these workflows on its latest major? Dependabot (.github/dependabot.yml) bumps the workflows
+# here, but it doesn't scan templates/. When a major is behind, this opens an issue (or updates
+# the open one); when all are current again, it closes it. Not part of PR CI: it calls the
+# GitHub API and depends on other projects' releases. See design/DECISIONS.md.
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: action-majors
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Check action majors
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      # Exit 1: a major is behind (the report is written). Exit 2: an error, which fails the job.
+      - id: check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set +e
+          node scripts/check-action-majors.ts --report "$RUNNER_TEMP/report.md"
+          status=$?
+          set -e
+          if [ "$status" -eq 2 ]; then exit 1; fi
+          echo "stale=$([ "$status" -eq 1 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+      - name: Open or update the issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          STALE: ${{ steps.check.outputs.stale }}
+          TITLE: "Workflow templates: actions behind their latest major"
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          number=$(gh issue list --state open --search "in:title \"$TITLE\"" --json number,title \
+            --jq "map(select(.title == env.TITLE))[0].number // empty")
+          if [ "$STALE" = "true" ]; then
+            { cat "$RUNNER_TEMP/report.md"; echo; echo "Found by $RUN_URL."; } > "$RUNNER_TEMP/body.md"
+            if [ -n "$number" ]; then
+              gh issue edit "$number" --body-file "$RUNNER_TEMP/body.md"
+            else
+              gh issue create --title "$TITLE" --body-file "$RUNNER_TEMP/body.md"
+            fi
+            echo "::warning::Some actions are behind their latest major. See the issue \"$TITLE\"."
+          elif [ -n "$number" ]; then
+            gh issue close "$number" --comment "Every action is on its latest major again ($RUN_URL)."
+          fi

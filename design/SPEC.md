@@ -362,7 +362,7 @@ Events caused by the default `GITHUB_TOKEN` don't trigger other workflows. A rel
 
 - Each org that uses launchset has its own **GitHub App** (for demonsters: "launchset"), created by an org owner in the browser. The agent building launchset can't create it; the docs must explain how, step by step. Because the action is public (section 10), another org only needs to create its own App and secrets.
 - Repository permissions: **Contents: read & write**, **Pull requests: read & write**, Metadata: read (automatic). Verify during implementation whether anything else is needed (for example Issues: write for labels or comments, Checks: read) and document the final list.
-- Org secrets: `LAUNCHSET_APP_ID`, `LAUNCHSET_APP_PRIVATE_KEY`.
+- Org variable `LAUNCHSET_APP_CLIENT_ID` and org secret `LAUNCHSET_APP_PRIVATE_KEY` (older setups: the secret `LAUNCHSET_APP_ID`, which the workflows still accept as a fallback).
 - Workflows mint a token with `actions/create-github-app-token` and pass it to the launchset action as `token`.
 - Every git push and `ls-remote` authenticates with that token, even when the checkout persisted another one (the `build` job checks out with the read-only `GITHUB_TOKEN`). It goes in as `http.<server>/<owner>/.extraheader` through `GIT_CONFIG_*` env, never into `.git/config`: an empty value resets the list, then the App header follows. The owner-scoped key is more specific than the checkout's `http.<server>/.extraheader`. (git-lfs ignores the reset and uses only the most specific key, should it ever run with this env.)
 - launchset runs every git command with `core.hooksPath` pointed at nothing (`/dev/null`, `NUL` on Windows), through the same env. It runs git in the team's checkout, where an earlier install step may have installed hooks (husky on `prepare`, simple-git-hooks, lefthook, git-lfs). None of them has work to do for launchset's commits, branches and tags, which never add LFS objects, and a failing one would break `mark` after the upload (git-lfs's lock check with the read-only checkout token did, in the first release of an LFS repo). Tag pushes also set `GIT_LFS_SKIP_PUSH=1`.
@@ -416,7 +416,7 @@ build:
     matrix:
       target: ${{ fromJSON(needs.launchset.outputs.matrix) }}
   steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
       with: { ref: "${{ needs.launchset.outputs.release-sha }}" }
     - id: stamp
       uses: demonsters/launchset-action@v1
@@ -776,7 +776,7 @@ For AI agents moving an **existing repo** onto launchset. Repos will be migrated
 
 ## 17. Manual steps for the demonsters team (not for the building agent)
 
-1. Create the GitHub App, install it on the repos using launchset, add `LAUNCHSET_APP_ID` and `LAUNCHSET_APP_PRIVATE_KEY` as org secrets.
+1. Create the GitHub App, install it on the repos using launchset, add the org variable `LAUNCHSET_APP_CLIENT_ID` and the org secret `LAUNCHSET_APP_PRIVATE_KEY`.
 2. Create the public repo `demonsters/launchset-action` and install the App on it, so launchset's release can publish the action (sections 10, 15).
 3. Add store credentials as secrets where `verify: ["store"]` is used.
 4. Set up npm publishing auth for `@demonsters/launchset` (section 15).

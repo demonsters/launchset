@@ -30,7 +30,7 @@ The generated workflow contains this:
     plan: ${{ needs.launchset.outputs.plan }}
 - name: Build and push api
   if: matrix.target == 'docker-api' && steps.verify.outputs.already-published != 'true'
-  uses: docker/build-push-action@v6
+  uses: docker/build-push-action@v7
   with:
     context: apps/api
     push: true

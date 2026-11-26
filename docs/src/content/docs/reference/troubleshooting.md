@@ -12,7 +12,7 @@ Every launchset failure prints `error:` and, where it can, a `hint:`. Read the h
 **Fix.** Open it with the GitHub App token:
 
 1. In `launchset-release.yml`, the `launchset` job must create the token (`actions/create-github-app-token`) and pass it to the action as `token`, and to `actions/checkout` as `token`.
-2. The secrets `LAUNCHSET_APP_ID` and `LAUNCHSET_APP_PRIVATE_KEY` must exist and be available to this repo.
+2. The variable `LAUNCHSET_APP_CLIENT_ID` (or, in older setups, the secret `LAUNCHSET_APP_ID`) and the secret `LAUNCHSET_APP_PRIVATE_KEY` must exist and be available to this repo.
 3. The App must be installed on this repo.
 
 See [GitHub App setup](/github-app/). Close the old release PR (or let launchset close it) and push to the base branch again.

@@ -22,17 +22,17 @@ Secrets are shown by name. Create them as repository or organization secrets. No
 ```yaml
 - name: Log in to GitHub Container Registry
   if: matrix.target == 'docker-api'
-  uses: docker/login-action@v3
+  uses: docker/login-action@v4
   with:
     registry: ghcr.io
     username: ${{ github.actor }}
     password: ${{ secrets.GITHUB_TOKEN }}
 # ... stamp and verify ...
-- uses: docker/setup-buildx-action@v3
+- uses: docker/setup-buildx-action@v4
   if: matrix.target == 'docker-api' && steps.verify.outputs.already-published != 'true'
 - name: Build and push
   if: matrix.target == 'docker-api' && steps.verify.outputs.already-published != 'true'
-  uses: docker/build-push-action@v6
+  uses: docker/build-push-action@v7
   with:
     context: apps/api
     file: apps/api/Dockerfile
@@ -57,7 +57,7 @@ Docker Hub: use `username: ${{ secrets.DOCKERHUB_USERNAME }}` and `password: ${{
 The `stamp` step has written `versionName` and `versionCode`. Build the bundle, signed with a keystore from secrets.
 
 ```yaml
-- uses: actions/setup-java@v5
+- uses: actions/setup-java@v6
   if: matrix.target == 'android' && steps.verify.outputs.already-published != 'true'
   with:
     distribution: temurin

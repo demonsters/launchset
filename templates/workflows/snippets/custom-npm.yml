@@ -1,7 +1,7 @@
 # --- @@target@@ (npm package) ---
 # Publishes releases (skipped when `verify` finds this version on the registry) and
 # prereleases. PR and branch previews are not published to npm.
-- uses: actions/setup-node@v5
+- uses: actions/setup-node@v7
   if: @@if@@
   with:
     node-version: 24

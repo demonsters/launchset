@@ -88,7 +88,7 @@ For Docker targets init writes working `docker/build-push-action` steps. For And
 
 ## 3. Create the GitHub App
 
-Releases use a GitHub App token, not the default `GITHUB_TOKEN`. Events caused by `GITHUB_TOKEN` don't start other workflows, so a release PR opened with it would never get CI. Follow [GitHub App setup](/github-app/) and add the two secrets `LAUNCHSET_APP_ID` and `LAUNCHSET_APP_PRIVATE_KEY`.
+Releases use a GitHub App token, not the default `GITHUB_TOKEN`. Events caused by `GITHUB_TOKEN` don't start other workflows, so a release PR opened with it would never get CI. Follow [GitHub App setup](/github-app/) and add the variable `LAUNCHSET_APP_CLIENT_ID` and the secret `LAUNCHSET_APP_PRIVATE_KEY`. If your org set up launchset before, with the secret `LAUNCHSET_APP_ID`, there is nothing to add: the workflows fall back to it.
 
 ## 4. Commit and open a PR
 
@@ -114,6 +114,23 @@ Or, for a change that needs no release, `npx @demonsters/launchset add --empty`.
 3. Merge it. The release workflow runs again. This time it sees that the version changed, so it builds every target at the release commit, marks each one, and creates the tag `v1.4.1` and a GitHub Release.
 
 From now on, every PR adds a changeset, and merging the release PR is the release. Read [Concepts](/concepts/) for the whole picture and [Writing changesets](/changesets/) for the details of the file.
+
+## Keep the actions current
+
+The workflows use other actions too (`actions/checkout`, `actions/create-github-app-token`, `docker/build-push-action` and so on), each pinned to a major version tag such as `@v7`. `init` writes the latest majors at the time of the launchset release you run. It writes each workflow file once: it never overwrites an existing file unless you answer `overwrite` for it, and no other launchset command touches your workflows. So the pins age with your repo, and a newer launchset doesn't update them.
+
+Let Dependabot propose the new majors. Add `.github/dependabot.yml` (or add the `github-actions` entry to the one you have):
+
+```yaml title=".github/dependabot.yml"
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+```
+
+Read the release notes before you merge a new major: inputs get renamed now and then (for example `app-id` → `client-id` in `actions/create-github-app-token@v3`). Renovate works too. `init` doesn't write this file for you, because it is repo-wide configuration that also covers workflows that aren't launchset's. It suggests it in its summary when the repo has no Dependabot or Renovate configuration.
 
 ## Try the CLI
 

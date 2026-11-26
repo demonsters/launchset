@@ -614,7 +614,7 @@ async function writeAll(
     }
   } else {
     manualSteps.push(
-      `Create the launchset GitHub App for your org if it doesn't exist (${REQUIRED_APP_PERMISSIONS.map((p) => `${p.name}: ${p.access}`).join(", ")}), install it on this repo, and add the secrets LAUNCHSET_APP_ID and LAUNCHSET_APP_PRIVATE_KEY. See "GitHub App setup" in the docs.`,
+      `Create the launchset GitHub App for your org if it doesn't exist (${REQUIRED_APP_PERMISSIONS.map((p) => `${p.name}: ${p.access}`).join(", ")}), install it on this repo, and add the variable LAUNCHSET_APP_CLIENT_ID (the App's Client ID) and the secret LAUNCHSET_APP_PRIVATE_KEY, unless the org has them already. See "GitHub App setup" in the docs.`,
     );
     manualSteps.push(
       `Add your build and upload steps for ${buildTargets.join(", ")} to .github/workflows/launchset-release.yml (and launchset-preview.yml for previews).`,
@@ -626,6 +626,9 @@ async function writeAll(
       manualSteps.push(
         `Move the build steps you still need from ${retiredWorkflows.join(", ")} into launchset-release.yml, then check what's left in those files.`,
       );
+    }
+    if (!(await hasActionUpdater(root))) {
+      manualSteps.push(DEPENDABOT_HINT);
     }
   }
   manualSteps.push(...retired.followUps);
@@ -668,4 +671,34 @@ async function writeAll(
     if (n.manual) manualSteps.push(`${n.path ? `${at(n.path, n.line)}: ` : ""}${n.message}`);
   }
   return { changes, manualSteps };
+}
+
+/**
+ * The init summary's suggestion to let Dependabot keep the workflows' actions current. init
+ * doesn't write `.github/dependabot.yml` itself: it is repo-wide config the team owns (other
+ * ecosystems, schedules, grouping, or Renovate instead), and it would also open PRs for
+ * workflows that aren't launchset's. See design/DECISIONS.md.
+ */
+export const DEPENDABOT_HINT =
+  'Optional: let Dependabot keep the actions in your workflows current (launchset never rewrites the workflow files it wrote). Add .github/dependabot.yml with `version: 2` and an update for `package-ecosystem: github-actions`, `directory: /`, `schedule: { interval: weekly }`. See "Keep the actions current" in the docs.';
+
+/** Dependabot or Renovate config files: either already updates GitHub Actions refs. */
+const ACTION_UPDATER_FILES = [
+  ".github/dependabot.yml",
+  ".github/dependabot.yaml",
+  "renovate.json",
+  "renovate.json5",
+  ".github/renovate.json",
+  ".github/renovate.json5",
+  ".renovaterc",
+  ".renovaterc.json",
+  ".renovaterc.json5",
+];
+
+/** Whether the repo has a Dependabot or Renovate config (which may already cover actions). */
+async function hasActionUpdater(root: string): Promise<boolean> {
+  for (const path of ACTION_UPDATER_FILES) {
+    if ((await readTextOrNull(absolute(root, path))) !== null) return true;
+  }
+  return false;
 }

@@ -70,14 +70,16 @@ jobs:
       release-sha: ${{ steps.launchset.outputs.release-sha }}
     steps:
       # A GitHub App token, not GITHUB_TOKEN: events caused by GITHUB_TOKEN do not trigger other
-      # workflows, so the release PR would never run its checks. Needs the org secrets
-      # LAUNCHSET_APP_ID and LAUNCHSET_APP_PRIVATE_KEY (see the launchset docs).
+      # workflows, so the release PR would never run its checks. Needs the org variable
+      # LAUNCHSET_APP_CLIENT_ID and the org secret LAUNCHSET_APP_PRIVATE_KEY (see "GitHub App
+      # setup" in the launchset docs). Older setups store the App ID as the secret
+      # LAUNCHSET_APP_ID instead: it works in client-id too, so it is the fallback.
       - id: app-token
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ secrets.LAUNCHSET_APP_ID }}
+          client-id: ${{ vars.LAUNCHSET_APP_CLIENT_ID || secrets.LAUNCHSET_APP_ID }}
           private-key: ${{ secrets.LAUNCHSET_APP_PRIVATE_KEY }}
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           token: ${{ steps.app-token.outputs.token }}
           fetch-depth: 0
@@ -105,7 +107,7 @@ jobs:
         target: ${{ fromJSON(needs.launchset.outputs.matrix) }}
     steps:
       # Always build the release commit, never a later one.
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.launchset.outputs.release-sha }}
       @@login_steps@@
@@ -141,9 +143,9 @@ jobs:
       # and also when the version was already published. The token is minted here, not at the
       # start of the job, because it expires after an hour and native builds can take long.
       - id: mark-token
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ secrets.LAUNCHSET_APP_ID }}
+          client-id: ${{ vars.LAUNCHSET_APP_CLIENT_ID || secrets.LAUNCHSET_APP_ID }}
           private-key: ${{ secrets.LAUNCHSET_APP_PRIVATE_KEY }}
       - uses: @@action@@
         with:
@@ -162,11 +164,11 @@ jobs:
       contents: read
     steps:
       - id: app-token
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ secrets.LAUNCHSET_APP_ID }}
+          client-id: ${{ vars.LAUNCHSET_APP_CLIENT_ID || secrets.LAUNCHSET_APP_ID }}
           private-key: ${{ secrets.LAUNCHSET_APP_PRIVATE_KEY }}
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           token: ${{ steps.app-token.outputs.token }}
           ref: ${{ needs.launchset.outputs.release-sha }}
