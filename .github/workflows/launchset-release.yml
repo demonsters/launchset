@@ -13,17 +13,17 @@
 #     and builds it first (`action/dist` is not committed).
 #   - the `npm` and `action` build steps below replace the template's examples.
 #
-# Secrets (names only; values live in the repo or org settings):
-#   LAUNCHSET_APP_ID, LAUNCHSET_APP_PRIVATE_KEY  the "launchset" GitHub App (org secrets). It
-#                                                 must also be installed on demonsters/launchset-action.
-#                                                 The org variable LAUNCHSET_APP_CLIENT_ID, when set,
-#                                                 takes the place of LAUNCHSET_APP_ID.
+# Secrets and variables (names only; values live in the `release` environment):
+#   LAUNCHSET_APP_CLIENT_ID (variable), LAUNCHSET_APP_PRIVATE_KEY (secret)
+#       the dedicated "launchset-release" GitHub App, installed only on demonsters/launchset and
+#       demonsters/launchset-action (it publishes the action there). It is not the App other
+#       repos use, so its key reaches only these two repos.
 #   (npm needs no secret: trusted publishing, see below.)
 #
 # Every job that uses the App key or npm's OIDC token runs in the `release` environment
-# (Settings → Environments), which only main, release/*.x and next/* may use. Secrets and
-# variables of the environment win over the org's, so the App's key can live there, out of
-# reach of workflows on any other branch. npm's trusted publisher names the environment too.
+# (Settings → Environments), which only main, release/*.x and next/* may use, so the key is out
+# of reach of workflows on any other branch. npm's trusted publisher names the environment too.
+# See design/SPEC.md section 17 for the rulesets that go with it.
 #
 # npm auth: trusted publishing (OIDC), no long-lived token. The `build` job has
 # `id-token: write`; `npm publish` exchanges the workflow's OIDC token for a short-lived npm

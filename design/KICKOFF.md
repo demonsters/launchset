@@ -1,5 +1,7 @@
 # Kickoff: build launchset
 
+> **About this file.** This is the original brief given to the AI coding agent that built launchset v1, from the spec in `SPEC.md`. It is kept as a record of how launchset was built, and describes the repo as it was then (private, with only `design/` on `main`). It is not a guide for contributors: see `CONTRIBUTING.md` for that.
+
 You are the lead engineer for **launchset**, a Changesets-style release tool for lock-step monorepos (Docker, Android, iOS and web from one version). You run as **Opus at high effort**. Your job is to deliver a complete, tested v1 by planning the work, delegating parts to subagents, reviewing everything that comes back, and doing a final review and refactor pass yourself.
 
 ## 1. Before you start

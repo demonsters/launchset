@@ -154,13 +154,13 @@ Renderers, written by `init` (phase 5): `renderGitLabCi()` in `src/templates/git
 
 - No CI/CD component for now (open decision 4): `init` will write plain YAML files, like the GitHub
   workflows. Each launchset job installs the CLI with npm
-  (`npm install --global "$LAUNCHSET_CLI"`, default `@demonsters/launchset@<the version that
-  rendered the file>`; `NPM_TOKEN` for the private package; skipped when `launchset` is on the
-  PATH). The bundle targets Node 24, so every job that runs launchset needs Node 24+ and npm.
+  (`npm install --global "$LAUNCHSET_CLI"`, default `launchset@<the version that rendered the
+  file>`; skipped when `launchset` is on the PATH; before 1.2 the package was the private
+  `@demonsters/launchset`, installed with an `NPM_TOKEN`). The bundle targets Node 24, so every job that runs launchset needs Node 24+ and npm.
 - `.gitlab/launchset.yml` (launchset's jobs, included by `.gitlab-ci.yml`): `launchset-check` (MR
   pipelines into the base, maintenance and prerelease branches; not a fork MR's pipeline that
-  runs in the fork, `$CI_PROJECT_ID != $CI_MERGE_REQUEST_PROJECT_ID`, which has no `NPM_TOKEN`
-  to install launchset with), `launchset-release` +
+  runs in the fork, `$CI_PROJECT_ID != $CI_MERGE_REQUEST_PROJECT_ID`, which has no
+  `LAUNCHSET_TOKEN` to post its note with), `launchset-release` +
   `launchset-build` (trigger) on pushes and `web` / `api` pipelines of the base and maintenance
   branches, `launchset-preview-plan` + `launchset-preview` (trigger; the comment job is in the
   child, see "GitLab.com trial"). No top-level `workflow:` (it would override the project's).
@@ -460,7 +460,7 @@ Verified against its environment docs (3.20.x,
    build number again, which is what a retry of the same release should upload. (`semver` is
    rejected with previews enabled, on both hosts.)
 4. **Distribution.** No CI/CD component for now: jobs install the npm package (`LAUNCHSET_CLI`,
-   pinned to the version that rendered the files; `NPM_TOKEN` for the private package). A
+   pinned to the version that rendered the files; no token since 1.2, when it became public). A
    component needs a public GitLab project; it can come later from the same templates.
 5. **Self-managed versions.** Minimum GitLab 18.2 (`trigger:strategy: mirror`; markdown alerts
    need 17.10; `workflow:auto_cancel` is older).
