@@ -296,12 +296,14 @@ For anything else (an npm package, a Helm chart, a version file a web app reads)
 
 | Strategy | Value | Notes |
 |---|---|---|
-| `timestamp` (default) | `floor((now - epoch) / 1s) + offset` | Epoch default `2020-01-01T00:00:00Z`. About 217 million in November 2026; stays under the Android limit until about 2086. Always increases, across all branches, without credentials. |
+| `timestamp` (default) | `floor((now - epoch) / unit) + offset` | Epoch default `2020-01-01T00:00:00Z`; `unit` `"second"` (default) or `"minute"`. About 217 million in November 2026 (3.6 million in minutes); stays under the Android limit until about 2086 (minutes: about 6012). Always increases, across all branches, without credentials. Minutes: two builds in the same minute (two runs, or two ship runs) get the same number; switching an app with uploads from seconds to minutes needs an `offset` above its highest number. `unit` with another strategy is a config error. |
 | `run-number` | `github.run_number + offset` | Simple; resets if the workflow file is renamed. Documented as such. |
 | `semver` | `major*10^7 + minor*10^5 + patch*10^2 + attempt` | `attempt` is the run attempt (1 to 99; 1 outside CI and on GitLab), or the `attempt` input of a ship (9.8). **Only for targets previews never build** while previews are enabled: previews of `1.5.0` and the real `1.5.0` would compete for the same numbers. Config validation rejects `semver` as the root strategy while previews are enabled (previews number their plan with it), and on a target that `preview.targets` or a `preview.branches` entry's `targets` include (`"all"` is every target; an entry without `targets` uses `preview.targets`). A manual preview run can't name a `semver` target, and its `all` leaves them out. |
 | `eas` | none | For Expo projects building on EAS with `appVersionSource: "remote"` and `autoIncrement`. launchset outputs no build number and doesn't stamp one. |
 
 `offset` exists for migrating apps whose existing build numbers are higher than what the strategy would produce.
+
+A target's override may set any of `strategy`, `epoch`, `offset` and `unit`; a target with an override gets its own number, every other target shares the run's.
 
 ### 7.3 Verification against stores (`verify: ["store"]`)
 

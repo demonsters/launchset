@@ -3,9 +3,10 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
+import { computeBuildNumber } from "../../src/core/build-number.ts";
 import { AGENTS_END, AGENTS_START, upsertAgentsSection } from "../../src/init/agents.ts";
 import { renderConfigSource } from "../../src/init/config-source.ts";
-import { classifyTag, plainVersion, roundUpOffset } from "../../src/init/detect.ts";
+import { classifyTag, offsetAbove, plainVersion, roundUpOffset } from "../../src/init/detect.ts";
 import { launchsetTagsMatched, matchesFilter } from "../../src/init/github-filter.ts";
 import { addLefthookCommand, detectHooks, installHook } from "../../src/init/hooks.ts";
 import {
@@ -485,6 +486,27 @@ describe("small helpers", () => {
     expect(plainVersion("1.0.0-rc.1")).toBeNull();
     expect(roundUpOffset(913801)).toBe(920000);
     expect(roundUpOffset(57)).toBe(57);
+  });
+
+  it("suggests an offset that keeps new build numbers above the highest, for both units", () => {
+    const now = new Date("2026-11-18T12:00:00Z");
+    const base = { strategy: "timestamp", epoch: "2020-01-01T00:00:00Z", offset: 0 } as const;
+    for (const settings of [
+      base,
+      { ...base, unit: "second" },
+      { ...base, unit: "minute" },
+    ] as const) {
+      const strategyNow = computeBuildNumber(settings, { now }) as number;
+      expect(offsetAbove(strategyNow - 1, settings, now)).toBe(0);
+      for (const highest of [strategyNow, 300_000_000]) {
+        const offset = offsetAbove(highest, settings, now);
+        expect(offset).toBe(roundUpOffset(highest - strategyNow + 1));
+        expect(computeBuildNumber({ ...settings, offset }, { now })).toBeGreaterThan(highest);
+      }
+    }
+    // A store at 217,000,000 is behind seconds but far ahead of minutes (3,619,440).
+    expect(offsetAbove(217_000_000, base, now)).toBe(0);
+    expect(offsetAbove(217_000_000, { ...base, unit: "minute" }, now)).toBe(220_000_000);
   });
 
   it("renders config keys that aren't identifiers quoted", () => {

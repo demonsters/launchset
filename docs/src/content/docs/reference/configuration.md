@@ -97,6 +97,7 @@ These rules apply on top of the types:
 - Target names are lowercase letters, digits and dashes, starting with a letter or digit.
 - **Unknown keys are errors.** That catches typos.
 - While previews are enabled, `semver` can't be the repo-wide `buildNumber.strategy` (previews number their plan with it), and a target can only use it when previews never build that target: it isn't in `preview.targets` (`"all"` is every target) or in the `targets` of any `preview.branches` entry (an entry without `targets` uses `preview.targets`). Take the target out of those lists, or set `preview: false`.
+- `buildNumber.unit` only goes with the `timestamp` strategy: setting it next to another strategy (repo-wide, or in a target's override, whose strategy may come from the root) is an error. A repo-wide `unit` that a target with another strategy inherits is fine.
 - `maintenanceBranches` has exactly one `*` and must not match `baseBranch`.
 - `tags.partial` must differ from `tags.release`.
 - Docker: `image` has no tag or digest. Unknown `{placeholders}` are errors. The `release` list needs a template with `{version}`. `preview` and `prerelease` lists can't contain `latest` or a template that renders a plain `X.Y.Z`.
@@ -133,9 +134,10 @@ Everything is optional except `targets`. `$schema` is only for editors: point it
 | `tags.marker` | `string` | `"launchset/{target}@{version}"` | The marker tag that records one target shipped for one version. Must contain `{target}` and `{version}`. |
 | `tags.partial` | `string` | `"launchset/partial/{version}"` | The tag for a release that was superseded before it was complete. Must contain `{version}` and differ from `tags.release`. Keep it outside the namespace your tag-triggered workflows listen to. |
 | `buildNumber` | `object` |  | How build numbers are computed. A target can override any of these keys. |
-| `buildNumber.strategy` | `"timestamp" \| "run-number" \| "semver" \| "eas"` | `"timestamp"` | `timestamp`: seconds since `epoch`, plus `offset`. `run-number`: `github.run_number` plus `offset`. `semver`: derived from the version; not allowed here while previews are enabled, and only on targets that previews don't build. `eas`: no build number at all, for Expo builds on EAS. |
+| `buildNumber.strategy` | `"timestamp" \| "run-number" \| "semver" \| "eas"` | `"timestamp"` | `timestamp`: seconds (or minutes, see `unit`) since `epoch`, plus `offset`. `run-number`: `github.run_number` plus `offset`. `semver`: derived from the version; not allowed here while previews are enabled, and only on targets that previews don't build. `eas`: no build number at all, for Expo builds on EAS. |
 | `buildNumber.epoch` | `string` | `"2020-01-01T00:00:00Z"` | Start of the `timestamp` strategy, as an ISO 8601 date-time. |
 | `buildNumber.offset` | `integer` | `0` | Added to every build number. Use it when existing builds in a store have higher numbers than the strategy would produce. |
+| `buildNumber.unit` | `"second" \| "minute"` |  | What the `timestamp` strategy counts since `epoch`: `"second"` (the default) or whole `"minute"`s (rounded down). Minutes stay under Android's limit until about the year 6000, but two builds in the same minute get the same number. An error with any other strategy. |
 | `check` | `object` |  | The PR check. |
 | `check.bots` | `string[]` | `["dependabot[bot]", "renovate[bot]", "renovate-bot"]` | PR authors that pass the check without a changeset. Matched case-insensitively. Their merged PRs get a generated patch entry under Dependencies in the next release. |
 | `gitlab` | `object` |  | GitLab settings. Ignored on GitHub. |
@@ -176,6 +178,7 @@ These options exist on every target type.
 | `targets.<name>.buildNumber.strategy` | `"timestamp" \| "run-number" \| "semver" \| "eas"` |  | See `buildNumber.strategy`. |
 | `targets.<name>.buildNumber.epoch` | `string` |  | See `buildNumber.epoch`. |
 | `targets.<name>.buildNumber.offset` | `integer` |  | See `buildNumber.offset`. |
+| `targets.<name>.buildNumber.unit` | `"second" \| "minute"` |  | See `buildNumber.unit`. |
 | `targets.<name>.files` | `object[]` | `[]` | Extra files that get the version stamped, next to what the target type already stamps. Each entry has a `kind`. |
 | `targets.<name>.files[].path` <br>*kind json* | `string` | required | File to edit, relative to the repo root. |
 | `targets.<name>.files[].key` <br>*kind json* | `string` | required | Dotted key path to the value, for example `version` or `expo.version`. |

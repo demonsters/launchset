@@ -174,6 +174,71 @@ describe("validation rules (spec 5)", () => {
     ]);
   });
 
+  describe("buildNumber.unit (7.2)", () => {
+    it("defaults to seconds: left out of the resolved config", () => {
+      const config = resolveConfig({ targets: { web } });
+      expect(config.buildNumber.unit).toBeUndefined();
+      expect(config.targets.web?.buildNumber.unit).toBeUndefined();
+    });
+
+    it("is allowed repo-wide and per target with the timestamp strategy", () => {
+      const config = resolveConfig({
+        buildNumber: { unit: "minute" },
+        targets: { web, api: { type: "web", buildNumber: { unit: "second" } } },
+      });
+      expect(config.buildNumber.unit).toBe("minute");
+      expect(config.targets.web?.buildNumber.unit).toBe("minute");
+      expect(config.targets.api?.buildNumber.unit).toBe("second");
+    });
+
+    it("is an error with any other strategy", () => {
+      expect(
+        issues({ buildNumber: { strategy: "run-number", unit: "minute" }, targets: { web } }),
+      ).toEqual([
+        {
+          path: "buildNumber.unit",
+          message:
+            '"unit" only applies to the "timestamp" build-number strategy, not "run-number": remove it',
+        },
+      ]);
+      expect(
+        issues({
+          preview: false,
+          targets: {
+            web,
+            app: { type: "web", buildNumber: { strategy: "semver", unit: "minute" } },
+          },
+        }).map((i) => i.path),
+      ).toEqual(["targets.app.buildNumber.unit"]);
+      // The target's strategy may come from the root.
+      expect(
+        issues({
+          buildNumber: { strategy: "eas" },
+          targets: { web: { type: "web", buildNumber: { unit: "minute" } } },
+        }).map((i) => i.path),
+      ).toEqual(["targets.web.buildNumber.unit"]);
+    });
+
+    it("a repo-wide unit doesn't stop a target from using another strategy", () => {
+      expect(() =>
+        resolveConfig({
+          preview: false,
+          buildNumber: { unit: "minute" },
+          targets: { web, app: { type: "web", buildNumber: { strategy: "semver" } } },
+        }),
+      ).not.toThrow();
+    });
+
+    it("only takes second or minute", () => {
+      expect(issues({ buildNumber: { unit: "hour" }, targets: { web } })).toEqual([
+        {
+          path: "buildNumber.unit",
+          message: 'expected one of "second", "minute", got the string "hour"',
+        },
+      ]);
+    });
+  });
+
   describe("semver build numbers with previews", () => {
     const ios = { type: "ios", source: { kind: "xcodeproj", file: "ios/App.xcodeproj" } } as const;
     const semverIos = { ...ios, release: "manual", buildNumber: { strategy: "semver" } } as const;
