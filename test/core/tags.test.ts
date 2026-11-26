@@ -228,3 +228,21 @@ describe("marker templates with dashed target names", () => {
     expect(index.unknownMarkers).toEqual([]);
   });
 });
+
+describe("a placeholder used twice in a template", () => {
+  const tags = { ...TAGS, release: "release/{version}/v{version}" };
+
+  it("parses only tags that repeat the same value", () => {
+    expect(parseTag("release/1.2.0/v1.2.0", tags.release)).toEqual({ version: "1.2.0" });
+    expect(parseTag("release/1.2.0/v1.3.0", tags.release)).toBeNull();
+    expect(parseTag("x/web/web-1.0.0", "x/{target}/{target}-{version}")).toEqual({
+      target: "web",
+      version: "1.0.0",
+    });
+  });
+
+  it("indexes a repo's tags instead of throwing", () => {
+    const index = indexTags(["v1.0.0", "release/1.2.0/v1.2.0"], { tags, targets: TARGETS });
+    expect([...index.releases.keys()]).toEqual(["1.2.0"]);
+  });
+});
