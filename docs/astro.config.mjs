@@ -55,7 +55,7 @@ export default defineConfig({
         { icon: "github", label: "GitHub", href: "https://github.com/demonsters/launchset" },
       ],
       sidebar: [
-        { label: "Start here", items: ["getting-started", "concepts", "changesets"] },
+        { label: "Start here", items: ["getting-started", "concepts", "changesets", "comparison"] },
         {
           label: "Set up",
           items: ["github-app", "guides/migrating", "guides/with-changesets"],

@@ -1,8 +1,8 @@
 ---
 /**
  * The homepage below the hero: how a release goes, what lands in each target's files, who does
- * what, the awkward cases, and how to start. Colours of the four example targets match the
- * trails in the hero.
+ * what, the awkward cases, where launchset fits next to other tools, and how to start. Colours
+ * of the four example targets match the trails in the hero.
  */
 import { Code, Icon } from "@astrojs/starlight/components";
 
@@ -163,6 +163,19 @@ const cases = [
     body: "React Native, Capacitor and Expo apps use the same Android and iOS targets, pointed at their own files.",
   },
 ];
+
+const fit = {
+  good: [
+    "One product, released as several things at once: an API image, a web app, Android and iOS apps.",
+    "You want each PR to say what it changes in a changeset, and a release PR to review.",
+    "You'd rather not script `versionName`, `MARKETING_VERSION` and store build numbers yourself.",
+  ],
+  other: [
+    "You publish libraries with versions of their own: Changesets or release-please.",
+    "Your team writes Conventional Commits and wants every merge to release: semantic-release.",
+    "Your CI isn't GitHub Actions or GitLab CI: semantic-release runs on most CI services.",
+  ],
+};
 
 const hosts = [
   {
@@ -394,6 +407,29 @@ const docs = [
     </dl>
   </section>
 
+  <section class="ls-section" aria-labelledby="fit">
+    <h2 id="fit" class="ls-h2">Where launchset fits</h2>
+    <p class="ls-intro">
+      launchset borrows changesets and the release PR from Changesets. It's built for apps and
+      images that share one version, not for libraries that each have their own. For those, the
+      established tools do a better job.
+    </p>
+    <div class="ls-fit">
+      <div>
+        <h3 class="ls-h3">launchset is a good fit when</h3>
+        <ul>{fit.good.map((item) => <li set:html={inline(item)} />)}</ul>
+      </div>
+      <div>
+        <h3 class="ls-h3">Pick another tool when</h3>
+        <ul>{fit.other.map((item) => <li set:html={inline(item)} />)}</ul>
+      </div>
+    </div>
+    <p class="ls-note">
+      Feature by feature against Changesets, release-please and semantic-release, including where
+      they're ahead: <a href={to("comparison/")}>Compared to other tools</a>.
+    </p>
+  </section>
+
   <section class="ls-section ls-split" aria-labelledby="agents">
     <div>
       <h2 id="agents" class="ls-h2">Hand it to an agent</h2>
@@ -471,8 +507,10 @@ const docs = [
     <div class="ls-footer__oss" id="open-source">
       <h2 class="ls-footer__title">Open source</h2>
       <p>
-        launchset is built and used at demonsters, and open source under the MIT license. Issues and
-        pull requests are welcome on <a href="https://github.com/demonsters/launchset">GitHub</a>.
+        launchset is built and used at
+        <a href="https://demonsters.nl" target="_blank" rel="noopener">De Monsters</a>, and open source
+        under the MIT license. Issues and pull requests are welcome on
+        <a href="https://github.com/demonsters/launchset">GitHub</a>.
       </p>
     </div>
     <div class="ls-footer__links">
@@ -834,6 +872,26 @@ const docs = [
     margin: 0;
     font-size: 0.9875rem;
     line-height: 1.6;
+  }
+
+  /* Where launchset fits */
+
+  .ls-fit {
+    display: grid;
+    gap: 2rem 4rem;
+    margin-top: 2rem;
+  }
+  @media (min-width: 50rem) {
+    .ls-fit {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  .ls-fit ul {
+    margin: 0;
+    padding-inline-start: 1.1rem;
+  }
+  .ls-fit li + li {
+    margin-top: 0.5rem;
   }
 
   /* Start */
