@@ -11,7 +11,7 @@ export const CONFIG_DESCRIPTIONS: Record<string, string> = {
     "Path or URL of the JSON Schema, for editor completion in `launchset.config.json`. Ignored by launchset.",
   version: "Where the repo's one version lives.",
   "version.file":
-    'A JSON file with a top-level `"version"`. The release PR bumps it, and a `package-lock.json` or `npm-shrinkwrap.json` next to it gets its root version updated too.',
+    "A JSON file with a top-level `\"version\"`, or a Flutter app's `pubspec.yaml`. The release PR bumps it. A `package-lock.json` or `npm-shrinkwrap.json` next to a JSON file gets its root version updated too. In a `pubspec.yaml` the `+N` build number is kept, and CI writes the run's build number there.",
   changelog: "The changelog file.",
   "changelog.file":
     "The changelog, relative to the repo root. New sections are inserted before the first version heading.",
@@ -117,7 +117,7 @@ export const CONFIG_DESCRIPTIONS: Record<string, string> = {
   '#Targets of type "android"': "An Android app.",
   "targets[android].type": "Selects this target type.",
   "targets[android].source":
-    "Where the version lives. `kind` is `gradle`, `gradle-properties`, `capacitor` or `expo`.",
+    "Where the version lives. `kind` is `gradle`, `gradle-properties`, `capacitor`, `expo` or `flutter`.",
   "targets[android].source[gradle].file":
     "`build.gradle` or `build.gradle.kts`. launchset edits the literal `versionCode` and `versionName` in `defaultConfig`.",
   "targets[android].source[gradle-properties].file": "The `gradle.properties` file.",
@@ -127,6 +127,8 @@ export const CONFIG_DESCRIPTIONS: Record<string, string> = {
     "The Capacitor project directory. launchset edits `<dir>/android/app/build.gradle`.",
   "targets[android].source[expo].file":
     "The Expo config. launchset edits `expo.version` and `expo.android.versionCode`.",
+  "targets[android].source[flutter].dir":
+    "The Flutter project folder, relative to the repo root. launchset edits `version` in its `pubspec.yaml`, and Flutter passes it to Gradle.",
   "targets[android].store": 'Google Play settings, needed for `verify: ["store"]`.',
   "targets[android].store.packageName": "The application id, for example `com.example.app`.",
   "targets[android].verify":
@@ -134,7 +136,7 @@ export const CONFIG_DESCRIPTIONS: Record<string, string> = {
   '#Targets of type "ios"': "An iOS app.",
   "targets[ios].type": "Selects this target type.",
   "targets[ios].source":
-    "Where the version lives. `kind` is `xcodeproj`, `plist`, `xcconfig`, `capacitor` or `expo`.",
+    "Where the version lives. `kind` is `xcodeproj`, `plist`, `xcconfig`, `capacitor`, `expo` or `flutter`.",
   "targets[ios].source[xcodeproj].file":
     "The `.xcodeproj` directory. launchset edits `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` in its `project.pbxproj`.",
   "targets[ios].source[xcodeproj].xcodeTargets":
@@ -148,6 +150,8 @@ export const CONFIG_DESCRIPTIONS: Record<string, string> = {
   "targets[ios].source[capacitor].xcodeTargets": "Xcode targets to stamp, like for `xcodeproj`.",
   "targets[ios].source[expo].file":
     "The Expo config. launchset edits `expo.version` and `expo.ios.buildNumber`.",
+  "targets[ios].source[flutter].dir":
+    "The Flutter project folder, relative to the repo root. launchset edits `version` in its `pubspec.yaml`, and Flutter passes it to Xcode.",
   "targets[ios].store": 'App Store Connect settings, needed for `verify: ["store"]`.',
   "targets[ios].store.appId":
     "The numeric Apple ID of the app (App Store Connect, App Information).",

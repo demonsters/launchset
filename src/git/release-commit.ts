@@ -7,6 +7,8 @@
  * commit as the original run.
  */
 
+import { isMap, isScalar, parseDocument } from "yaml";
+import { versionFileFormat } from "../core/config/schema.ts";
 import { LaunchsetError } from "../core/errors.ts";
 import { type Git, topPathspec } from "./index.ts";
 
@@ -31,7 +33,8 @@ export interface FindReleaseCommitOptions {
 const BATCH = 64;
 
 /**
- * Read `version` from the JSON version file at commit `sha`. `file` is repo-relative (convert
+ * Read `version` from the version file at commit `sha` (JSON, or a pubspec.yaml without its
+ * `+build` suffix). `file` is repo-relative (convert
  * a config-root-relative `version.file` with `git.toRepoPath`).
  */
 export async function readRootVersion(
@@ -43,8 +46,9 @@ export async function readRootVersion(
   return text === undefined ? undefined : parseRootVersion(text, file, sha);
 }
 
-/** The `version` field of a JSON version file's text (`file` at `sha`, for the error). */
+/** The `version` field of a version file's text (`file` at `sha`, for the error). */
 function parseRootVersion(text: string, file: string, sha: string): string | undefined {
+  if (versionFileFormat(file) === "pubspec") return parsePubspecVersion(text, file, sha);
   let data: unknown;
   try {
     data = JSON.parse(text.replace(/^\uFEFF/, ""));
@@ -63,7 +67,27 @@ function parseRootVersion(text: string, file: string, sha: string): string | und
 }
 
 /**
- * A `readVersion` for a JSON version file, cached per sha. `prefetch` reads the file at many
+ * The build name of a pubspec's top-level `version` (`1.5.0+12` → `1.5.0`). A commit that only
+ * changes the `+N` keeps its version, so it is never a release commit.
+ */
+function parsePubspecVersion(text: string, file: string, sha: string): string | undefined {
+  const doc = parseDocument(text.replace(/^\uFEFF/, ""));
+  const error = doc.errors[0];
+  if (error) {
+    throw new LaunchsetError(
+      "invalid-version-file",
+      `Could not parse ${file} at commit ${sha.slice(0, 12)}: ${error.message.split("\n")[0]}`,
+      { hint: "The version file must be valid YAML in every commit launchset inspects." },
+    );
+  }
+  if (!isMap(doc.contents)) return undefined;
+  const node: unknown = doc.contents.get("version", true);
+  const value = isScalar(node) ? node.value : undefined;
+  return typeof value === "string" ? value.split("+")[0] : undefined;
+}
+
+/**
+ * A `readVersion` for a version file, cached per sha. `prefetch` reads the file at many
  * commits with one `git cat-file --batch`; a text is parsed only when its version is read.
  */
 export function versionReader(git: Git, file: string): ReadVersion {

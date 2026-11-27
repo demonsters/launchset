@@ -49,7 +49,7 @@ They are also mobile only. If the same release has to ship an API image or a web
 | | launchset | Tramline | Runway | Expo EAS |
 | --- | --- | --- | --- | --- |
 | **What it is** | A CLI and a CI action in your repo | A release management app, hosted or self-hosted | A hosted release management service | Expo's build, submit and update service |
-| **Ships** | Docker, web, Android, iOS and custom targets | iOS and Android apps, including Flutter | iOS and Android apps | Expo and React Native apps |
+| **Ships** | Docker, web, Android, iOS and custom targets, including React Native, Capacitor, Expo and Flutter apps | iOS and Android apps, including Flutter | iOS and Android apps | Expo and React Native apps |
 | **The next version comes from** | Changesets in each PR | A strategy per release train (by default a minor bump per release, a patch bump for fixes) | A strategy per app | You, in the app config |
 | **Version written into files** | By the release PR, which you review and merge | Passed to CI; optionally a version bump PR | A version bump PR | You keep it in the app config |
 | **Build numbers** | Computed in CI (timestamp by default), optionally checked against the stores | A counter that checks the stores' latest build | Not covered in their public docs | A counter on Expo's servers (`autoIncrement`) |
@@ -72,7 +72,6 @@ Runway's and Tramline's details come from their marketing pages and docs, and EA
 - **Your team already writes Conventional Commits** and likes it. release-please and semantic-release read the release from those messages, with no extra file per PR.
 - **You want every merge to release, without a release PR.** That's semantic-release.
 - **You want someone to run the store side.** Scheduled release trains, store review submissions, staged rollouts that pause on crashes, sign-offs: that's Tramline (open source, can be self-hosted) or Runway (hosted). launchset leaves those steps to your own fastlane or Gradle steps.
-- **Your app is a Flutter app.** launchset has no Flutter target, only a [custom target](/targets/custom/) with a regex for `pubspec.yaml`. Tramline supports `pubspec.yaml` directly.
 - **You have one Expo app and nothing else in the repo.** EAS's remote version source and `autoIncrement` may be all the versioning you need. launchset helps more when the same release also ships an API or a web app.
 - **Your targets ship on their own schedules, with their own versions.** launchset releases everything together on purpose. Only [manual targets](/guides/manual-targets/) step outside that, and they still share the version.
 - **Your CI isn't GitHub Actions or GitLab CI.** semantic-release runs on most CI services; Runway and Tramline work with Bitrise and others.

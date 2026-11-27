@@ -13,6 +13,7 @@
  * `fillTemplate` in `workflows.ts`.
  */
 
+import { posix } from "node:path";
 import type {
   ResolvedConfig,
   ResolvedDockerTarget,
@@ -33,6 +34,7 @@ import {
 import {
   androidDir,
   fillTemplate,
+  flutterDir,
   iosProject,
   iosScheme,
   isNpmTarget,
@@ -303,6 +305,23 @@ function targetJob(
   gitlabRegistries: Set<string>,
 ): string {
   const common = { target: target.name, verify_variables: verifyComment(target) };
+  const flutter = flutterDir(target);
+  if (flutter !== undefined && (target.type === "android" || target.type === "ios")) {
+    const file = `targets/flutter-${target.type}.yml`;
+    return fillTemplate(
+      template(file),
+      {
+        ...common,
+        android_image_tag: ANDROID_IMAGE_TAG,
+        flutter_dir: shellWord(flutter),
+        pubspec: posix.join(flutter, "pubspec.yaml"),
+        package_name:
+          (target.type === "android" ? target.store?.packageName : undefined) ??
+          "<your.package.name>",
+      },
+      file,
+    );
+  }
   switch (target.type) {
     case "docker":
       return dockerTarget(target, input, gitlabRegistries);

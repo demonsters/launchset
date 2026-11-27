@@ -33,11 +33,12 @@ export default defineConfig({
 | `ios` | An iOS app. Stamps the marketing version and build number. | [iOS](/targets/ios/) |
 | `custom` | Anything else: an npm package, a Helm chart, a version file. | [Custom](/targets/custom/) |
 
-React Native, Capacitor and Expo apps use the `android` and `ios` types with the right `source`:
+React Native, Capacitor, Expo and Flutter apps use the `android` and `ios` types with the right `source`:
 
 - [React Native](/targets/react-native/): `gradle` and `xcodeproj`.
 - [Capacitor](/targets/capacitor/): `kind: "capacitor"`.
 - [Expo](/targets/expo/) (experimental): `kind: "expo"`, or environment variables for `app.config.js`.
+- [Flutter](/targets/flutter/) (experimental): `kind: "flutter"`, which stamps `pubspec.yaml`.
 
 ## How stamping works
 
@@ -45,8 +46,8 @@ There are two kinds of stamping.
 
 | What | Written by | Committed? |
 | --- | --- | --- |
-| **Marketing version** (`versionName`, `CFBundleShortVersionString`, `expo.version`, ...) | The release PR. In CI also by `stamp`, so previews carry their own version. | In the release PR, yes. In CI, no. |
-| **Build number** (`versionCode`, `CFBundleVersion`, ...) | `launchset stamp`, in CI only. | Never. |
+| **Marketing version** (`versionName`, `CFBundleShortVersionString`, `expo.version`, the `pubspec.yaml` version, ...) | The release PR. In CI also by `stamp`, so previews carry their own version. | In the release PR, yes. In CI, no. |
+| **Build number** (`versionCode`, `CFBundleVersion`, the `+N` in `pubspec.yaml`, ...) | `launchset stamp`, in CI only. | Never. |
 
 The build numbers in your repo are placeholders. launchset doesn't care what they are.
 

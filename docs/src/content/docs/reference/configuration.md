@@ -122,7 +122,7 @@ Everything is optional except `targets`. `$schema` is only for editors: point it
 | --- | --- | --- | --- |
 | `$schema` | `string` |  | Path or URL of the JSON Schema, for editor completion in `launchset.config.json`. Ignored by launchset. |
 | `version` | `object` |  | Where the repo's one version lives. |
-| `version.file` | `string` | `"package.json"` | A JSON file with a top-level `"version"`. The release PR bumps it, and a `package-lock.json` or `npm-shrinkwrap.json` next to it gets its root version updated too. |
+| `version.file` | `string` | `"package.json"` | A JSON file with a top-level `"version"`, or a Flutter app's `pubspec.yaml`. The release PR bumps it. A `package-lock.json` or `npm-shrinkwrap.json` next to a JSON file gets its root version updated too. In a `pubspec.yaml` the `+N` build number is kept, and CI writes the run's build number there. |
 | `changelog` | `object` |  | The changelog file. |
 | `changelog.file` | `string` | `"CHANGELOG.md"` | The changelog, relative to the repo root. New sections are inserted before the first version heading. |
 | `changelog.links` | `boolean` | `true` | Add PR links and authors to changelog lines. Needs a token; without one, or when no PR is found, the links are left out. |
@@ -223,13 +223,14 @@ An Android app.
 | Option | Type | Default | What it does |
 | --- | --- | --- | --- |
 | `targets.<name>.type` | `"android"` | required | Selects this target type. |
-| `targets.<name>.source` | `object` | required | Where the version lives. `kind` is `gradle`, `gradle-properties`, `capacitor` or `expo`. |
+| `targets.<name>.source` | `object` | required | Where the version lives. `kind` is `gradle`, `gradle-properties`, `capacitor`, `expo` or `flutter`. |
 | `targets.<name>.source.file` <br>*kind gradle* | `string` | required | `build.gradle` or `build.gradle.kts`. launchset edits the literal `versionCode` and `versionName` in `defaultConfig`. |
 | `targets.<name>.source.file` <br>*kind gradle-properties* | `string` | required | The `gradle.properties` file. |
 | `targets.<name>.source.versionNameKey` <br>*kind gradle-properties* | `string` | `"VERSION_NAME"` | Key that holds the version name. |
 | `targets.<name>.source.versionCodeKey` <br>*kind gradle-properties* | `string` | `"VERSION_CODE"` | Key that holds the version code. |
 | `targets.<name>.source.dir` <br>*kind capacitor* | `string` | required | The Capacitor project directory. launchset edits `<dir>/android/app/build.gradle`. |
 | `targets.<name>.source.file` <br>*kind expo* | `string` | `"app.json"` | The Expo config. launchset edits `expo.version` and `expo.android.versionCode`. |
+| `targets.<name>.source.dir` <br>*kind flutter* | `string` | `"."` | The Flutter project folder, relative to the repo root. launchset edits `version` in its `pubspec.yaml`, and Flutter passes it to Gradle. |
 | `targets.<name>.store` | `object` |  | Google Play settings, needed for `verify: ["store"]`. |
 | `targets.<name>.store.packageName` | `string` | required | The application id, for example `com.example.app`. |
 | `targets.<name>.verify` | `"store"[]` | `[]` | `["store"]` compares the build number with Google Play before uploading. Needs `store.packageName` and the `LAUNCHSET_PLAY_SERVICE_ACCOUNT_JSON` secret. |
@@ -241,7 +242,7 @@ An iOS app.
 | Option | Type | Default | What it does |
 | --- | --- | --- | --- |
 | `targets.<name>.type` | `"ios"` | required | Selects this target type. |
-| `targets.<name>.source` | `object` | required | Where the version lives. `kind` is `xcodeproj`, `plist`, `xcconfig`, `capacitor` or `expo`. |
+| `targets.<name>.source` | `object` | required | Where the version lives. `kind` is `xcodeproj`, `plist`, `xcconfig`, `capacitor`, `expo` or `flutter`. |
 | `targets.<name>.source.file` <br>*kind xcodeproj* | `string` | required | The `.xcodeproj` directory. launchset edits `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` in its `project.pbxproj`. |
 | `targets.<name>.source.xcodeTargets` <br>*kind xcodeproj* | `string[]` |  | Xcode targets to stamp. Default: every target that has these settings, which includes app extensions and widgets. |
 | `targets.<name>.source.file` <br>*kind plist* | `string` |  | One `Info.plist`. Use this or `files`. |
@@ -250,6 +251,7 @@ An iOS app.
 | `targets.<name>.source.dir` <br>*kind capacitor* | `string` | required | The Capacitor project directory. launchset edits `<dir>/ios/App/App.xcodeproj`. |
 | `targets.<name>.source.xcodeTargets` <br>*kind capacitor* | `string[]` |  | Xcode targets to stamp, like for `xcodeproj`. |
 | `targets.<name>.source.file` <br>*kind expo* | `string` | `"app.json"` | The Expo config. launchset edits `expo.version` and `expo.ios.buildNumber`. |
+| `targets.<name>.source.dir` <br>*kind flutter* | `string` | `"."` | The Flutter project folder, relative to the repo root. launchset edits `version` in its `pubspec.yaml`, and Flutter passes it to Xcode. |
 | `targets.<name>.store` | `object` |  | App Store Connect settings, needed for `verify: ["store"]`. |
 | `targets.<name>.store.appId` | `string` | required | The numeric Apple ID of the app (App Store Connect, App Information). |
 | `targets.<name>.verify` | `"store"[]` | `[]` | `["store"]` compares the build number with App Store Connect before uploading. Needs `store.appId` and the three `LAUNCHSET_ASC_*` secrets. |

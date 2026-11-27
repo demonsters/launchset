@@ -131,7 +131,8 @@ export type SourceFormat =
   | "pbxproj"
   | "plist"
   | "xcconfig"
-  | "expo";
+  | "expo"
+  | "pubspec";
 
 export interface SourceFile {
   /** Config field the path comes from, e.g. `targets.android.source.file`. */
@@ -198,6 +199,9 @@ async function collectSourceFiles(target: ResolvedTarget, root: string): Promise
       case "expo":
         await needFile(`${base}.file`, "expo", source.file);
         break;
+      case "flutter":
+        await needFile(`${base}.dir`, "pubspec", join(source.dir, "pubspec.yaml"));
+        break;
       case "capacitor": {
         const groovy = join(source.dir, "android/app/build.gradle");
         const kts = join(source.dir, "android/app/build.gradle.kts");
@@ -242,6 +246,9 @@ async function collectSourceFiles(target: ResolvedTarget, root: string): Promise
         break;
       case "expo":
         await needFile(`${base}.file`, "expo", source.file);
+        break;
+      case "flutter":
+        await needFile(`${base}.dir`, "pubspec", join(source.dir, "pubspec.yaml"));
         break;
     }
   }

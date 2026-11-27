@@ -232,7 +232,15 @@ export function androidDir(target: ResolvedAndroidTarget): string {
       return posix.join(source.dir, "android");
     case "expo":
       return "android";
+    case "flutter":
+      return posix.join(source.dir, "android");
   }
+}
+
+/** The Flutter project folder of a target with `source: { kind: "flutter" }`, else undefined. */
+export function flutterDir(target: ResolvedTarget): string | undefined {
+  if (target.type !== "android" && target.type !== "ios") return undefined;
+  return target.source.kind === "flutter" ? posix.normalize(target.source.dir) : undefined;
 }
 
 export function iosProject(target: ResolvedIosTarget): string {
@@ -242,6 +250,8 @@ export function iosProject(target: ResolvedIosTarget): string {
       return posix.normalize(source.file);
     case "capacitor":
       return posix.join(source.dir, "ios/App/App.xcodeproj");
+    case "flutter":
+      return posix.join(source.dir, "ios/Runner.xcodeproj");
     default:
       return "<path to App.xcodeproj>";
   }
@@ -292,6 +302,22 @@ function buildSnippet(
   hints: NonNullable<WorkflowTemplateInput["hints"]>,
 ): string {
   const common = { target: target.name, if: stepCondition(target, mode) };
+  const flutter = flutterDir(target);
+  if (flutter !== undefined && (target.type === "android" || target.type === "ios")) {
+    const file = `snippets/flutter-${target.type}.yml`;
+    return fillTemplate(
+      readTemplate(file),
+      {
+        ...common,
+        flutter_dir: scalar(flutter),
+        pubspec: posix.join(flutter, "pubspec.yaml"),
+        package_name:
+          (target.type === "android" ? target.store?.packageName : undefined) ??
+          "<your.package.name>",
+      },
+      file,
+    );
+  }
   switch (target.type) {
     case "docker": {
       const hint = hints[target.name] ?? {};

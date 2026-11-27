@@ -22,6 +22,7 @@ android: {
 | `gradle-properties` | The keys `VERSION_NAME` and `VERSION_CODE` in a `gradle.properties` file. | Change the names with `versionNameKey` and `versionCodeKey`. |
 | `capacitor` | `<dir>/android/app/build.gradle`. | See [Capacitor](/targets/capacitor/). |
 | `expo` | `expo.version` and `expo.android.versionCode` in `app.json`. | See [Expo](/targets/expo/). |
+| `flutter` | `version` in `<dir>/pubspec.yaml`, which Flutter passes to Gradle. | See [Flutter](/targets/flutter/). |
 
 Bare React Native uses `gradle`. See [React Native](/targets/react-native/).
 

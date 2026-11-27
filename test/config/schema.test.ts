@@ -584,7 +584,7 @@ describe("validation rules (spec 5)", () => {
         {
           path: "targets.a.source.kind",
           message:
-            'expected one of "gradle", "gradle-properties", "capacitor", "expo", got the string "gradel"',
+            'expected one of "gradle", "gradle-properties", "capacitor", "expo", "flutter", got the string "gradel"',
         },
       ]);
       expect(issues({ targets: { a: { type: "android", source: { kind: "gradle" } } } })).toEqual([
@@ -596,6 +596,50 @@ describe("validation rules (spec 5)", () => {
       expect(
         issues({ targets: { a: { type: "android", source: { kind: "gradle", file: "" } } } }),
       ).toEqual([{ path: "targets.a.source.file", message: "expected a non-empty string" }]);
+    });
+
+    it("Flutter sources: dir defaults to the repo root, and the eas strategy is refused", () => {
+      const config = resolveConfig({
+        targets: {
+          android: { type: "android", source: { kind: "flutter" } },
+          ios: { type: "ios", source: { kind: "flutter", dir: "apps/mobile" } },
+        },
+      });
+      expect(config.targets.android).toMatchObject({ source: { kind: "flutter", dir: "." } });
+      expect(config.targets.ios).toMatchObject({ source: { kind: "flutter", dir: "apps/mobile" } });
+      expect(
+        issues({
+          buildNumber: { strategy: "eas" },
+          preview: false,
+          targets: {
+            android: { type: "android", source: { kind: "flutter" } },
+            ios: { type: "ios", source: { kind: "expo" } },
+          },
+        }),
+      ).toEqual([
+        {
+          path: "targets.android.buildNumber.strategy",
+          message:
+            'the "eas" strategy is for Expo builds numbered by EAS; a Flutter app needs a build number from launchset (use "timestamp", "run-number" or "semver")',
+        },
+      ]);
+    });
+
+    it("version.file: package.json-style JSON or a pubspec.yaml", () => {
+      for (const file of ["pubspec.yaml", "apps/mobile/pubspec.yaml"]) {
+        expect(
+          resolveConfig({ version: { file }, targets: { web: { type: "web" } } }).version.file,
+        ).toBe(file);
+      }
+      expect(
+        issues({ version: { file: "Chart.yaml" }, targets: { web: { type: "web" } } }),
+      ).toEqual([
+        {
+          path: "version.file",
+          message:
+            "expected a package.json-style JSON file or a Flutter pubspec.yaml; other YAML files can't hold the version",
+        },
+      ]);
     });
 
     it("enum values and types", () => {

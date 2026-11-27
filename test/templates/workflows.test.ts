@@ -758,3 +758,45 @@ describe("build-step guard", () => {
     expect(names.indexOf("Build steps missing (web)")).toBeLessThan(names.length - 1);
   });
 });
+
+describe("Flutter targets", () => {
+  const config = resolveConfig({
+    targets: {
+      "mobile-android": {
+        type: "android",
+        source: { kind: "flutter", dir: "apps/mobile" },
+        store: { packageName: "com.acme.app" },
+      },
+      "mobile-ios": { type: "ios", source: { kind: "flutter", dir: "apps/mobile" } },
+    },
+  });
+  const { text, workflow } = render(config).release;
+  const build = job(workflow, "build");
+
+  it("build in the Flutter folder and pass launchset's numbers as --build-name and --build-number", () => {
+    expect(text).toContain("#   working-directory: apps/mobile");
+    expect(text).toContain(
+      '#   run: flutter build appbundle --release --build-name "$LAUNCHSET_VERSION" --build-number "$LAUNCHSET_BUILD_NUMBER"',
+    );
+    expect(text).toContain("#     flutter build ipa --release \\");
+    expect(text).toContain("#     LAUNCHSET_VERSION: ${{ steps.stamp.outputs.marketing-version }}");
+    expect(text).toContain("#   uses: subosito/flutter-action@v2");
+    expect(text).toContain("--aab build/app/outputs/bundle/release/app-release.aab");
+    expect(text).toContain('--package_name "com.acme.app"');
+    expect(text).toContain("apps/mobile/pubspec.yaml");
+    expect(text).not.toContain("xcodebuild archive");
+    expect(text).not.toContain("./gradlew bundleRelease");
+  });
+
+  it("keeps the examples as comments behind the 'Build steps missing' guard, iOS on macOS", () => {
+    for (const step of build.steps) {
+      expect(`${step.run ?? ""}${step.uses ?? ""}`).not.toMatch(/flutter|fastlane/);
+    }
+    const names = build.steps.map((s) => s.name ?? "");
+    expect(names).toContain("Build steps missing (mobile-android)");
+    expect(names).toContain("Build steps missing (mobile-ios)");
+    expect(build["runs-on"]).toBe(
+      "${{ matrix.target == 'mobile-ios' && 'macos-latest' || 'ubuntu-latest' }}",
+    );
+  });
+});

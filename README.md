@@ -59,6 +59,7 @@ Start with [Getting started](https://demonsters.github.io/launchset/getting-star
 | [Android](https://demonsters.github.io/launchset/targets/android/) | `versionName` and `versionCode` (`build.gradle`, `build.gradle.kts` or `gradle.properties`) |
 | [iOS](https://demonsters.github.io/launchset/targets/ios/) | marketing version and build number (Xcode project, `Info.plist` files or an `.xcconfig`) |
 | [React Native](https://demonsters.github.io/launchset/targets/react-native/), [Capacitor](https://demonsters.github.io/launchset/targets/capacitor/), [Expo](https://demonsters.github.io/launchset/targets/expo/) (experimental) | the same Android and iOS targets, pointed at their files |
+| [Flutter](https://demonsters.github.io/launchset/targets/flutter/) (experimental) | the same Android and iOS targets: `version` in `pubspec.yaml`, with the build number after the `+` in CI |
 | [Custom](https://demonsters.github.io/launchset/targets/custom/) | anything else: an npm package, a CLI, a file of your choice |
 
 ## Agent skills
