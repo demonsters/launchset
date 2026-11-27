@@ -248,7 +248,7 @@ The same three secrets are used by `verify`. `key_content` takes the raw content
 
 For targets with `source: { kind: "flutter" }`. The `stamp` step has written the version and build number into the app's `pubspec.yaml`. Pass them to `flutter build` as well, so the build doesn't depend on what ran before it. See [Flutter](/targets/flutter/).
 
-Android, with the upload from [fastlane supply](#android-upload-with-fastlane-supply) after it. The bundle lands in `build/app/outputs/bundle/release/app-release.aab` under the Flutter folder:
+Android, with the upload from [fastlane supply](#android-upload-with-fastlane-supply) after it. The bundle lands in `build/app/outputs/bundle/release/app-release.aab` under the Flutter folder. fastlane runs in `android/`, where its `Gemfile` is, so pass `--aab ../build/app/outputs/bundle/release/app-release.aab`:
 
 ```yaml
 - uses: actions/setup-java@v6
@@ -272,7 +272,7 @@ Android, with the upload from [fastlane supply](#android-upload-with-fastlane-su
 
 Signing works as in [Android with Gradle](#android-with-gradle): the release `signingConfig` in `android/app/build.gradle.kts` reads the keystore.
 
-iOS runs on macOS, with the upload from [TestFlight with fastlane](#ios-upload-to-testflight-with-fastlane) after it. `flutter build ipa` archives and exports in one step, to `build/ios/ipa/`:
+iOS runs on macOS, with the upload from [TestFlight with fastlane](#ios-upload-to-testflight-with-fastlane) after it. `flutter build ipa` archives and exports in one step, to `build/ios/ipa/`. fastlane runs in `ios/`, so pass `ipa:"$(ls ../build/ios/ipa/*.ipa | head -n 1)"`:
 
 ```yaml
 - uses: subosito/flutter-action@v2

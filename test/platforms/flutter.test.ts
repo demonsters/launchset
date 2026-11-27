@@ -58,6 +58,13 @@ describe("a Flutter-only repo (version.file: pubspec.yaml)", () => {
     expect(await readRootVersion(resolveConfig(input), root)).toBe("1.4.0");
   });
 
+  it("an empty version gets a hint in pubspec syntax", async () => {
+    await writeFile(join(root, "pubspec.yaml"), 'name: app\nversion: ""\n');
+    await expect(readRootVersion(resolveConfig(input), root)).rejects.toMatchObject({
+      hint: "Add a top-level version, e.g. `version: 0.1.0+1`.",
+    });
+  });
+
   it("the release PR writes the build name once and keeps +N", async () => {
     const changes = await stampForRelease(resolveConfig(input), root, "1.5.0");
     expect(changes.map((c) => c.path)).toEqual(["pubspec.yaml"]);

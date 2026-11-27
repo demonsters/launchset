@@ -849,6 +849,13 @@ export function versionFileFormat(file: string): "json" | "pubspec" {
   return /(^|[\\/])pubspec\.yaml$/.test(file) ? "pubspec" : "json";
 }
 
+/** How to add a missing version to `version.file`, in that file's own syntax. */
+export function rootVersionHint(file: string): string {
+  return versionFileFormat(file) === "pubspec"
+    ? "Add a top-level version, e.g. `version: 0.1.0+1`."
+    : 'Add a "version" field, e.g. "version": "0.1.0".';
+}
+
 /** Cross-field rules from spec 5 that zod's per-field checks can't express. */
 function semanticIssues(config: ResolvedConfig): ConfigIssue[] {
   const issues: ConfigIssue[] = [];

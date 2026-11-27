@@ -701,6 +701,11 @@ describe("Flutter targets in the targets file", () => {
     const android = job(targets.doc, ".launchset-android");
     expect(android.image).toBe("cimg/android:2026.11-node");
     expect(android.before_script?.join("\n")).toContain("https://github.com/flutter/flutter.git");
+    // A shell runner that keeps $HOME reuses the clone instead of failing on it.
+    expect(android.before_script?.join("\n")).toContain('test -d "$HOME/flutter" || git clone');
+    expect(targets.text).toContain("# - cd android");
+    expect(targets.text).toContain("--aab ../build/app/outputs/bundle/release/app-release.aab");
+    expect(targets.text).toContain("# - cd ios");
     expect(job(targets.doc, ".launchset-ios").tags).toEqual(["saas-macos-medium-m1"]);
     expect(targets.text).toContain("# - cd .");
     expect(targets.text).toContain(

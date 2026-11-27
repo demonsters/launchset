@@ -32,7 +32,8 @@
 #     LAUNCHSET_VERSION: ${{ steps.stamp.outputs.marketing-version }}
 #     LAUNCHSET_BUILD_NUMBER: ${{ steps.stamp.outputs.build-number }}
 # - name: Upload to TestFlight (@@target@@)
-#   # Uses a fastlane lane (see "Workflow recipes" in the launchset docs):
+#   # Uses a fastlane lane (see "Workflow recipes" in the launchset docs). As in Flutter's
+#   # fastlane guide, the Gemfile and fastlane/Fastfile are in @@flutter_native_dir@@:
 #   #   lane :testflight do |options|
 #   #     api_key = app_store_connect_api_key(key_id: ENV.fetch("ASC_KEY_ID"),
 #   #       issuer_id: ENV.fetch("ASC_ISSUER_ID"), key_content: ENV.fetch("ASC_PRIVATE_KEY"))
@@ -40,8 +41,8 @@
 #   #       skip_waiting_for_build_processing: true)
 #   #   end
 #   if: @@if@@
-#   working-directory: @@flutter_dir@@
-#   run: bundle exec fastlane testflight ipa:"$(ls build/ios/ipa/*.ipa | head -n 1)"
+#   working-directory: @@flutter_native_dir@@
+#   run: bundle exec fastlane testflight ipa:"$(ls ../build/ios/ipa/*.ipa | head -n 1)"
 #   env:
 #     # The raw contents of the .p8 key (also used by `verify`).
 #     ASC_KEY_ID: ${{ secrets.LAUNCHSET_ASC_KEY_ID }}
