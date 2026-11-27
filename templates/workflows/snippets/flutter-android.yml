@@ -38,11 +38,12 @@
 #     ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
 #     ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
 # - name: Upload to Google Play (@@target@@)
+#   # As in Flutter's fastlane guide, the Gemfile is in @@flutter_native_dir@@.
 #   if: @@if@@
-#   working-directory: @@flutter_dir@@
+#   working-directory: @@flutter_native_dir@@
 #   run: |
 #     bundle exec fastlane supply \
-#       --aab build/app/outputs/bundle/release/app-release.aab \
+#       --aab ../build/app/outputs/bundle/release/app-release.aab \
 #       --track "$PLAY_TRACK" \
 #       --package_name "@@package_name@@"
 #   env:

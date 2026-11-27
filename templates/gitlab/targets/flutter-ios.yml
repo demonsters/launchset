@@ -11,7 +11,9 @@
   @@verify_variables@@
   before_script:
     # Flutter from its git repository: pin a release with --branch <version> (e.g. 3.38.0).
-    - git clone --depth 1 --branch stable https://github.com/flutter/flutter.git "$HOME/flutter"
+    # A runner that keeps its home folder between jobs reuses the clone. One with Flutter
+    # installed can drop these two lines.
+    - test -d "$HOME/flutter" || git clone --depth 1 --branch stable https://github.com/flutter/flutter.git "$HOME/flutter"
     - export PATH="$HOME/flutter/bin:$PATH"
   script:
     # Remove this line once you've added the build and upload steps below: it stops the release
@@ -27,7 +29,8 @@
     #
     # - cd @@flutter_dir@@
     # - flutter build ipa --release --export-options-plist=ios/ExportOptions.plist --build-name "$LAUNCHSET_VERSION" --build-number "$LAUNCHSET_BUILD_NUMBER"
-    # Upload with a fastlane lane (see "Workflow recipes" in the launchset docs):
+    # Upload with a fastlane lane (see "Workflow recipes" in the launchset docs). As in Flutter's
+    # fastlane guide, the Gemfile and fastlane/Fastfile are in ios/:
     #   lane :testflight do |options|
     #     api_key = app_store_connect_api_key(key_id: ENV.fetch("ASC_KEY_ID"),
     #       issuer_id: ENV.fetch("ASC_ISSUER_ID"), key_content: ENV.fetch("ASC_PRIVATE_KEY"))
@@ -35,4 +38,5 @@
     #       skip_waiting_for_build_processing: true)
     #   end
     # - export ASC_KEY_ID="$LAUNCHSET_ASC_KEY_ID" ASC_ISSUER_ID="$LAUNCHSET_ASC_ISSUER_ID" ASC_PRIVATE_KEY="$LAUNCHSET_ASC_PRIVATE_KEY"
-    # - bundle exec fastlane testflight ipa:"$(ls build/ios/ipa/*.ipa | head -n 1)"
+    # - cd ios
+    # - bundle exec fastlane testflight ipa:"$(ls ../build/ios/ipa/*.ipa | head -n 1)"

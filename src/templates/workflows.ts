@@ -317,6 +317,7 @@ function buildSnippet(
       {
         ...common,
         flutter_dir: scalar(flutter),
+        flutter_native_dir: scalar(posix.join(flutter, target.type)),
         pubspec: posix.join(flutter, "pubspec.yaml"),
         package_name:
           (target.type === "android" ? target.store?.packageName : undefined) ??

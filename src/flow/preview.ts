@@ -16,6 +16,7 @@
  */
 
 import { isChangesetPath } from "../core/changesets.ts";
+import { rootVersionHint } from "../core/config/schema.ts";
 import { errorMessage, LaunchsetError } from "../core/errors.ts";
 import { forgeHints } from "../core/forge-hints.ts";
 import { forgeWords } from "../core/forge-links.ts";
@@ -161,7 +162,7 @@ async function rootVersion(context: FlowContext, sha: string): Promise<string> {
     throw new LaunchsetError(
       "no-root-version",
       `${context.config.version.file} has no "version" at commit ${sha.slice(0, 7)}`,
-      { hint: 'Add a "version" field, e.g. "version": "0.1.0".' },
+      { hint: rootVersionHint(context.config.version.file) },
     );
   }
   return version;

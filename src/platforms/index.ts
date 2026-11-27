@@ -17,6 +17,7 @@ import {
   type FileEntry,
   type ResolvedConfig,
   type ResolvedTarget,
+  rootVersionHint,
   versionFileFormat,
 } from "../core/config/schema.ts";
 import { releaseVerifyTag } from "../core/docker-tags.ts";
@@ -283,7 +284,7 @@ export async function readRootVersion(config: ResolvedConfig, root: string): Pro
   const value = found.find((f) => f.field === "marketing")?.value;
   if (!value) {
     throw new LaunchsetError("no-root-version", `${config.version.file} has no "version"`, {
-      hint: 'Add a "version" field, e.g. "version": "0.1.0".',
+      hint: rootVersionHint(config.version.file),
     });
   }
   return value;

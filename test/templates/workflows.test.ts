@@ -781,7 +781,11 @@ describe("Flutter targets", () => {
     expect(text).toContain("#     flutter build ipa --release \\");
     expect(text).toContain("#     LAUNCHSET_VERSION: ${{ steps.stamp.outputs.marketing-version }}");
     expect(text).toContain("#   uses: subosito/flutter-action@v2");
-    expect(text).toContain("--aab build/app/outputs/bundle/release/app-release.aab");
+    // fastlane runs in android/ and ios/, where Flutter's fastlane guide keeps the Gemfile.
+    expect(text).toContain("#   working-directory: apps/mobile/android");
+    expect(text).toContain("--aab ../build/app/outputs/bundle/release/app-release.aab");
+    expect(text).toContain("#   working-directory: apps/mobile/ios");
+    expect(text).toContain('ipa:"$(ls ../build/ios/ipa/*.ipa | head -n 1)"');
     expect(text).toContain('--package_name "com.acme.app"');
     expect(text).toContain("apps/mobile/pubspec.yaml");
     expect(text).not.toContain("xcodebuild archive");
