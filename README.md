@@ -98,4 +98,4 @@ The design is in [`design/SPEC.md`](https://github.com/demonsters/launchset/blob
 
 ## License
 
-[MIT](https://github.com/demonsters/launchset/blob/main/LICENSE). Built and used at [demonsters](https://github.com/demonsters).
+[MIT](https://github.com/demonsters/launchset/blob/main/LICENSE). Built and used at [De Monsters](https://demonsters.nl).

@@ -1,9 +1,10 @@
 ---
 /**
- * Starlight's header with links to the docs and Getting started added. The homepage has no sidebar, so
- * without these links a visitor there had no way into the docs except the hero buttons.
+ * Starlight's header with links to the docs, Getting started and the comparison added. The
+ * homepage has no sidebar, so without these links a visitor there had no way into the docs except
+ * the hero buttons.
  *
- * Wide screens: title, search, the two links, GitHub and the theme picker.
+ * Wide screens: title, search, the three links, GitHub and the theme picker.
  * Narrow screens: docs pages keep Starlight's menu button; the homepage (no sidebar, so no menu
  * button) gets a single "Docs" link instead.
  */
@@ -15,11 +16,13 @@ import ThemeSelect from "@astrojs/starlight/components/ThemeSelect.astro";
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 const to = (path: string) => `${base}/${path}`;
 
-// "Getting started" is lit on that page; "Docs" on every other docs page.
+// "Getting started" and "Compare" are lit on their own pages; "Docs" on every other docs page.
 const id = Astro.locals.starlightRoute.id;
+const own = ["getting-started", "comparison"];
 const nav = [
-  { label: "Docs", link: "concepts/", current: id !== "" && id !== "getting-started" },
+  { label: "Docs", link: "concepts/", current: id !== "" && !own.includes(id) },
   { label: "Getting started", link: "getting-started/", current: id === "getting-started" },
+  { label: "Compare", link: "comparison/", current: id === "comparison" },
 ];
 ---
 
