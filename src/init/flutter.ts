@@ -6,7 +6,7 @@
 
 import { isMap, isScalar, parseDocument, parse as parseYaml } from "yaml";
 import { detectEol } from "../core/text.ts";
-import { listNativeTargets } from "../platforms/pbxproj.ts";
+import { effectiveVersionSettings } from "../platforms/pbxproj.ts";
 import { pubspec } from "../platforms/pubspec.ts";
 import type { FoundValue } from "../platforms/types.ts";
 import { absolute, globRel, isDirectory, isFile, joinRel, linesOf, readTextOrNull } from "./fs.ts";
@@ -141,8 +141,11 @@ const PLIST_KEYS = {
   CFBundleVersion: "$(FLUTTER_BUILD_NUMBER)",
 } as const;
 
-/** Build settings of the Runner target, by name: each setting's values across configurations. */
-export type BuildSettings = Record<string, string[]>;
+/**
+ * The Runner target's version settings, by name: the value each configuration builds with
+ * (`undefined` where none is set, also not at the project level).
+ */
+export type BuildSettings = Record<string, (string | undefined)[]>;
 
 /**
  * The Runner target's version settings from `ios/Runner.xcodeproj/project.pbxproj`, for an
@@ -151,11 +154,11 @@ export type BuildSettings = Record<string, string[]>;
  */
 export function runnerBuildSettings(text: string, path: string): BuildSettings {
   try {
-    const runner = listNativeTargets(text, path).find((t) => t.name === "Runner");
-    if (!runner) return {};
+    const configs = effectiveVersionSettings(text, path, "Runner");
+    if (configs.length === 0) return {};
     return {
-      MARKETING_VERSION: runner.marketingVersions,
-      CURRENT_PROJECT_VERSION: runner.buildNumbers,
+      MARKETING_VERSION: configs.map((c) => c.MARKETING_VERSION),
+      CURRENT_PROJECT_VERSION: configs.map((c) => c.CURRENT_PROJECT_VERSION),
     };
   } catch {
     return {};
@@ -164,7 +167,7 @@ export function runnerBuildSettings(text: string, path: string): BuildSettings {
 
 /**
  * Warnings for Info.plist version values that don't come from Flutter. A `$(SETTING)` value
- * is fine when every configuration of the Runner target sets SETTING to Flutter's value.
+ * is fine when every configuration of the Runner target builds with Flutter's value for it.
  */
 export function plistWiringNotes(text: string, path: string, settings: BuildSettings = {}): Note[] {
   const notes: Note[] = [];
@@ -175,10 +178,9 @@ export function plistWiringNotes(text: string, path: string, settings: BuildSett
     const setting = /^\$\((\w+)\)$/.exec(value)?.[1];
     const resolved = setting === undefined ? undefined : settings[setting];
     if (resolved && resolved.length > 0 && resolved.every((v) => v === expected)) continue;
+    const values = [...new Set((resolved ?? []).map((v) => v ?? "nothing"))];
     const via =
-      resolved && resolved.length > 0
-        ? ` (the Runner target sets ${setting} to ${resolved.join(", ")})`
-        : "";
+      values.length > 0 ? ` (the Runner target sets ${setting} to ${values.join(", ")})` : "";
     const at = m.index + m[0].lastIndexOf("<string>");
     notes.push({
       level: "warning",
@@ -188,6 +190,24 @@ export function plistWiringNotes(text: string, path: string, settings: BuildSett
     });
   }
   return notes;
+}
+
+/**
+ * The version and build number in `<dir>/pubspec.yaml`, for the canonical version and the
+ * build-number offset. Also for an app without android/ or ios/ (a web-only app), whose
+ * pubspec no target carries. Empty when the file has no readable version.
+ */
+export async function pubspecValues(
+  root: string,
+  dir: string,
+): Promise<{ path: string; values: FoundValue[] }> {
+  const path = joinRel(dir, "pubspec.yaml");
+  const text = (await readTextOrNull(absolute(root, path))) ?? "";
+  try {
+    return { path, values: pubspec.read(text, path, undefined) };
+  } catch {
+    return { path, values: [] };
+  }
 }
 
 /**
@@ -265,15 +285,27 @@ export async function detectFlutterApp(
 /**
  * `text` with a top-level `version: <version>+1` (a pubspec without one): an empty `version:`
  * gets the value, else a new line goes after the top-level `description`, else after `name`,
- * else at the top. Nothing else changes. A pubspec that has a version comes back unchanged.
+ * else before the first key, indented like the keys. A flow mapping (`{name: app}`) gets it as
+ * its first entry. Nothing else changes. A pubspec that has a version comes back unchanged.
+ * `null` when the result wouldn't read back with that version: add it by hand then.
  */
-export function insertPubspecVersion(text: string, version: string): string {
-  const eol = detectEol(text);
+export function insertPubspecVersion(text: string, version: string): string | null {
   const value = `${version}+1`;
+  const next = addPubspecVersion(text, value);
+  if (next === null || next === text) return next;
+  const check = parseDocument(next);
+  if (check.errors.length > 0 || !isMap(check.contents)) return null;
+  return check.contents.toJSON().version === value ? next : null;
+}
+
+function addPubspecVersion(text: string, value: string): string | null {
+  const eol = detectEol(text);
   const line = `version: ${value}`;
   const doc = parseDocument(text);
-  if (!isMap(doc.contents)) return `${line}${eol}${text}`;
-  const pairs = doc.contents.items;
+  if (doc.contents === null) return `${line}${eol}${text}`;
+  if (!isMap(doc.contents)) return null;
+  const map = doc.contents;
+  const pairs = map.items;
   const existing = pairs.find((p) => isScalar(p.key) && p.key.value === "version");
   if (existing) {
     const node = existing.value;
@@ -287,17 +319,35 @@ export function insertPubspecVersion(text: string, version: string): string {
     const end = range && range[1] > range[0] ? range[1] : colon + 1;
     return `${text.slice(0, colon + 1)} ${value}${text.slice(end)}`;
   }
+  if (map.flow) {
+    const open = map.range?.[0];
+    if (open === undefined) return null;
+    const rest = text.slice(open + 1);
+    return `${text.slice(0, open + 1)}${line}${pairs.length > 0 ? ", " : ""}${rest}`;
+  }
+  // The indentation of the line a key starts on (top-level keys are usually at column 0).
+  const indentAt = (offset: number) => {
+    const lineStart = text.lastIndexOf("\n", offset - 1) + 1;
+    const before = text.slice(lineStart, offset);
+    return { lineStart, indent: /^[ \t]*$/.test(before) ? before : "" };
+  };
   for (const key of ["description", "name"]) {
     const pair = pairs.find((p) => isScalar(p.key) && p.key.value === key);
     const end = pair && isScalar(pair.value) ? pair.value.range?.[1] : undefined;
-    if (end === undefined) continue;
+    const keyStart = pair && isScalar(pair.key) ? pair.key.range?.[0] : undefined;
+    if (end === undefined || keyStart === undefined) continue;
+    const { indent } = indentAt(keyStart);
     // A block scalar (`description: |`) ends after its last newline: the line it ends on is
     // the one with its last character.
     const lineEnd = text.indexOf("\n", Math.max(end - 1, 0));
-    if (lineEnd === -1) return `${text}${eol}${line}${eol}`;
-    return `${text.slice(0, lineEnd + 1)}${line}${eol}${text.slice(lineEnd + 1)}`;
+    if (lineEnd === -1) return `${text}${eol}${indent}${line}${eol}`;
+    return `${text.slice(0, lineEnd + 1)}${indent}${line}${eol}${text.slice(lineEnd + 1)}`;
   }
-  return `${line}${eol}${text}`;
+  const first = pairs[0];
+  const firstStart = first && isScalar(first.key) ? first.key.range?.[0] : undefined;
+  if (firstStart === undefined) return `${line}${eol}${text}`;
+  const { lineStart, indent } = indentAt(firstStart);
+  return `${text.slice(0, lineStart)}${indent}${line}${eol}${text.slice(lineStart)}`;
 }
 
 /**
@@ -308,9 +358,16 @@ export function insertPubspecVersion(text: string, version: string): string {
 export function flutterBuildFlagNotes(files: readonly { path: string; text: string }[]): Note[] {
   const notes: Note[] = [];
   for (const file of files) {
-    for (const line of linesOf(file.text)) {
-      const text = line.text.trim();
+    const lines = linesOf(file.text);
+    for (const [i, line] of lines.entries()) {
+      let text = line.text.trim();
       if (text.startsWith("#") || !/\bflutter\s+build\b/.test(text)) continue;
+      // The whole command: lines after a trailing `\`, and flag lines of a folded `run: >`.
+      for (let j = i; j + 1 < lines.length; j++) {
+        const next = (lines[j + 1]?.text ?? "").trim();
+        if (!(lines[j]?.text ?? "").trimEnd().endsWith("\\") && !next.startsWith("--")) break;
+        text += ` ${next}`;
+      }
       if (!/--build-(?:number|name)\b/.test(text) || /LAUNCHSET_|steps\.stamp\./.test(text)) {
         continue;
       }

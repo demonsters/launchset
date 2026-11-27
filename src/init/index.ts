@@ -435,10 +435,19 @@ async function writeAll(
   );
   const pubspecVersionFile = versionFile !== undefined && versionFile !== "package.json";
   if (pubspecVersionFile) pubspecs.add(versionFile);
+  // Every pubspec.yaml is checked before any is written.
+  const pubspecWrites: { path: string; next: string }[] = [];
   for (const path of pubspecs) {
     const text = (await readTextOrNull(absolute(root, path))) ?? "";
     const next = insertPubspecVersion(text, version);
-    if (next === text) continue;
+    if (next === null) {
+      throw new LaunchsetError("pubspec-version", `${path}: can't add a version to this file`, {
+        hint: `Add a top-level "version: ${version}+1" to it by hand, then run init again.`,
+      });
+    }
+    if (next !== text) pubspecWrites.push({ path, next });
+  }
+  for (const { path, next } of pubspecWrites) {
     await writeFile(absolute(root, path), next);
     changes.push({ path, action: "updated", summary: `added "version: ${version}+1"` });
   }

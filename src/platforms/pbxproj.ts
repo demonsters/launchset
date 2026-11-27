@@ -413,6 +413,32 @@ export interface NativeTargetSummary {
   buildNumbers: string[];
 }
 
+/**
+ * The version settings each configuration of target `name` builds with: its own value, else
+ * the project-level configuration of the same name's. `undefined` where neither sets it, and
+ * `[]` when there is no such target (used by `init`).
+ */
+export function effectiveVersionSettings(
+  text: string,
+  file: string,
+  name: string,
+): { config: string; MARKETING_VERSION?: string; CURRENT_PROJECT_VERSION?: string }[] {
+  const model = loadModel(text, file);
+  const target = model.targets.find((t) => t.name === name);
+  if (!target) return [];
+  return target.configs.map((c) => {
+    const project = model.projectConfigs.find((p) => p.name === c.name);
+    const out: { config: string; MARKETING_VERSION?: string; CURRENT_PROJECT_VERSION?: string } = {
+      config: c.name,
+    };
+    const marketing = (c.marketing ?? project?.marketing)?.node.value;
+    const build = (c.build ?? project?.build)?.node.value;
+    if (marketing !== undefined) out.MARKETING_VERSION = marketing;
+    if (build !== undefined) out.CURRENT_PROJECT_VERSION = build;
+    return out;
+  });
+}
+
 /** Every `PBXNativeTarget` of the project, in project order (used by `init`). */
 export function listNativeTargets(text: string, file: string): NativeTargetSummary[] {
   return loadModel(text, file).targets.map((t) => {

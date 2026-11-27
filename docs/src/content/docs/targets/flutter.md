@@ -93,7 +93,7 @@ In a repo that also has an API or a web app with a root `package.json`, keep `pa
 
 `init` finds Flutter apps by their `pubspec.yaml`: an app depends on the Flutter SDK and has platform folders. Plugins, packages and their `example/` apps are skipped. It looks in the repo root, a pub workspace or melos, and up to four folders deep, so an app in `apps/mobile` of a JS monorepo is found too.
 
-For each app it proposes an `android` and an `ios` target with `kind: "flutter"`. In a repo without a `package.json` it proposes the app's `pubspec.yaml` as the version file (the `version.file` decision). A `pubspec.yaml` without a `version` gets one.
+For each app it proposes an `android` and an `ios` target with `kind: "flutter"`. A target is `auto` when a workflow builds it. With several apps, a `flutter build` counts for the app whose folder the step runs in (`working-directory` or `cd`). If init can't tell, it says so and leaves the app `manual`. In a repo without a `package.json` it proposes the app's `pubspec.yaml` as the version file (the `version.file` decision). A `pubspec.yaml` without a `version` gets one.
 
 It also tells you:
 

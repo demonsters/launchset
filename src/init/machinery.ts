@@ -249,8 +249,9 @@ const VERSION_KEY_READS = new RegExp(
 
 const VERSION_WRITE_COMMANDS = [
   /^agvtool\s+(?:new-version|new-marketing-version|next-version|bump)\b/,
-  // Flutter: cider and pubver rewrite the version in pubspec.yaml.
-  new RegExp(String.raw`${DART_RUN}cider\s+(?:bump|version|release)\b`),
+  // Flutter: cider and pubver rewrite the version in pubspec.yaml. `cider version` without an
+  // argument only prints it.
+  new RegExp(String.raw`${DART_RUN}cider\s+(?:bump|release)\b|${DART_RUN}cider\s+version\s+[^\s-]`),
   new RegExp(String.raw`${DART_RUN}pubver\s+(?:bump|set)\b`),
   /^PlistBuddy\b.*\bSet[\s\u2423]*:?[\s\u2423]*(?:CFBundleVersion|CFBundleShortVersionString)\b/,
   // fastlane's version actions run from the command line (`fastlane run increment_build_number`),

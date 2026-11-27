@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import {
+  flutterBuildFlagNotes,
   gradleWiringNotes,
   insertPubspecVersion,
   isFlutterAppPubspec,
@@ -229,6 +230,54 @@ describe("init: Flutter edge cases", () => {
     );
   });
 
+  it("gives a flutter build to the app whose folder it runs in", async () => {
+    const workflow = (dir: string) =>
+      [
+        "name: Build",
+        "on: push",
+        "jobs:",
+        "  build:",
+        "    runs-on: ubuntu-latest",
+        "    steps:",
+        "      - uses: actions/checkout@v6",
+        "      - run: flutter build appbundle",
+        ...(dir ? [`        working-directory: ${dir}`] : []),
+        "",
+      ].join("\n");
+    const apps = { ...app("apps/driver"), ...app("apps/rider") };
+    const proposed = (json: InitDetectJson) =>
+      Object.fromEntries(
+        json.detection.targets.filter((t) => t.type === "android").map((t) => [t.dir, t.proposed]),
+      );
+
+    const one = await detectJson(
+      repoFrom({ ...apps, ".github/workflows/build.yml": workflow("apps/driver") }),
+    );
+    expect(proposed(one)).toEqual({ "apps/driver": "auto", "apps/rider": "manual" });
+
+    const unclear = await detectJson(
+      repoFrom({ ...apps, ".github/workflows/build.yml": workflow("") }),
+    );
+    expect(proposed(unclear)).toEqual({ "apps/driver": "manual", "apps/rider": "manual" });
+    expect(unclear.detection.notes.map((n) => n.message)).toContainEqual(
+      expect.stringContaining("can't tell for which of the android apps (apps/driver, apps/rider)"),
+    );
+  });
+
+  it("takes the version of a web-only Flutter app, which no android or ios target carries", async () => {
+    const pubspec = APP_PUBSPEC.replace("1.4.0+12", "3.2.1+42");
+    const dir = repoFrom({
+      "pubspec.yaml": pubspec,
+      "web/index.html": "<!doctype html>\n",
+      "lib/main.dart": "void main() {}\n",
+    });
+    const json = await detectJson(dir);
+    expect(json.detection.canonical.version).toBe("3.2.1");
+    expect(json.detection.buildNumbers.highest?.value).toBe(42);
+    await runInit(options(dir, { yes: true }));
+    expect(read(dir, "pubspec.yaml")).toBe(pubspec);
+  });
+
   it("warns about date-based build numbers close to Google Play's limit", async () => {
     const dir = repoFrom(
       app(".", { "pubspec.yaml": APP_PUBSPEC.replace("1.4.0+12", "1.4.0+2026112701") }),
@@ -238,6 +287,27 @@ describe("init: Flutter edge cases", () => {
     const note = json.detection.notes.find((n) => /close to Google Play's limit/.test(n.message));
     expect(note).toMatchObject({ level: "warning", path: "pubspec.yaml", line: 12 });
     expect(note?.message).toContain("room for about 2 year(s)");
+    // Rounded up, the offset (1,900,000,000) would put the first build number above the limit.
+    const { strategyNow, offset } = json.detection.buildNumbers;
+    expect(offset).toBe(2026112701 - strategyNow + 1);
+    expect(strategyNow + offset).toBeLessThanOrEqual(2_100_000_000);
+  });
+
+  it("sees --build-number on the next line of a multiline flutter build", () => {
+    const text = [
+      "      - run: |",
+      "          flutter build ipa --release \\",
+      '            --build-number "$GITHUB_RUN_NUMBER"',
+      "      - run: >",
+      "          flutter build appbundle",
+      '          --build-name "1.0.0"',
+      "      - run: |",
+      "          flutter build web \\",
+      '            --build-number "$LAUNCHSET_BUILD_NUMBER"',
+      "",
+    ].join("\n");
+    const notes = flutterBuildFlagNotes([{ path: "ci.yml", text }]);
+    expect(notes.map((n) => n.line)).toEqual([2, 5]);
   });
 
   it("sees version tools run through fvm", () => {
@@ -245,6 +315,8 @@ describe("init: Flutter edge cases", () => {
     expect(commandKinds("fvm flutter pub run cider bump patch")).toEqual(["version-writer"]);
     expect(commandKinds("fvm exec melos version")).toEqual(["release-tool"]);
     expect(commandKinds("fvm flutter build apk")).toEqual([]);
+    expect(commandKinds("cider version")).toEqual([]);
+    expect(commandKinds("cider version 2.0.0+1")).toEqual(["version-writer"]);
   });
 
   it("flags cider, pubver and yq edits of pubspec.yaml in workflows", async () => {
@@ -330,7 +402,10 @@ describe("Flutter helpers", () => {
       "$(CURRENT_PROJECT_VERSION)",
     );
     const settings = runnerBuildSettings(pbx, "project.pbxproj");
-    expect(settings.CURRENT_PROJECT_VERSION).toEqual(["$(FLUTTER_BUILD_NUMBER)"]);
+    expect(settings.CURRENT_PROJECT_VERSION).toEqual([
+      "$(FLUTTER_BUILD_NUMBER)",
+      "$(FLUTTER_BUILD_NUMBER)",
+    ]);
     const notes = plistWiringNotes(plist, "Info.plist", settings);
     expect(notes.map((n) => n.message)).toEqual([
       expect.stringMatching(
@@ -340,6 +415,33 @@ describe("Flutter helpers", () => {
     // Without the project the reference can't be followed: both get the warning.
     expect(plistWiringNotes(plist, "Info.plist")).toHaveLength(2);
     expect(runnerBuildSettings("not a project", "project.pbxproj")).toEqual({});
+
+    // Release sets nothing itself and inherits a literal number from the project level.
+    const inherited = pbx
+      .replace(
+        "P1 = {isa = PBXProject; targets = (T1, T2); };",
+        "P1 = {isa = PBXProject; targets = (T1, T2); buildConfigurationList = L3; };",
+      )
+      .replace(
+        "L2 = {isa = XCConfigurationList; buildConfigurations = (C3); };",
+        "L2 = {isa = XCConfigurationList; buildConfigurations = (C3); };\n\t\tL3 = {isa = XCConfigurationList; buildConfigurations = (C4); };\n" +
+          config("C4", "Release", "CURRENT_PROJECT_VERSION = 42;"),
+      )
+      .replace(
+        config(
+          "C2",
+          "Release",
+          'CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)"; MARKETING_VERSION = 1.0;',
+        ),
+        config("C2", "Release", "MARKETING_VERSION = 1.0;"),
+      );
+    const fromProject = runnerBuildSettings(inherited, "project.pbxproj");
+    expect(fromProject.CURRENT_PROJECT_VERSION).toEqual(["$(FLUTTER_BUILD_NUMBER)", "42"]);
+    expect(plistWiringNotes(plist, "Info.plist", fromProject).map((n) => n.message)).toContainEqual(
+      expect.stringContaining(
+        "the Runner target sets CURRENT_PROJECT_VERSION to $(FLUTTER_BUILD_NUMBER), 42",
+      ),
+    );
   });
 
   it("inserts the version after description, else after name, else at the top, with the file's line endings", () => {
@@ -360,7 +462,10 @@ describe("Flutter helpers", () => {
       expect(next).toBe(
         `name: a\ndescription: ${style}\n  An app.\nversion: 1.0.0+1\nenvironment:\n  sdk: ^3.0.0\n`,
       );
-      expect(parse(next)).toMatchObject({ version: "1.0.0+1", environment: { sdk: "^3.0.0" } });
+      expect(parse(next ?? "")).toMatchObject({
+        version: "1.0.0+1",
+        environment: { sdk: "^3.0.0" },
+      });
     }
   });
 
@@ -377,6 +482,21 @@ describe("Flutter helpers", () => {
     expect(insertPubspecVersion("name: a\nversion: ~\n", "1.0.0")).toBe(
       "name: a\nversion: 1.0.0+1\n",
     );
+  });
+
+  it("adds the version inside a flow mapping, with the keys' indentation, or not at all", () => {
+    expect(
+      insertPubspecVersion("{name: mobile, dependencies: {flutter: {sdk: flutter}}}\n", "1.0.0"),
+    ).toBe("{version: 1.0.0+1, name: mobile, dependencies: {flutter: {sdk: flutter}}}\n");
+    expect(insertPubspecVersion("{}\n", "1.0.0")).toBe("{version: 1.0.0+1}\n");
+    expect(insertPubspecVersion("  name: a\n  flutter: {}\n", "1.0.0")).toBe(
+      "  name: a\n  version: 1.0.0+1\n  flutter: {}\n",
+    );
+    expect(insertPubspecVersion("# app\n---\nflutter: {}\n", "1.0.0")).toBe(
+      "# app\n---\nversion: 1.0.0+1\nflutter: {}\n",
+    );
+    // Not a mapping: nothing to add the version to.
+    expect(insertPubspecVersion("- a\n", "1.0.0")).toBeNull();
   });
 
   it("leaves a pubspec that has a version alone", () => {
