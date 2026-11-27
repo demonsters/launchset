@@ -16,13 +16,13 @@ import { CHANGELOG_TITLE } from "../core/changelog.ts";
 import { resolveConfig, TARGET_NAME } from "../core/config/schema.ts";
 import { LaunchsetError } from "../core/errors.ts";
 import { ciOf } from "../core/hosts.ts";
+import { joinWords } from "../core/plan-common.ts";
 import { renderTag } from "../core/tags.ts";
 import { REQUIRED_APP_PERMISSIONS } from "../forge/github/permissions.ts";
-import { Git } from "../git/index.ts";
 import { stampForRelease, writeChanges } from "../platforms/index.ts";
 import { renderWorkflows } from "../templates/workflows.ts";
 import { installSkill } from "./agents.ts";
-import { buildConfig, CONFIG_FILE, renderConfigSource } from "./config-source.ts";
+import { buildConfig, CONFIG_FILE, guardedTargets, renderConfigSource } from "./config-source.ts";
 import type { PlannedConversion } from "./convert.ts";
 import {
   DELETE_CHANGESET_HINT,
@@ -560,33 +560,15 @@ async function writeAll(
     }
   }
 
-  // --- Baseline tag
+  // --- Baseline: the release workflow creates the tag after the merge (see core/baseline.ts).
   const releaseTag = renderTag(resolved.tags.release, { version });
-  if (answers.baseline === "yes") {
-    if (ctx.tagNames.includes(releaseTag)) {
-      io.log(`${releaseTag} already exists; no baseline tag needed.`);
-    } else {
-      const head = d.git.head;
-      if (!head) {
-        throw new LaunchsetError(
-          "no-head",
-          "Can't create the baseline tag: the repository has no commits.",
-          {
-            hint: "Commit first, or answer baseline=no.",
-          },
-        );
-      }
-      await new Git({ cwd: root }).createTag(releaseTag, head);
-      changes.push({
-        path: releaseTag,
-        action: "tagged",
-        summary: `baseline at HEAD (${head.slice(0, 7)})`,
-      });
-      manualSteps.push(`Push the baseline tag: \`git push origin ${releaseTag}\`.`);
-    }
+  if (resolved.baseline !== undefined) {
+    manualSteps.push(baselineStep(ctx, releaseTag, version));
+  } else if (answers.baseline === "yes") {
+    io.log(`${releaseTag} already exists; no baseline needed.`);
   } else if (!ctx.tagNames.includes(releaseTag)) {
     io.warn(
-      `No baseline tag: nothing marks ${version} as released, so launchset treats it as unreleased. If ${version} was released, create ${releaseTag} (--baseline).`,
+      `No baseline: nothing marks ${version} as released, so launchset treats it as unreleased. If ${version} was released, set a baseline (--baseline).`,
     );
   }
 
@@ -619,6 +601,18 @@ async function writeAll(
     manualSteps.push(
       `Add your build and upload steps for ${buildTargets.join(", ")} to .github/workflows/launchset-release.yml (and launchset-preview.yml for previews).`,
     );
+    for (const t of plan.targets) {
+      const e = t.github?.electronBuilder;
+      if (!e) continue;
+      manualSteps.push(
+        `${t.name}: the steps init copied from job "${t.github?.job}" run electron-builder (${at(e.path, e.line)}: \`${e.command}\`). In CI electron-builder publishes to GitHub Releases by itself, also on the branch pushes launchset builds releases from, and fails with "GitHub Personal Access Token is not set" without GH_TOKEN. Pass --publish never to it (launchset creates the GitHub Release), or set GH_TOKEN on purpose if electron-builder should upload the files.`,
+      );
+    }
+    if (resolved.preview.enabled) {
+      manualSteps.push(
+        `Create the ${resolved.preview.label} label if the repo doesn't have it (adding it to a PR builds a preview): \`gh label create ${resolved.preview.label} --description "Build a launchset preview"\`.`,
+      );
+    }
     const retiredWorkflows = [
       ...new Set(retiredPaths.filter((p) => p.startsWith(".github/workflows/"))),
     ];
@@ -632,6 +626,12 @@ async function writeAll(
     }
   }
   manualSteps.push(...retired.followUps);
+  const guarded = guardedTargets(ctx, plan.targets, gitlab !== undefined);
+  if (resolved.preview.enabled && guarded.length > 0) {
+    manualSteps.push(
+      `Previews build ${resolved.preview.targets === "all" ? "every target" : resolved.preview.targets.length > 0 ? `only ${joinWords(resolved.preview.targets)}` : "no target yet"}: ${joinWords(guarded)} ${guarded.length === 1 ? "has" : "have"} only the "build steps missing" placeholder, which fails on purpose. Add ${guarded.length === 1 ? "it" : "them"} to preview.targets in ${CONFIG_FILE} once ${guarded.length === 1 ? "its" : "their"} build steps are in.`,
+    );
+  }
   const android = plan.targets.filter((t) => t.type === "android").map((t) => t.name);
   if (android.length > 0) {
     manualSteps.push(
@@ -701,4 +701,22 @@ async function hasActionUpdater(root: string): Promise<boolean> {
     if ((await readTextOrNull(absolute(root, path))) !== null) return true;
   }
   return false;
+}
+
+/**
+ * The "What's left to do" step for `baseline`: what happens after the merge, and why the tag
+ * must not be created by hand (spec 11.1 step 5). Names the tag-triggered workflows a hand-made
+ * tag at HEAD would start.
+ */
+function baselineStep(ctx: DetectContext, tag: string, version: string): string {
+  const triggered = [
+    ...new Set(
+      ctx.machinery.filter((m) => m.item.kinds.includes("tag-trigger")).map((m) => m.item.path),
+    ),
+  ];
+  const why =
+    triggered.length > 0
+      ? `Don't create or push ${tag} yourself: pushing a tag runs the workflows of the commit it points to, and on HEAD that would start ${triggered.join(", ")} (they still run on tags there), which would build or publish ${version} again.`
+      : `Don't create or push ${tag} yourself: pushing a tag runs the tag-triggered workflows of the commit it points to.`;
+  return `After the merge, the first release workflow run on the base branch creates ${tag} at the merge commit (baseline: "${version}" in ${CONFIG_FILE}), so ${version} counts as released without a build. ${why} Once ${tag} exists you can remove baseline from the config.`;
 }

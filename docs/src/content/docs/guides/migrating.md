@@ -42,7 +42,7 @@ Decisions (default in brackets; answer with --decide <id>=<value>):
   version [1.4.0]: Which version is the repo on? Every target file is set to it.
   target.android [manual] (check this): How is the Android app in the repo root (gradle) released?
   docker.api.image [ghcr.io/your-org/demo-api] (check this): Image name for api (apps/api/Dockerfile)?
-  baseline [no]: v1.4.0 already exists, so 1.4.0 counts as released. Create a baseline tag?
+  baseline [no]: v1.4.0 already exists, so 1.4.0 counts as released. Set a baseline?
   ...
 ```
 
@@ -64,7 +64,7 @@ Every question `init` asks is a **decision** with a stable id. Answer it with `-
 | `image.<path>` | `stamp`, `leave`. | `leave`. | Always. A deploy manifest that pins the image may be deploy state. |
 | `host` | `github`, `gitlab`. | The host of the `origin` remote, else the CI files found. Only listed when something points at GitLab. | When the repo is on GitLab and detection guessed wrong: `--decide host=gitlab`. See [launchset on GitLab](/gitlab/getting-started/). |
 | `file.<path>` | `keep`, `overwrite`. | `keep`. One decision per file that init would write but that already exists: `.launchset/README.md` and the `launchset-*.yml` workflows. | Rarely. `keep` leaves an edited file alone. `overwrite` replaces it with the newly generated one. |
-| `baseline` | `yes`, `no`. | `yes` only when an existing tag in another format already marks the version as released. | Always, when the answer matters. See [baseline](#baseline-tag). |
+| `baseline` | `yes`, `no`. | `yes` only when an existing tag in another format already marks the version as released. | Always, when the answer matters. See [baseline](#baseline). |
 | `offset` | An integer `>= 0`. | Enough to stay above the highest build number found. | When it is above 0. |
 | `skill` | `yes`, `no`. | `yes`. | Rarely. |
 | `hook` | `yes`, `no`. | `no`. Only exists when a hook setup is found that doesn't run `launchset check --push` yet: husky as a dependency or with hooks in `.husky/`, simple-git-hooks or lefthook. A hook file git ignores doesn't count. | Optional. |
@@ -127,7 +127,7 @@ The loop:
 Always ask the human about:
 
 - **Lowering a version.** The default never lowers one. Only `--decide version=<lower>` does, and init warns about every file that goes down.
-- **A baseline tag** for a version that has no release tag.
+- **A baseline** for a version that has no release tag.
 - **Native projects that no workflow builds.** `release: "manual"` is the usual answer. See [Manual targets](/guides/manual-targets/).
 
 A bad answer fails before anything is written: `--decide target.android=maybe` says `expected one of auto, manual, none`, and an unknown id lists the valid ones.
@@ -144,14 +144,20 @@ launchset has **one** version. `init` shows every version it found, per file and
 
 Don't lower a version just to make files agree. Stores reject a lower marketing version than what was uploaded, and registries would show a lower image tag as the newest. Raise the lagging files instead.
 
-## Baseline tag
+## Baseline
 
-The **baseline** is the release tag (`v1.4.0`) for the canonical version, created at HEAD, so it counts as released.
+A **baseline** marks the canonical version as released, so launchset never builds it. init writes it to the config as `baseline: "1.4.0"`. It doesn't create the tag itself.
 
 - **Default yes** only when a tag in another format already marks that version as released (`1.4.0`, `app@1.4.0`).
-- **Otherwise no**, with a warning. The version may never have been built. With a baseline tag launchset never builds it, and pinned images might not exist.
+- **Otherwise no**, with a warning. The version may never have been built. With a baseline launchset never builds it, and pinned images might not exist.
 
-This matters at merge time. When the PR that adds launchset **changes the root version** (because init raised it) and there is no release tag for that version, the merge is read as a release commit, and launchset builds every target for it. If that is what you want, because that version was never built: fine. If the version was already released, create the tag (`--baseline`).
+The release tag (`v1.4.0`) is created by **the first run of the release workflow on the base branch after the migration PR is merged**, at the commit it runs on. That run builds nothing for 1.4.0, and if changesets are pending it opens the release PR as usual. Nothing happens on other branches, for another version, or once the tag exists. After that you can remove `baseline` from the config.
+
+:::caution[Don't create the baseline tag by hand]
+Pushing a tag runs the tag-triggered workflows **of the commit the tag points to**, whenever you push it. HEAD before the migration still has the old release workflows (`on.push.tags: v*`), so a `v1.4.0` there starts them all: they can push images and move `latest`, publish to npm or the stores, or create a GitHub Release. Pushing it after the merge doesn't help, because the tag still points at the old commit. Leave it to the release workflow, whose commit no longer has those triggers.
+:::
+
+This matters at merge time. When the PR that adds launchset **changes the root version** (because init raised it) and there is no release tag for that version, the merge is read as a release commit, and launchset builds every target for it. If that is what you want, because that version was never built: fine. If the version was already released, set a baseline (`--baseline`): the release workflow then creates the tag on that merge commit instead of building it.
 
 ## Retire what conflicts
 
@@ -246,8 +252,25 @@ Every push to the branch gets a `1.5.0-beta.N` version, a tag and a GitHub pre-r
 - `npx launchset version --dry-run`: the diff of the first release PR.
 - `npx launchset plan`: the plan as JSON.
 - Create the [GitHub App](/github-app/) and the secrets.
+- Create the `launchset:preview` label if the repo doesn't have it (`gh label create launchset:preview`). Adding a label that doesn't exist to a PR fails, `gh pr create --label` included.
 - Set up the [store pipelines](/store-pipelines/) for native targets and test them with a preview build.
 - Open one PR with everything. In the description list the decisions, what was removed or changed, and the manual steps that remain.
+- Don't push the baseline tag yourself: the release workflow creates it after the merge. See [Baseline](#baseline).
+
+### Previews of targets without build steps
+
+A target whose build steps aren't in the workflows yet gets a placeholder step, `Build steps missing (<target>)`, that fails on purpose, so a release can't mark it shipped while nothing builds it. init leaves those targets out of `preview.targets`, so the first preview doesn't fail on them, and says so in a comment. Add each one back once its build steps are in (or set `targets: "all"`):
+
+```ts
+// Previews build only the targets with build steps. android and ios have only the "build
+// steps missing" placeholder in launchset-release.yml and launchset-preview.yml, which
+// fails on purpose: add them here once their build steps are in (or set targets: "all").
+preview: { targets: ["docker"] },
+```
+
+### Copied steps that run electron-builder
+
+electron-builder publishes to GitHub Releases on its own in CI, on branch pushes too (`onTagOrDraft`), and fails without `GH_TOKEN` ("GitHub Personal Access Token is not set"). Steps copied from a tag job keep doing that in launchset's release workflow. When a copied step runs electron-builder, directly or through a `package.json` script, init says so in the copied steps and in the steps left to do. Pass `--publish never` (launchset creates the GitHub Release), or set `GH_TOKEN` on purpose if electron-builder should upload the files.
 
 ## The adoption skill
 

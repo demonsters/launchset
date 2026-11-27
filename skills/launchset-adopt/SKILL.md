@@ -16,7 +16,7 @@ Use `npx launchset` (Node 24 or newer). If `npx` can't run it, tell the human an
 1. **Detect first. Write nothing until the human has seen the decisions.** `init --detect` never writes.
 2. **Ask only what matters**, with the evidence. Don't ask about decisions whose default is clearly right.
 3. **Never handle secret values.** Certificates, keys, passwords, tokens and service accounts are created and stored by a human. You check names, never values.
-4. **Never lower a version, and never create a baseline tag, without the human's explicit answer.**
+4. **Never lower a version, and never set a baseline, without the human's explicit answer. Never create or push the baseline tag yourself**: the release workflow creates it after the merge (see Step 2).
 5. **Keep existing conventions** (tag format, Docker image tags) unless the human decides otherwise. Deploy tooling depends on them.
 6. **Remove or adapt conflicting machinery only after the human agrees.**
 7. **Don't migrate what doesn't fit**, and say why (see the end).
@@ -52,7 +52,9 @@ If `init` fails with `already-initialized`, the repo already has a config: don't
 Group the decisions for the human. Ask the ones with `"ask": true`, and these three **always**:
 
 1. **Lowering any version.** The default is the highest version found, and it never lowers one. If the human wants a lower one, `--decide version=<lower>` is the only way, and init warns about each file that goes down. Explain: stores reject lower marketing versions, and image tags would go backwards.
-2. **A baseline tag** for a version that has no release tag (`baseline`). A baseline tag makes launchset treat the version as already released, so it never builds it, and pinned images might not exist. Default `yes` only when a tag in another format already marks it as released. Without a baseline tag, if the PR changes the root version, merging it is read as a release of that version and builds every target.
+2. **A baseline** for a version that has no release tag (`baseline`). A baseline makes launchset treat the version as already released, so it never builds it, and pinned images might not exist. Default `yes` only when a tag in another format already marks it as released. Without a baseline, if the PR changes the root version, merging it is read as a release of that version and builds every target.
+
+   init writes `baseline: "<version>"` to the config; it doesn't create the tag. The first release workflow run on the base branch **after the migration PR is merged** creates `v<version>` at the commit it runs on, without building anything. Never create or push that tag yourself, not even after the merge, and don't tell the human to: pushing a tag runs the tag-triggered workflows **of the commit it points to**, and HEAD before the migration still has the old ones (`detection.machinery[]` with kind `tag-trigger`). They would run again for that version: push images and move `latest`, publish to npm or the stores, create a GitHub Release. Explain this to the human when the repo has such workflows.
 3. **Native projects that no workflow builds** (`target.<name>`, proposed `manual`). Suggest `release: "manual"` and explain: the version is stamped by every release so native files never drift, but the store build is shipped on demand with a workflow run or `launchset ship`, and the release tag doesn't wait for it. The alternatives are `auto` (every release builds and uploads it) and `none` (not a target).
 
 The decision ids and values:
@@ -71,7 +73,7 @@ The decision ids and values:
 | `machinery.<path>#<n>` | `remove`, `disable`, `keep` | What to do with one piece of conflicting machinery. Copy the exact `id` from the JSON (a path starting with a dot gives `machinery..github/workflows/x.yml#1`). |
 | `image.<path>` | `stamp`, `leave` | Whether the release PR updates the image tag a deploy manifest pins. |
 | `file.<path>` | `keep`, `overwrite` | A file init would write already exists (`.launchset/README.md`, `launchset-*.yml`). Default `keep`: it stays as it is. `overwrite` replaces it with the newly generated file. Ask only if the existing file looks hand-edited and should be regenerated. |
-| `baseline` | `yes`, `no` | Create the release tag for the version at HEAD. |
+| `baseline` | `yes`, `no` | Mark the version as released: `baseline` in the config, and the first release workflow run after the merge creates its release tag. |
 | `offset` | integer `>= 0` | `buildNumber.offset`, so new build numbers stay above the existing ones. |
 | `skill` | `yes`, `no` | Install the `launchset` skill and an `AGENTS.md` section. |
 | `hook` | `yes`, `no` | Add `launchset check --push` to the existing pre-push hook. Only exists when a hook setup was found. |
@@ -138,6 +140,7 @@ The generated workflows have commented examples where the team's build steps go.
 - Deploys, npm publishing and other steps.
 - Give every step `if: matrix.target == '<name>' && steps.verify.outputs.already-published != 'true'` in the release workflow.
 - Custom targets from a GitHub workflow that release tags started: init already copied that job's steps, commented out, under the target's `Build steps missing` step in `launchset-release.yml` (and `launchset-preview.yml`), each with the `if:`. The `actions/checkout` step is left out: launchset's checks out the release commit, so add what the old one set (`lfs: true`, the note says) to it. Uncomment the steps, check them, then remove the guard. Previews run them too.
+- **electron-builder in copied steps.** In CI, electron-builder publishes to GitHub Releases by itself: on tags, and with the GitHub provider on branch pushes too (`onTagOrDraft`). In launchset's release workflow (a push to the base branch) it then fails with "GitHub Personal Access Token is not set", or, with `GH_TOKEN`, uploads to a release of its own next to launchset's. init notes it when a copied step runs electron-builder directly or through a `package.json` script. Pass `--publish never` (in the step, or in the script it runs): launchset creates the GitHub Release. Set `GH_TOKEN` only when the human wants electron-builder to upload the files, and say what that does.
 
 ### Check the action versions
 
@@ -185,9 +188,13 @@ For custom targets from tag jobs, init already copied the job's keys into `.laun
 - **Previews.** Previews run the same steps with `LAUNCHSET_CHANNEL=preview`: publishing steps (an image tagged `latest`, an upload) must only run for `release`, or the target goes out of `preview.targets`.
 - **After and retries.** A target with `after` gets the other targets' artifacts in the same pipeline only. On a retry that only rebuilds it they are missing: have the other targets also upload their output to a durable place (GitLab's generic package registry; the custom target template shows it) and fetch it from there.
 
-**The "Build steps missing" guard.** For Android, iOS, web and custom targets without npm publishing, the generated workflows contain a step named `Build steps missing (<target>)` that always fails (`exit 1`), so `mark` never records a target that nothing builds. When the team's real build and upload steps for a target are in, **remove that target's guard step**, in both `launchset-release.yml` and `launchset-preview.yml` (on GitLab: the `echo "No build steps for <target> yet..."; exit 1` line in `.launchset-<target>`). Removing a guard without adding steps lets the release complete without building the target: check that every `auto` target has working steps before the PR is merged. Docker targets and npm custom targets have no guard.
+**The "Build steps missing" guard.** For Android, iOS, web and custom targets without npm publishing (on GitLab: custom targets whose job init didn't copy), the generated workflows contain a step named `Build steps missing (<target>)` that always fails (`exit 1`), so `mark` never records a target that nothing builds. When the team's real build and upload steps for a target are in, **remove that target's guard step**, in both `launchset-release.yml` and `launchset-preview.yml` (on GitLab: the `echo "No build steps for <target> yet..."; exit 1` line in `.launchset-<target>`). Removing a guard without adding steps lets the release complete without building the target: check that every `auto` target has working steps before the PR is merged. Docker targets and npm custom targets have no guard.
+
+**Previews skip guarded targets.** init writes `preview: { targets: [...] }` without the targets that have a guard (with a comment), so the first `launchset:preview` label doesn't fail on them. When you remove a target's guard, add it back to `preview.targets` (or set `targets: "all"` once none is left), unless its steps must not run for previews (a store upload without a preview track, a deploy).
 
 ## Step 7: Open one PR
+
+Before you open it, make sure the preview label exists: adding a label that doesn't exist fails, `gh pr create --label launchset:preview` included. `gh label list --search launchset:preview`; if it's missing, ask the human, then `gh label create launchset:preview --description "Build a launchset preview"` (init lists this as a step too). On GitLab a label is created when it's first used.
 
 Everything goes in **one PR**. Its description lists:
 
@@ -197,8 +204,11 @@ Everything goes in **one PR**. Its description lists:
 - Changes to versions (files that moved to the canonical version) and any lowered version.
 - The remaining manual steps: create the GitHub App and install it on the repo, add the variable `LAUNCHSET_APP_CLIENT_ID` and the secret `LAUNCHSET_APP_PRIVATE_KEY` (unless the org already has them, or the older secret `LAUNCHSET_APP_ID`; on GitLab: `LAUNCHSET_TOKEN` and `NPM_TOKEN`, protected branches and tags, pipeline variables, `workflow: rules` if init printed them), store credentials (`LAUNCHSET_PLAY_SERVICE_ACCOUNT_JSON`, `LAUNCHSET_ASC_KEY_ID`, `LAUNCHSET_ASC_ISSUER_ID`, `LAUNCHSET_ASC_PRIVATE_KEY`, keystore and signing secrets), and mark the **Changeset check** job as required once it runs (on GitLab: require the MR pipeline to succeed).
 - That the PR itself needs a changeset: add one (`npx launchset add --bump patch --message "Set up releases with launchset"`, or `--empty`).
+- With a baseline: that the first release workflow run after the merge creates `v<version>`, and that nobody should create or push that tag by hand (and why, naming the tag-triggered workflows it would start).
 
-Don't merge it. Merging may start a release if the PR changed the root version of a version without a release tag.
+Don't merge it. Merging may start a release if the PR changed the root version of a version without a release tag and without a baseline.
+
+The order after you hand it over: the human sets up the App (or token) and the secrets, then merges. The first release workflow run on the base branch creates the baseline tag (if any) and opens the first release PR if changesets are pending. If that first run fails because the App isn't set up yet, re-run it once it is: it creates the tag then.
 
 ## Repos that also publish npm packages
 

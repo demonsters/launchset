@@ -130,6 +130,8 @@ export default defineConfig({
     offset: 0,                                 // default
   },
 
+  baseline: "1.4.0",                           // optional, written by init; see 11.1 step 5
+
   check: {
     bots: ["dependabot[bot]", "renovate[bot]"],  // default
   },
@@ -593,9 +595,10 @@ The GitHub-facing commands work from the CLI too when given `GITHUB_TOKEN`/`--to
    - **Retire conflicting machinery**: list everything found in step 1 with the reason it conflicts. Examples: "fires again on launchset's `v{version}` tag and pushes the image twice"; "creates `v{version}` before `finalize`"; "overwrites the stamped build number".
    - Per item, offer **remove** (delete the workflow or script), **disable** (remove only the conflicting trigger or step), or **keep**.
    - Default with `--yes`: disable the conflicting trigger or step, and print a list of the changes. Never leave a conflict in place silently.
-5. **Baseline**: offer to create the release tag for the canonical version on HEAD, so it counts as released (skip if it exists).
+5. **Baseline**: offer to mark the canonical version as released (skip if its release tag exists). init writes `baseline: "<version>"` to the config; it doesn't create the tag. The release workflow on the base branch creates the release tag at the commit it runs on, while the root version is the baseline and the tag doesn't exist, and plans as if the tag had always been there (nothing is built for that version). A version with marker or partial tags is left alone, with a warning. After that `baseline` does nothing and can be removed.
+   - Not a tag at HEAD: HEAD is the commit before the migration, which still has the old tag-triggered workflows, and a tag push runs the workflows of the tagged commit (whenever it's pushed). A tag on a commit after the merge starts none of them.
    - Default **yes** only when an existing tag in another format (`0.9.4`, `name@0.9.4`) already marks that version as released.
-   - Otherwise default **no**, with a warning that the version may never have been built. A baseline tag on an unreleased version means launchset never builds it, and pinned images might not exist.
+   - Otherwise default **no**, with a warning that the version may never have been built. A baseline on an unreleased version means launchset never builds it, and pinned images might not exist.
    - `--baseline` forces it.
 6. **Convert** existing `.changeset/*.md` (4.2). `launchset init --convert-only` runs only this step, e.g. on a Changesets pre-mode branch (9.9).
 7. **Agent skill**: offer to install `.claude/skills/launchset/SKILL.md` and add a short launchset section to `AGENTS.md` (create it if missing) for non-Claude agents.
@@ -606,7 +609,7 @@ The GitHub-facing commands work from the CLI too when given `GITHUB_TOKEN`/`--to
 **Agent-assisted adoption.** Repos will move to launchset one at a time, mostly done by an agent, so init has a detection-only mode for that:
 
 - `launchset init --detect --json` writes nothing. It prints everything from steps 1–3 (files, versions, build numbers, Dockerfiles, native projects, existing workflows) plus a list of **decisions**. Each decision has an `id`, the question, the options, the proposed default, and the evidence (`path:line`) behind the default.
-- Example decisions: the canonical version; which detected platforms become targets, and `auto` or `manual`; Docker image names and tag templates; what to do with each piece of conflicting release machinery; whether to create the baseline tag.
+- Example decisions: the canonical version; which detected platforms become targets, and `auto` or `manual`; Docker image names and tag templates; what to do with each piece of conflicting release machinery; whether to set a baseline.
 - Every decision can be answered with `--decide <id>=<value>` (repeatable), besides the named flags.
 - The intended loop: the agent runs `--detect --json`, asks the human only the decisions where the default isn't obviously right, then runs `launchset init --yes --decide …`. The adoption skill (16.3) describes this loop.
 

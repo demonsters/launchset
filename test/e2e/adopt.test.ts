@@ -23,11 +23,14 @@ describe("adopting launchset from Changesets", () => {
     // this test releases the web target alone (no npm registry here).
     const init = await world.devCli(["init", "--yes", "--baseline", "--decide", "target.npm=none"]);
     expect(init.code, init.stdout + init.stderr).toBe(0);
-    // 0.9.4 is marked as released by the baseline tag.
-    expect(dev.git("tag")).toBe("v0.9.4");
+    // 0.9.4 is marked as released by the baseline in the config: no tag at HEAD, where the old
+    // release workflow still runs on tags.
+    expect(dev.git("tag")).toBe("");
+    expect(read(dev.dir, "launchset.config.ts")).toContain('baseline: "0.9.4"');
     dev.git("add", "--all");
     dev.git("commit", "--quiet", "--no-verify", "-m", "Set up launchset");
-    dev.git("push", "--quiet", "origin", "main", "v0.9.4");
+    dev.git("push", "--quiet", "origin", "main");
+    const setUp = dev.git("rev-parse", "HEAD");
 
     // The converted changesets are pending; the Changesets folder is left alone.
     const status = await world
@@ -40,7 +43,9 @@ describe("adopting launchset from Changesets", () => {
     expect(status.nextVersion).toBe("0.10.0");
     expect(dev.git("ls-files", ".changeset")).toContain(".changeset/config.json");
 
+    // The first release run creates v0.9.4 on the commit that set launchset up.
     const cycle = await releaseCycle(world);
+    expect(world.tags().get("v0.9.4")).toBe(setUp);
     expect(cycle.version).toBe("0.10.0");
     expect(JSON.parse(cycle.plan).matrix).toEqual(["web"]);
 

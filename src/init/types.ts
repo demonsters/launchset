@@ -124,6 +124,11 @@ export interface DetectedGitHubJob {
   checkoutWith?: string[];
   /** What else launchset's build job lacks of it (env, defaults, matrix, needs, reusable workflow). */
   notes?: string[];
+  /**
+   * A step that runs electron-builder without `--publish`: in CI it publishes to GitHub Releases
+   * by itself and fails without `GH_TOKEN` (see `src/init/electron.ts`).
+   */
+  electronBuilder?: { path: string; line: number; command: string };
 }
 
 /** The GitLab job a custom target comes from (it runs on tags and builds or publishes). */

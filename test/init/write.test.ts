@@ -108,10 +108,10 @@ export default defineConfig({
       read(packageFile("skills", "launchset"), "SKILL.md"),
     );
 
-    // No baseline tag for an unreleased version, with a warning.
+    // No baseline for an unreleased version, with a warning.
     expect(git(dir, "tag")).toBe("v1.3.0");
     expect(out.warnings).toContain(
-      "No baseline tag: nothing marks 1.4.0 as released, so launchset treats it as unreleased. If 1.4.0 was released, create v1.4.0 (--baseline).",
+      "No baseline: nothing marks 1.4.0 as released, so launchset treats it as unreleased. If 1.4.0 was released, set a baseline (--baseline).",
     );
     expect(result.changes.find((c) => c.path === ".github/workflows/docker.yml")).toEqual({
       path: ".github/workflows/docker.yml",
@@ -146,15 +146,27 @@ export default defineConfig({
     }
   });
 
-  it("--baseline creates the release tag at HEAD and prints the push command", async () => {
+  it("--baseline writes baseline to the config instead of tagging HEAD, and says why", async () => {
+    // HEAD still has docker.yml, which runs on v* tags: a tag there would start it.
     const dir = repo();
     const result = await runInit(options(dir, { yes: true, baseline: true }));
-    expect(git(dir, "tag").split("\n")).toEqual(["v1.3.0", "v1.4.0"]);
-    expect(git(dir, "rev-parse", "v1.4.0^{commit}")).toBe(git(dir, "rev-parse", "HEAD"));
-    expect(result.changes).toContainEqual(
-      expect.objectContaining({ path: "v1.4.0", action: "tagged" }),
+    expect(git(dir, "tag")).toBe("v1.3.0");
+    expect(result.changes.some((c) => c.action === "tagged")).toBe(false);
+    expect(
+      read(dir, "launchset.config.ts"),
+    ).toContain(`  // 1.4.0 was released before launchset. The first release workflow run on the base branch
+  // after this file is merged creates v1.4.0 at that commit, so 1.4.0 counts as released and
+  // isn't built again. Don't create v1.4.0 by hand: pushing a tag runs the tag-triggered
+  // workflows of the commit it points to, and before the merge those are the old release
+  // workflows. You can remove this line once v1.4.0 exists.
+  baseline: "1.4.0",
+`);
+    const { config } = await loadConfig(dir);
+    expect(config.baseline).toBe("1.4.0");
+    expect(result.manualSteps).toContain(
+      'After the merge, the first release workflow run on the base branch creates v1.4.0 at the merge commit (baseline: "1.4.0" in launchset.config.ts), so 1.4.0 counts as released without a build. Don\'t create or push v1.4.0 yourself: pushing a tag runs the workflows of the commit it points to, and on HEAD that would start .github/workflows/docker.yml (they still run on tags there), which would build or publish 1.4.0 again. Once v1.4.0 exists you can remove baseline from the config.',
     );
-    expect(result.manualSteps).toContain("Push the baseline tag: `git push origin v1.4.0`.");
+    expect(result.manualSteps.join("\n")).not.toContain("git push origin v1.4.0");
   });
 
   it("remove deletes the workflow; keep leaves it and says so", async () => {
@@ -264,8 +276,9 @@ jobs:
       "The .changeset/ folder is no longer used: you can delete it (config.json and README.md were left alone).",
     );
 
-    // name@0.9.4 marks 0.9.4 as released: baseline v0.9.4 at HEAD.
-    expect(git(dir, "tag", "--list", "v*")).toBe("v0.9.4");
+    // name@0.9.4 marks 0.9.4 as released: baseline 0.9.4, no tag at HEAD.
+    expect(git(dir, "tag", "--list", "v*")).toBe("");
+    expect(read(dir, "launchset.config.ts")).toContain('  baseline: "0.9.4",\n');
     // The hook defaults to no.
     expect(read(dir, ".husky/pre-push")).toBe("pnpm test\n");
 
@@ -312,6 +325,7 @@ jobs:
 `);
     // The existing tag already is the release tag: no baseline needed.
     expect(git(dir, "tag", "--list", "v*")).toBe("");
+    expect(read(dir, "launchset.config.ts")).not.toContain("baseline");
     const { config } = await loadConfig(dir);
     expect(config.tags.release).toBe("@demonsters/widgets@{version}");
   });
@@ -373,6 +387,10 @@ describe("init --yes: Capacitor app with a version-sync script", () => {
 // launchset configuration, written by \`launchset init\`.
 // Options left out use their defaults: see the configuration reference in the launchset docs.
 export default defineConfig({
+  // Previews build only the targets with build steps. android and ios have only the "build
+  // steps missing" placeholder in launchset-release.yml and launchset-preview.yml, which
+  // fails on purpose: add them here once their build steps are in (or set targets: "all").
+  preview: { targets: ["docker"] },
   targets: {
     // Built from Dockerfile (context .).
     // Tags as .github/workflows/docker.yml pushes today.
@@ -418,7 +436,7 @@ export default defineConfig({
       "android/app/build.gradle:11 versionName goes down from 1.0.2 to 1.0.1 (decided explicitly).",
     );
     // v1.0.1 exists: no baseline needed and no warning about it.
-    expect(out.warnings.some((w) => w.startsWith("No baseline tag"))).toBe(false);
+    expect(out.warnings.some((w) => w.startsWith("No baseline"))).toBe(false);
   });
 
   it("remove deletes the sync script and the places that run it", async () => {
