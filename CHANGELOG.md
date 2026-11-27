@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.3.0 (2026-11-27)
+
+### Minor changes
+- `launchset init` finds Flutter apps, also inside a monorepo where the app has no `package.json`. It proposes Android and iOS targets that stamp the app's `pubspec.yaml`, offers that file as the version file in a repo without `package.json`, warns when the native projects don't read Flutter's numbers, and retires what rewrites the pubspec version (cider, pubver, `sed -i` or `yq -i` on `pubspec.yaml`, Dart scripts in `tool/`, `melos version`). ([#40](https://github.com/demonsters/launchset/pull/40), @rene-demonsters)
+- Flutter apps are supported (experimental). Android and iOS targets take `source: { kind: "flutter", dir }`, which stamps the `version` in the app's `pubspec.yaml`: the release PR writes the version and keeps the `+N`, and CI writes the build number after the `+`. `version.file` can be a `pubspec.yaml`, so a repo with only a Flutter app needs no `package.json`. The generated GitHub and GitLab steps pass the numbers to `flutter build` as `--build-name` and `--build-number`. ([#38](https://github.com/demonsters/launchset/pull/38), @rene-demonsters)
+- `launchset init --baseline` no longer creates the release tag at HEAD: it writes `baseline: "<version>"` to the config, and the first release workflow run on the base branch after the merge creates the tag on that commit. Pushing the tag at HEAD ran the tag-triggered workflows init was about to retire, because GitHub runs a tag's workflows from the commit it points to. The steps init prints no longer tell you to push it, and say why not to. Until the tag exists, `launchset status` shows the baseline. ([#39](https://github.com/demonsters/launchset/pull/39), @rene-demonsters)
+
+### Patch changes
+- `launchset init` leaves the targets that only have the "build steps missing" placeholder out of `preview.targets`, so the first preview no longer fails on them, and its steps say to create the `launchset:preview` label. ([#39](https://github.com/demonsters/launchset/pull/39), @rene-demonsters)
+- `launchset init` points out copied workflow steps that run electron-builder without `--publish`: in CI electron-builder publishes to GitHub Releases by itself and fails without `GH_TOKEN`. Pass `--publish never`, or set `GH_TOKEN` on purpose. ([#39](https://github.com/demonsters/launchset/pull/39), @rene-demonsters)
+
 ## 1.2.0 (2026-11-26)
 
 ### Minor changes
