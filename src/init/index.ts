@@ -16,13 +16,20 @@ import { CHANGELOG_TITLE } from "../core/changelog.ts";
 import { resolveConfig, TARGET_NAME } from "../core/config/schema.ts";
 import { LaunchsetError } from "../core/errors.ts";
 import { ciOf } from "../core/hosts.ts";
+import { joinWords } from "../core/plan-common.ts";
 import { renderTag } from "../core/tags.ts";
 import { REQUIRED_APP_PERMISSIONS } from "../forge/github/permissions.ts";
-import { Git } from "../git/index.ts";
 import { stampForRelease, writeChanges } from "../platforms/index.ts";
+import { GITLAB_FILES } from "../templates/gitlab.ts";
 import { renderWorkflows } from "../templates/workflows.ts";
 import { installSkill } from "./agents.ts";
-import { buildConfig, CONFIG_FILE, renderConfigSource } from "./config-source.ts";
+import {
+  buildConfig,
+  CONFIG_FILE,
+  guardedTargets,
+  type KeptTargetFile,
+  renderConfigSource,
+} from "./config-source.ts";
 import type { PlannedConversion } from "./convert.ts";
 import {
   DELETE_CHANGESET_HINT,
@@ -375,7 +382,8 @@ async function writeAll(
   ];
 
   // --- Plan everything first, so a problem stops init before anything is written.
-  const plan = buildConfig(ctx, answers);
+  const kept = await keptTargetFile(root, ctx, answers);
+  const plan = buildConfig(ctx, answers, kept ? { kept } : {});
   const resolved = resolveConfig(plan.config, { file: CONFIG_FILE });
   const configSource = renderConfigSource(plan);
   const conversions = await planConversion(root, d.changesets);
@@ -389,6 +397,7 @@ async function writeAll(
     : renderWorkflows({
         config: resolved,
         hints: plan.hints,
+        allPreviewSteps: true,
         ...(options.actionRef ? { actionRef: options.actionRef } : {}),
       });
   const readme = readPackageFile("templates", "launchset-readme.md");
@@ -560,33 +569,15 @@ async function writeAll(
     }
   }
 
-  // --- Baseline tag
+  // --- Baseline: the release workflow creates the tag after the merge (see core/baseline.ts).
   const releaseTag = renderTag(resolved.tags.release, { version });
-  if (answers.baseline === "yes") {
-    if (ctx.tagNames.includes(releaseTag)) {
-      io.log(`${releaseTag} already exists; no baseline tag needed.`);
-    } else {
-      const head = d.git.head;
-      if (!head) {
-        throw new LaunchsetError(
-          "no-head",
-          "Can't create the baseline tag: the repository has no commits.",
-          {
-            hint: "Commit first, or answer baseline=no.",
-          },
-        );
-      }
-      await new Git({ cwd: root }).createTag(releaseTag, head);
-      changes.push({
-        path: releaseTag,
-        action: "tagged",
-        summary: `baseline at HEAD (${head.slice(0, 7)})`,
-      });
-      manualSteps.push(`Push the baseline tag: \`git push origin ${releaseTag}\`.`);
-    }
+  if (resolved.baseline !== undefined) {
+    manualSteps.push(baselineStep(ctx, answers, releaseTag, version, { github: !gitlab }));
+  } else if (answers.baseline === "yes") {
+    io.log(`${releaseTag} already exists; no baseline needed.`);
   } else if (!ctx.tagNames.includes(releaseTag)) {
     io.warn(
-      `No baseline tag: nothing marks ${version} as released, so launchset treats it as unreleased. If ${version} was released, create ${releaseTag} (--baseline).`,
+      `No baseline: nothing marks ${version} as released, so launchset treats it as unreleased. If ${version} was released, set a baseline (--baseline).`,
     );
   }
 
@@ -619,6 +610,18 @@ async function writeAll(
     manualSteps.push(
       `Add your build and upload steps for ${buildTargets.join(", ")} to .github/workflows/launchset-release.yml (and launchset-preview.yml for previews).`,
     );
+    for (const t of plan.targets) {
+      const e = t.github?.electronBuilder;
+      if (!e) continue;
+      manualSteps.push(
+        `${t.name}: the steps init copied from job "${t.github?.job}" run electron-builder (${at(e.path, e.line)}: \`${e.command}\`). In CI electron-builder publishes to GitHub Releases by itself, also on the branch pushes launchset builds releases from, and fails with "GitHub Personal Access Token is not set" without GH_TOKEN. Pass --publish never to it (launchset creates the GitHub Release), or set GH_TOKEN on purpose if electron-builder should upload the files. Nothing to do if your electron-builder config already sets publish: null.`,
+      );
+    }
+    if (resolved.preview.enabled) {
+      manualSteps.push(
+        `Create the ${resolved.preview.label} label if the repo doesn't have it (adding it to a PR builds a preview): \`gh label create ${resolved.preview.label} --description "Build a launchset preview"\`.`,
+      );
+    }
     const retiredWorkflows = [
       ...new Set(retiredPaths.filter((p) => p.startsWith(".github/workflows/"))),
     ];
@@ -632,6 +635,12 @@ async function writeAll(
     }
   }
   manualSteps.push(...retired.followUps);
+  const guarded = guardedTargets(ctx, plan.targets, gitlab !== undefined, kept);
+  if (resolved.preview.enabled && guarded.length > 0) {
+    manualSteps.push(
+      `Previews build ${resolved.preview.targets === "all" ? "every target" : resolved.preview.targets.length > 0 ? `only ${joinWords(resolved.preview.targets)}` : "no target yet"}: ${joinWords(guarded)} ${guarded.length === 1 ? "has" : "have"} only the "build steps missing" placeholder, which fails on purpose. Add ${guarded.length === 1 ? "it" : "them"} to preview.targets in ${CONFIG_FILE} once ${guarded.length === 1 ? "its" : "their"} build steps are in.`,
+    );
+  }
   const android = plan.targets.filter((t) => t.type === "android").map((t) => t.name);
   if (android.length > 0) {
     manualSteps.push(
@@ -701,4 +710,57 @@ async function hasActionUpdater(root: string): Promise<boolean> {
     if ((await readTextOrNull(absolute(root, path))) !== null) return true;
   }
   return false;
+}
+
+/**
+ * The file with the preview build steps when init keeps the existing one (see
+ * {@link KeptTargetFile}): `launchset-preview.yml` answered `keep`, or the GitLab targets file
+ * not answered `overwrite`.
+ */
+async function keptTargetFile(
+  root: string,
+  ctx: DetectContext,
+  answers: Answers,
+): Promise<KeptTargetFile | undefined> {
+  const gitlab = ciOf(answers.host ?? ctx.host.host) === "gitlab-ci";
+  const path = gitlab ? GITLAB_FILES.targets : ".github/workflows/launchset-preview.yml";
+  const keep = gitlab
+    ? answers[`file.${path}`] !== "overwrite"
+    : answers[`file.${path}`] === "keep";
+  if (!keep) return undefined;
+  const text = await readTextOrNull(absolute(root, path));
+  return text === null ? undefined : { text };
+}
+
+/**
+ * The "What's left to do" step for `baseline`: what happens after the merge, and why the tag
+ * must not be created by hand (spec 11.1 step 5). Names the tag-triggered workflows a hand-made
+ * tag at HEAD would start.
+ */
+function baselineStep(
+  ctx: DetectContext,
+  answers: Answers,
+  tag: string,
+  version: string,
+  options: { github: boolean },
+): string {
+  const tagJobs = ctx.machinery.filter((m) => m.item.kinds.includes("tag-trigger"));
+  const triggered = [...new Set(tagJobs.map((m) => m.item.path))];
+  const kept = [
+    ...new Set(
+      tagJobs
+        .filter((m) => (m.item.actions.length > 1 ? answers[m.item.id] : "keep") === "keep")
+        .map((m) => m.item.path),
+    ),
+  ];
+  const why =
+    triggered.length > 0
+      ? `Don't create or push ${tag} yourself: pushing a tag runs the workflows of the commit it points to, and on HEAD that would start ${triggered.join(", ")} (they still run on tags there), which would build or publish ${version} again.`
+      : `Don't create or push ${tag} yourself: pushing a tag runs the tag-triggered workflows of the commit it points to.`;
+  // On GitLab the tag is pushed with ci.skip; on GitHub kept tag workflows still run for it.
+  const keptNote =
+    options.github && kept.length > 0
+      ? ` You kept ${kept.join(", ")}, which still ${kept.length === 1 ? "runs" : "run"} on tags: ${kept.length === 1 ? "it runs" : "they run"} for ${tag} too when the release workflow creates it.`
+      : "";
+  return `After the merge, the first release workflow run on the base branch creates ${tag} at the merge commit (baseline: "${version}" in ${CONFIG_FILE}), so ${version} counts as released without a build. ${why}${keptNote} Once ${tag} exists you can remove baseline from the config.`;
 }

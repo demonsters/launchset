@@ -5,8 +5,14 @@ import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { computeBuildNumber } from "../../src/core/build-number.ts";
 import { AGENTS_END, AGENTS_START, upsertAgentsSection } from "../../src/init/agents.ts";
-import { renderConfigSource } from "../../src/init/config-source.ts";
-import { classifyTag, offsetAbove, plainVersion, roundUpOffset } from "../../src/init/detect.ts";
+import { guardedTargets, renderConfigSource } from "../../src/init/config-source.ts";
+import {
+  classifyTag,
+  type DetectContext,
+  offsetAbove,
+  plainVersion,
+  roundUpOffset,
+} from "../../src/init/detect.ts";
 import { launchsetTagsMatched, matchesFilter } from "../../src/init/github-filter.ts";
 import { addLefthookCommand, detectHooks, installHook } from "../../src/init/hooks.ts";
 import {
@@ -17,6 +23,7 @@ import {
 } from "../../src/init/machinery.ts";
 import { packageFile, packageRoot } from "../../src/init/package-files.ts";
 import { applyRetirement, removeSegments } from "../../src/init/retire.ts";
+import type { DetectedTarget } from "../../src/init/types.ts";
 import {
   dockerBuilds,
   githubFileWrite,
@@ -534,5 +541,51 @@ describe("small helpers", () => {
   it("finds the package files from the source tree", () => {
     expect(readFileSync(packageFile("package.json"), "utf8")).toContain('"name": "launchset"');
     expect(packageRoot()).toBe(join(import.meta.dirname, "../.."));
+  });
+});
+
+describe("guardedTargets", () => {
+  const ctx = {} as DetectContext;
+  const target = (name: string, type: DetectedTarget["type"]): DetectedTarget => ({
+    name,
+    type,
+    dir: ".",
+    files: [],
+    builtBy: [],
+    proposed: "auto",
+    reason: "test",
+  });
+  const targets = [target("docker", "docker"), target("android", "android"), target("web", "web")];
+
+  it("what init writes: every target but Docker has the placeholder", () => {
+    expect(guardedTargets(ctx, targets, false)).toEqual(["android", "web"]);
+    expect(guardedTargets(ctx, targets, true)).toEqual(["android", "web"]);
+  });
+
+  it("a kept GitLab targets file: its own jobs decide, missing jobs get the placeholder", () => {
+    const kept = `.launchset-android:
+  script:
+    - ./gradlew bundleRelease
+.launchset-docker:
+  script:
+    - echo "No build steps for docker yet. Add them to .gitlab/launchset-targets.yml and remove this line."; exit 1
+`;
+    // android has real steps; docker's job still has the placeholder; web's job gets appended.
+    expect(guardedTargets(ctx, targets, true, { text: kept })).toEqual(["docker", "web"]);
+    expect(guardedTargets(ctx, targets, true, { text: "a: [" })).toEqual([
+      "docker",
+      "android",
+      "web",
+    ]);
+  });
+
+  it("a kept GitHub preview workflow: the placeholder, or no mention, means nothing builds it", () => {
+    const kept = `steps:
+  - name: Build steps missing (android)
+    if: matrix.target == 'android'
+  - name: Build web
+    if: matrix.target == 'web'
+`;
+    expect(guardedTargets(ctx, targets, false, { text: kept })).toEqual(["docker", "android"]);
   });
 });

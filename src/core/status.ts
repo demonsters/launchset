@@ -4,6 +4,7 @@
  * gathers the inputs and prints `renderStatus` or the data as JSON.
  */
 
+import { baselineAction } from "./baseline.ts";
 import { isMaintenanceBranch } from "./branches.ts";
 import type { ResolvedConfig } from "./config/schema.ts";
 import { type ForgeHost, forgeWords } from "./forge-links.ts";
@@ -60,6 +61,11 @@ export interface StatusData {
   botPrs: BotPrInfo[];
   consistency: { ok: boolean; mismatches: VersionMismatch[] };
   lastRelease: { version: string; tag: string } | null;
+  /**
+   * `baseline` in the config is the current version and its release tag doesn't exist yet: the
+   * release workflow on the base branch creates `tag` (spec 11.1 step 5). Absent otherwise.
+   */
+  baseline?: { version: string; tag: string };
   unfinished: { version: string; shipped: string[]; missing: string[] }[];
   manualTargets: ManualTargetStatus[];
   /** Commits that no pending changeset covers (none pending at all). */
@@ -107,8 +113,19 @@ export function computeStatus(input: StatusInput): StatusData {
     missing: auto.filter((t) => !hasMarker(index, t, version)),
   }));
 
+  // Not the branch: on the migration branch the baseline is still the base branch's to create.
+  const baseline = maintenance
+    ? undefined
+    : baselineAction(config, { branch: config.baseBranch, version: input.version, index });
+  if (baseline?.kind === "skip") warnings.push(baseline.warning);
+  const pendingBaseline = baseline?.kind === "create" ? baseline : undefined;
+
+  // With a pending baseline the commits so far are part of that release, not unreleased work.
   const commitsWithoutChangeset =
-    input.changesets.length === 0 && botPrs.length === 0 && input.commitsSinceRelease.length > 0
+    pendingBaseline === undefined &&
+    input.changesets.length === 0 &&
+    botPrs.length === 0 &&
+    input.commitsSinceRelease.length > 0
       ? { since: lastRelease?.tag ?? null, commits: [...input.commitsSinceRelease] }
       : null;
 
@@ -134,6 +151,8 @@ export function computeStatus(input: StatusInput): StatusData {
     warnings,
   };
   if (nextVersionError !== undefined) data.nextVersionError = nextVersionError;
+  if (pendingBaseline)
+    data.baseline = { version: pendingBaseline.version, tag: pendingBaseline.tag };
   return data;
 }
 
@@ -147,6 +166,11 @@ export function renderStatus(data: StatusData, host?: ForgeHost): string {
     `Version:       ${data.version}`,
     `Last release:  ${data.lastRelease ? data.lastRelease.tag : "none yet"}`,
   );
+  if (data.baseline) {
+    lines.push(
+      `Baseline:      ${data.baseline.tag}, not created yet: the first release workflow run on the base branch creates it, so ${data.baseline.version} counts as released (don't push it by hand)`,
+    );
+  }
   if (data.bump !== null) {
     lines.push(
       `Next version:  ${data.nextVersion ?? `can't be computed: ${data.nextVersionError ?? "unknown"}`} (${data.bump})`,

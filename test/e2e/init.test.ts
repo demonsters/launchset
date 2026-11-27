@@ -200,8 +200,10 @@ describe("init --yes --decide", () => {
     // The pinned manifest follows the release tag; the production overlay is left alone.
     expect(read(dir, "deploy/k8s/api.yaml")).toContain("image: ghcr.io/demonsters/api:v1.4.0");
     expect(read(dir, "deploy/production/api.yaml")).toBe(production);
-    // The baseline tag marks 1.4.0 as released; no skill files with skill=no.
-    expect(git(dir, "tag").split("\n")).toEqual(["v1.3.0", "v1.4.0"]);
+    // The baseline marks 1.4.0 as released: the release workflow tags it after the merge, not
+    // init at HEAD (docker.yml, kept here, runs on v* tags). No skill files with skill=no.
+    expect(config).toContain('baseline: "1.4.0"');
+    expect(git(dir, "tag")).toBe("v1.3.0");
     expect(Object.keys(snapshot(dir))).not.toContain(".claude/skills/launchset/SKILL.md");
 
     // The generated workflows run the action's commands.
@@ -211,9 +213,10 @@ describe("init --yes --decide", () => {
 
     const status = await statusAfterInit(dir);
     expect(status).toMatchObject({ version: "1.4.0", consistency: { ok: true } });
-    expect(status.lastRelease).toEqual({ version: "1.4.0", tag: "v1.4.0" });
+    // Until the release workflow creates v1.4.0, the last release is v1.3.0.
+    expect(status.lastRelease).toEqual({ version: "1.3.0", tag: "v1.3.0" });
     expect(status.manualTargets).toEqual([
-      { target: "docker", lastShipped: null, releasesBehind: 2 },
+      { target: "docker", lastShipped: null, releasesBehind: 1 },
     ]);
     // And the next step works: add a changeset, status shows the version it makes.
     const added = await cli(["add", "--bump", "minor", "--message", "Add search."], { cwd: dir });

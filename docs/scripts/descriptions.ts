@@ -29,6 +29,8 @@ export const CONFIG_DESCRIPTIONS: Record<string, string> = {
     "The marker tag that records one target shipped for one version. Must contain `{target}` and `{version}`.",
   "tags.partial":
     "The tag for a release that was superseded before it was complete. Must contain `{version}` and differ from `tags.release`. Keep it outside the namespace your tag-triggered workflows listen to.",
+  baseline:
+    "The version that was released before launchset took over, as a plain `X.Y.Z` (`init --baseline` writes it). While the root version is this version and its release tag doesn't exist, the release workflow on `baseBranch` creates that tag at the commit it runs on (when the config is committed there; GitLab: pushed with `ci.skip`), without building anything, so the version counts as released. Nothing happens on other branches or once the tag exists, so you can remove it afterwards. See [Baseline](/guides/migrating/#baseline).",
   buildNumber: "How build numbers are computed. A target can override any of these keys.",
   "buildNumber.strategy":
     "`timestamp`: seconds (or minutes, see `unit`) since `epoch`, plus `offset`. `run-number`: `github.run_number` plus `offset`. `semver`: derived from the version; not allowed here while previews are enabled, and only on targets that previews don't build. `eas`: no build number at all, for Expo builds on EAS.",
