@@ -357,6 +357,24 @@ describe("Flutter helpers", () => {
     expect(isFlutterAppPubspec("name: [x\n")).toBe(false);
   });
 
+  it("warns about a version set in a Gradle flavor, not about versionNameSuffix", () => {
+    const gradle = [
+      "android {",
+      "    defaultConfig {",
+      "        versionCode = flutter.versionCode",
+      "        versionName = flutter.versionName",
+      "    }",
+      "    productFlavors {",
+      '        create("staging") {',
+      '            versionNameSuffix = "-staging"',
+      "            versionCode = 2",
+      "        }",
+      "    }",
+      "}",
+    ].join("\n");
+    expect(gradleWiringNotes(gradle, "build.gradle.kts").map((n) => n.line)).toEqual([9]);
+  });
+
   it("accepts the old Groovy template's flutterVersionCode", () => {
     const groovy = [
       "android {",

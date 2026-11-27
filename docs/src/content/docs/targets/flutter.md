@@ -174,7 +174,9 @@ The build step passes the flavor. With flavors, Gradle names the bundle after th
 
 The bundle is then in `build/app/outputs/bundle/stagingRelease/app-staging-release.aab`. On iOS, `flutter build ipa --flavor staging` needs an Xcode scheme called `staging` with a `Release-staging` configuration. That configuration sets the bundle ID.
 
-Don't set `versionCode` or `versionName` in a Gradle `productFlavors` block. A flavor's value replaces Flutter's, so the stamped numbers would never reach that app. `versionNameSuffix` is fine: Android adds it to the version name, and the build number stays the same.
+Don't set `versionCode` or `versionName` in a Gradle `productFlavors` block. A flavor's value replaces Flutter's, so the stamped numbers would never reach that app. `launchset init` warns about it. `versionNameSuffix` is fine: Android adds it to the version name, and the build number stays the same.
+
+`launchset init` doesn't detect flavors yet. It proposes one `android` and one `ios` target per app. Split them per flavor by hand, and add `--flavor` to the build steps.
 
 ## Web and desktop
 
