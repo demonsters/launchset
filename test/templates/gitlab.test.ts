@@ -1,6 +1,7 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: the tests compare shell ${VAR:-} expansions
 import picomatch from "picomatch";
 import { describe, expect, it } from "vitest";
+import { parse as parseYaml } from "yaml";
 import { type ResolvedConfig, resolveConfig } from "../../src/core/config/schema.ts";
 import { packageVersion } from "../../src/init/package-files.ts";
 import {
@@ -680,5 +681,57 @@ describe("RE2 patterns", () => {
     expect(yamlScalar("a: b")).toBe('"a: b"');
     expect(yamlScalar("@scope/pkg")).toBe('"@scope/pkg"');
     expect(yamlScalar("x #y")).toBe('"x #y"');
+  });
+});
+
+describe("Flutter targets in the targets file", () => {
+  const { targets } = render(
+    resolveConfig({
+      targets: {
+        android: {
+          type: "android",
+          source: { kind: "flutter" },
+          store: { packageName: "com.acme.app" },
+        },
+        ios: { type: "ios", source: { kind: "flutter" } },
+      },
+    }),
+  );
+
+  it("installs Flutter, builds in the Flutter folder and passes launchset's numbers", () => {
+    const android = job(targets.doc, ".launchset-android");
+    expect(android.image).toBe("cimg/android:2026.11-node");
+    expect(android.before_script?.join("\n")).toContain("https://github.com/flutter/flutter.git");
+    // A shell runner that keeps $HOME reuses the clone instead of failing on it.
+    expect(android.before_script?.join("\n")).toContain('test -d "$HOME/flutter" || git clone');
+    expect(targets.text).toContain("# - cd android");
+    expect(targets.text).toContain("--aab ../build/app/outputs/bundle/release/app-release.aab");
+    expect(targets.text).toContain("# - cd ios");
+    expect(job(targets.doc, ".launchset-ios").tags).toEqual(["saas-macos-medium-m1"]);
+    expect(targets.text).toContain("# - cd .");
+    expect(targets.text).toContain(
+      '# - flutter build appbundle --release --build-name "$LAUNCHSET_VERSION" --build-number "$LAUNCHSET_BUILD_NUMBER"',
+    );
+    expect(targets.text).toContain("# - flutter build ipa --release");
+    expect(targets.text).toContain('--package_name "com.acme.app"');
+    for (const name of [".launchset-android", ".launchset-ios"]) {
+      expect(job(targets.doc, name).script?.[0]).toMatch(/^echo "No build steps for .+"; exit 1$/);
+    }
+  });
+});
+
+describe("the commented cd line of a Flutter target", () => {
+  it("stays one YAML string once uncommented, whatever the folder is called", () => {
+    for (const dir of ["apps/mobile: test", "apps/mobile #2"]) {
+      const { targets } = render(
+        resolveConfig({
+          targets: { android: { type: "android", source: { kind: "flutter", dir } } },
+        }),
+      );
+      const line = targets.text.split("\n").find((l) => l.trimStart().startsWith('# - "cd '));
+      expect(line, dir).toBeDefined();
+      const item = (line as string).trimStart().replace(/^# /, "");
+      expect(parseYaml(item)).toEqual([`cd '${dir}'`]);
+    }
   });
 });

@@ -1,0 +1,51 @@
+# --- @@target@@ (android, Flutter): example steps, uncomment and adapt ---
+# Remove this step once you've added the build and upload steps below: it stops the release
+# from marking @@target@@ as shipped while nothing builds it.
+- name: Build steps missing (@@target@@)
+  if: @@if@@
+  run: |
+    echo "::error::No build steps for @@target@@ yet. Add them to this workflow and remove this step."
+    exit 1
+# `stamp` already wrote the version and build number into @@pubspec@@ (`version: X.Y.Z+N`),
+# which Flutter passes to Gradle as versionName and versionCode. The build step passes them as
+# --build-name and --build-number too. `channel` picks the Google Play track:
+# release -> production, prerelease -> beta, preview -> internal.
+# Signing: the release signingConfig in android/app/build.gradle(.kts) reads your upload key,
+# for example from android/key.properties that a step writes from secrets.
+# Secrets are referenced by name only: add them as repository or organization secrets.
+#
+# - name: Set up Java (@@target@@)
+#   if: @@if@@
+#   uses: actions/setup-java@v6
+#   with:
+#     distribution: temurin
+#     java-version: "17"
+# - name: Set up Flutter (@@target@@)
+#   if: @@if@@
+#   uses: subosito/flutter-action@v2
+#   with:
+#     channel: stable
+#     cache: true
+# - name: Build the app bundle (@@target@@)
+#   if: @@if@@
+#   working-directory: @@flutter_dir@@
+#   run: flutter build appbundle --release --build-name "$LAUNCHSET_VERSION" --build-number "$LAUNCHSET_BUILD_NUMBER"
+#   env:
+#     LAUNCHSET_VERSION: ${{ steps.stamp.outputs.marketing-version }}
+#     LAUNCHSET_BUILD_NUMBER: ${{ steps.stamp.outputs.build-number }}
+#     ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+#     ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+#     ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+#     ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+# - name: Upload to Google Play (@@target@@)
+#   # As in Flutter's fastlane guide, the Gemfile is in @@flutter_native_dir@@.
+#   if: @@if@@
+#   working-directory: @@flutter_native_dir@@
+#   run: |
+#     bundle exec fastlane supply \
+#       --aab ../build/app/outputs/bundle/release/app-release.aab \
+#       --track "$PLAY_TRACK" \
+#       --package_name "@@package_name@@"
+#   env:
+#     PLAY_TRACK: ${{ steps.stamp.outputs.channel == 'release' && 'production' || (steps.stamp.outputs.channel == 'prerelease' && 'beta' || 'internal') }}
+#     SUPPLY_JSON_KEY_DATA: ${{ secrets.LAUNCHSET_PLAY_SERVICE_ACCOUNT_JSON }}

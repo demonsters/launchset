@@ -20,7 +20,7 @@ Set `buildNumber.strategy`. Any target can override it.
 | `timestamp` (default) | Seconds since `epoch` (default `2020-01-01T00:00:00Z`), plus `offset`. With `unit: "minute"`, whole minutes. | About 217 million in November 2026 (3.6 million in minutes). Stays under the Android limit until about 2086 (minutes: about 6012). Always increases, across all branches, without credentials. See [Seconds or minutes](#seconds-or-minutes). |
 | `run-number` | `github.run_number` plus `offset`. | Simple. Resets if you rename the workflow file. Only works in CI. |
 | `semver` | `major*10^7 + minor*10^5 + patch*10^2 + attempt` | `attempt` is the run attempt (1 to 99), or the one you pass when [shipping a manual target](#shipping-the-same-version-again); 1 outside CI. Limits: minor up to 99, patch up to 999. **Only on targets that previews never build** while previews are enabled, because a preview of `1.5.0` and the real `1.5.0` would compete for the same numbers. See [Previews](#previews). |
-| `eas` | None. | For Expo projects whose builds are numbered by EAS. See [Expo](/targets/expo/). |
+| `eas` | None. | For Expo projects whose builds are numbered by EAS. See [Expo](/targets/expo/). Not for [Flutter](/targets/flutter/#build-numbers) targets. |
 
 The `offset` applies to every strategy that produces a number.
 

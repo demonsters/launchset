@@ -18,7 +18,7 @@ Developers describe each change in a small changeset file in their PR. Commit me
 
 ### 1.1 Principles
 
-1. **One version per repo.** The root `package.json` `version` is the single source of truth.
+1. **One version per repo.** The root `package.json` `version` is the single source of truth (`version.file`; a repo with only a Flutter app uses its `pubspec.yaml`, 6.8).
 2. **Lock step, no partial releases.** Every release builds every target. A changeset never targets a subset. The one exception is a **manual target** (section 9.8): its version is still stamped by every release, but it's shipped on demand for an already released version.
 3. **No commit-message conventions.** Release intent lives in changeset files only.
 4. **Build numbers are assigned in CI at build time and never committed.** That makes build numbers independent of branches.
@@ -247,6 +247,7 @@ Rules:
 - `gradle-properties`: `gradle.properties` keys, configurable: `{ kind: "gradle-properties", file, versionNameKey: "VERSION_NAME", versionCodeKey: "VERSION_CODE" }`.
 - `capacitor`: alias. `{ kind: "capacitor", dir: "apps/mobile" }` resolves to `<dir>/android/app/build.gradle`.
 - `expo`: `{ kind: "expo", file: "app.json" }`: `expo.version` and `expo.android.versionCode` (integer).
+- `flutter`: `{ kind: "flutter", dir: "." }`: the `version` in `<dir>/pubspec.yaml` (6.8).
 - Bare React Native uses `gradle`.
 
 Marketing version: `versionName`. On previews `versionName` is the full preview version (`1.5.0-pr.123.4`).
@@ -260,6 +261,7 @@ Build number: `versionCode`, integer, max 2,100,000,000 (Play limit). Exceeding 
 - `xcconfig`: edits `MARKETING_VERSION = ...` and `CURRENT_PROJECT_VERSION = ...` in a `.xcconfig` file.
 - `capacitor`: alias. `{ kind: "capacitor", dir: "apps/mobile" }` resolves to `<dir>/ios/App/App.xcodeproj`.
 - `expo`: `expo.version` and `expo.ios.buildNumber` (string).
+- `flutter`: `{ kind: "flutter", dir: "." }`: the `version` in `<dir>/pubspec.yaml` (6.8).
 - Bare React Native uses `xcodeproj`.
 
 Marketing version must be plain `X.Y.Z` (Apple doesn't accept prerelease suffixes). Previews use the plain next version, e.g. `1.5.0`; the build number tells preview builds apart.
@@ -284,6 +286,17 @@ For anything else (an npm package, a Helm chart, a version file a web app reads)
 ### 6.7 Version consistency
 
 `launchset status` and the PR check verify that every target's committed marketing version equals the root version. A mismatch (someone edited a version file by hand) fails the PR check with a list of files and values.
+
+### 6.8 Flutter (`pubspec.yaml`)
+
+A Flutter app keeps both numbers in one field: `version: 1.5.0+217175105` is the build name and the build number. `flutter build` passes them to the native projects (`flutter.versionName` / `flutter.versionCode` in Gradle, `$(FLUTTER_BUILD_NAME)` / `$(FLUTTER_BUILD_NUMBER)` in `Info.plist`), so a Flutter target stamps `pubspec.yaml` and never `android/` or `ios/`.
+
+- Marketing version: the part before `+`. The release PR replaces only that part and keeps the `+…` as written (or its absence).
+- Build number: the part after `+`, written only in CI (`+<n>` appended when there is none).
+- iOS gets the plain `X.Y.Z` like every iOS source: Flutter strips `-pr.123.4` to `1.5.0.123.4` for Apple platforms without a warning.
+- Only the top-level `version` is stamped; plain and quoted scalars keep their style; block scalars, escapes and a missing `version` are errors.
+- `version.file` may be a `pubspec.yaml` (a repo with only a Flutter app has no `package.json`). The version is read without `+N`, so a commit that changes only `+N` is not a release commit. In CI, `stamp` writes the run's version and build number into it for every target, so a Flutter web build gets them too; a target whose own source is that file writes its own values instead.
+- The `eas` strategy (7.2) is an error on a Flutter target.
 
 ---
 
@@ -720,7 +733,7 @@ For humans. Every command, flag, config option and output shown must match the c
 - Concepts (one version, targets, changesets, release PR, markers, channels)
 - Writing changesets
 - Configuration reference (every option, with defaults; generate from the zod schema if practical)
-- Targets: Docker, Web, Android, iOS, React Native, Capacitor, Expo, Custom
+- Targets: Docker, Web, Android, iOS, React Native, Capacitor, Expo, Flutter, Custom
 - Build numbers (strategies, offset, store verification, migrating existing apps)
 - Release flow (workflows explained step by step)
 - Preview builds and prerelease branches

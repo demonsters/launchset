@@ -147,7 +147,7 @@ If the workflow here is to push to the base branch without a PR, make sure a cha
 
 ## Never do these
 
-- **Never edit version numbers or build numbers by hand.** Not in `package.json`, `build.gradle`, `project.pbxproj`, `Info.plist`, `app.json`, Helm charts, or anywhere else a target's version lives. The release PR writes versions. CI writes build numbers. The PR check fails when a version file disagrees with the root version.
+- **Never edit version numbers or build numbers by hand.** Not in `package.json`, `build.gradle`, `project.pbxproj`, `Info.plist`, `app.json`, `pubspec.yaml` (also not the `+N` after the version), Helm charts, or anywhere else a target's version lives. The release PR writes versions. CI writes build numbers. The PR check fails when a version file disagrees with the root version.
 - **Never edit `CHANGELOG.md`.** The release PR adds sections.
 - **Never create tags that start with `v` or `launchset/`** (or whatever the repo's launchset config sets in `tags`). They are launchset's release, marker and partial tags, and creating them can trigger or block releases.
 - **Never edit or push to the release PR** (branch `launchset/release/*`). It is rebuilt and force-pushed on every run. Change the changesets on the base branch instead.

@@ -1,0 +1,32 @@
+# --- @@target@@ (android, Flutter): example steps, uncomment and adapt ---
+.launchset-@@target@@:
+  # An image with the Android SDK, Java and Node (CircleCI's Android image, the `-node` variant
+  # has the current Node LTS). Any image with the SDK, Java and Node 24 or later works: change
+  # the tag to pin another release (https://hub.docker.com/r/cimg/android/tags).
+  image: cimg/android:@@android_image_tag@@
+  @@verify_variables@@
+  before_script:
+    # The image runs as a non-root user: global npm packages (launchset) go to the home folder.
+    - export NPM_CONFIG_PREFIX="$HOME/.npm-global" PATH="$HOME/.npm-global/bin:$PATH"
+    # Flutter from its git repository: pin a release with --branch <version> (e.g. 3.38.0).
+    # A runner that keeps its home folder between jobs reuses the clone. One with Flutter
+    # installed can drop these two lines.
+    - test -d "$HOME/flutter" || git clone --depth 1 --branch stable https://github.com/flutter/flutter.git "$HOME/flutter"
+    - export PATH="$HOME/flutter/bin:$PATH"
+  script:
+    # Remove this line once you've added the build and upload steps below: it stops the release
+    # from marking @@target@@ as shipped while nothing builds it.
+    - echo "No build steps for @@target@@ yet. Add them to .gitlab/launchset-targets.yml and remove this line."; exit 1
+    # `stamp` already wrote the version and build number into @@pubspec@@ (`version: X.Y.Z+N`),
+    # which Flutter passes to Gradle as versionName and versionCode. The build passes them as
+    # --build-name and --build-number too. LAUNCHSET_CHANNEL picks the Google Play track:
+    # release -> production, prerelease -> beta, preview -> internal. Signing secrets
+    # (ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD)
+    # are CI/CD variables your Gradle config reads.
+    #
+    # - @@cd_flutter_dir@@
+    # - flutter build appbundle --release --build-name "$LAUNCHSET_VERSION" --build-number "$LAUNCHSET_BUILD_NUMBER"
+    # - case "$LAUNCHSET_CHANNEL" in release) PLAY_TRACK=production ;; prerelease) PLAY_TRACK=beta ;; *) PLAY_TRACK=internal ;; esac
+    # - export SUPPLY_JSON_KEY_DATA="$LAUNCHSET_PLAY_SERVICE_ACCOUNT_JSON"
+    # - cd android  # the Gemfile is here, as in Flutter's fastlane guide
+    # - bundle exec fastlane supply --aab ../build/app/outputs/bundle/release/app-release.aab --track "$PLAY_TRACK" --package_name "@@package_name@@"

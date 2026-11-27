@@ -268,6 +268,8 @@ const androidSourceSchema = z.discriminatedUnion("kind", [
   }),
   z.strictObject({ kind: z.literal("capacitor"), dir: nonEmpty }),
   z.strictObject({ kind: z.literal("expo"), file: nonEmpty.default("app.json") }),
+  /** A Flutter app: `<dir>/pubspec.yaml` (its `version`, build name `+` build number). */
+  z.strictObject({ kind: z.literal("flutter"), dir: nonEmpty.default(".") }),
 ]);
 
 const androidTargetSchema = z.strictObject({
@@ -309,6 +311,8 @@ const iosSourceSchema = z.discriminatedUnion("kind", [
     xcodeTargets: xcodeTargets.optional(),
   }),
   z.strictObject({ kind: z.literal("expo"), file: nonEmpty.default("app.json") }),
+  /** A Flutter app: `<dir>/pubspec.yaml` (its `version`, build name `+` build number). */
+  z.strictObject({ kind: z.literal("flutter"), dir: nonEmpty.default(".") }),
 ]);
 
 const iosTargetSchema = z.strictObject({
@@ -836,6 +840,22 @@ function unitIssues(data: Pick<ParsedConfig, "buildNumber" | "targets">): Config
   return issues;
 }
 
+/**
+ * How `version.file` is read and written: a file named `pubspec.yaml` is a Flutter or Dart
+ * pubspec (its `version`, without the `+build` suffix), anything else a JSON file with a
+ * top-level `"version"` (`package.json`).
+ */
+export function versionFileFormat(file: string): "json" | "pubspec" {
+  return /(^|[\\/])pubspec\.yaml$/.test(file) ? "pubspec" : "json";
+}
+
+/** How to add a missing version to `version.file`, in that file's own syntax. */
+export function rootVersionHint(file: string): string {
+  return versionFileFormat(file) === "pubspec"
+    ? "Add a top-level version, e.g. `version: 0.1.0+1`."
+    : 'Add a "version" field, e.g. "version": "0.1.0".';
+}
+
 /** Cross-field rules from spec 5 that zod's per-field checks can't express. */
 function semanticIssues(config: ResolvedConfig): ConfigIssue[] {
   const issues: ConfigIssue[] = [];
@@ -857,6 +877,17 @@ function semanticIssues(config: ResolvedConfig): ConfigIssue[] {
     issues.push({
       path: "targets",
       message: 'expected at least one target with release: "auto" (otherwise no release completes)',
+    });
+  }
+
+  if (
+    /\.ya?ml$/i.test(config.version.file) &&
+    versionFileFormat(config.version.file) !== "pubspec"
+  ) {
+    issues.push({
+      path: "version.file",
+      message:
+        "expected a package.json-style JSON file or a Flutter pubspec.yaml; other YAML files can't hold the version",
     });
   }
 
@@ -915,6 +946,17 @@ function semanticIssues(config: ResolvedConfig): ConfigIssue[] {
           }
         });
       }
+    }
+    if (
+      (target.type === "android" || target.type === "ios") &&
+      target.source.kind === "flutter" &&
+      target.buildNumber.strategy === "eas"
+    ) {
+      issues.push({
+        path: `${base}.buildNumber.strategy`,
+        message:
+          'the "eas" strategy is for Expo builds numbered by EAS; a Flutter app needs a build number from launchset (use "timestamp", "run-number" or "semver")',
+      });
     }
     if (target.type === "android" && target.verify.includes("store") && !target.store) {
       issues.push({

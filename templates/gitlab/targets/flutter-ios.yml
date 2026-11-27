@@ -1,0 +1,42 @@
+# --- @@target@@ (ios, Flutter): example steps, uncomment and adapt ---
+.launchset-@@target@@:
+  # A macOS runner. These are GitLab's hosted macOS runners (GitLab.com, Premium and Ultimate):
+  # the tag picks the machine (saas-macos-medium-m1 or saas-macos-large-m2pro) and the image the
+  # macOS and Xcode version (https://docs.gitlab.com/ci/runners/hosted_runners/macos/). On your
+  # own macOS runner, use its tags and drop the image. launchset needs Node 24 or later there:
+  # check the image's preinstalled software, else install it first (brew install node@24).
+  tags:
+    - saas-macos-medium-m1
+  image: macos-26-xcode-26
+  @@verify_variables@@
+  before_script:
+    # Flutter from its git repository: pin a release with --branch <version> (e.g. 3.38.0).
+    # A runner that keeps its home folder between jobs reuses the clone. One with Flutter
+    # installed can drop these two lines.
+    - test -d "$HOME/flutter" || git clone --depth 1 --branch stable https://github.com/flutter/flutter.git "$HOME/flutter"
+    - export PATH="$HOME/flutter/bin:$PATH"
+  script:
+    # Remove this line once you've added the build and upload steps below: it stops the release
+    # from marking @@target@@ as shipped while nothing builds it.
+    - echo "No build steps for @@target@@ yet. Add them to .gitlab/launchset-targets.yml and remove this line."; exit 1
+    # `stamp` already wrote the marketing version (plain X.Y.Z) and the build number into
+    # @@pubspec@@ (`version: X.Y.Z+N`), which Flutter passes to Xcode as FLUTTER_BUILD_NAME and
+    # FLUTTER_BUILD_NUMBER. The build passes them as --build-name and --build-number too.
+    # LAUNCHSET_CHANNEL picks where the build goes: release -> TestFlight, ready to submit for
+    # App Store review; prerelease -> an external TestFlight group; preview -> internal testers
+    # only. Code signing: see "Code signing iOS Projects with fastlane" in the GitLab docs (the
+    # runner's keychain isn't usable as is).
+    #
+    # - @@cd_flutter_dir@@
+    # - flutter build ipa --release --export-options-plist=ios/ExportOptions.plist --build-name "$LAUNCHSET_VERSION" --build-number "$LAUNCHSET_BUILD_NUMBER"
+    # Upload with a fastlane lane (see "Workflow recipes" in the launchset docs). As in Flutter's
+    # fastlane guide, the Gemfile and fastlane/Fastfile are in ios/:
+    #   lane :testflight do |options|
+    #     api_key = app_store_connect_api_key(key_id: ENV.fetch("ASC_KEY_ID"),
+    #       issuer_id: ENV.fetch("ASC_ISSUER_ID"), key_content: ENV.fetch("ASC_PRIVATE_KEY"))
+    #     upload_to_testflight(api_key: api_key, ipa: options.fetch(:ipa),
+    #       skip_waiting_for_build_processing: true)
+    #   end
+    # - export ASC_KEY_ID="$LAUNCHSET_ASC_KEY_ID" ASC_ISSUER_ID="$LAUNCHSET_ASC_ISSUER_ID" ASC_PRIVATE_KEY="$LAUNCHSET_ASC_PRIVATE_KEY"
+    # - cd ios
+    # - bundle exec fastlane testflight ipa:"$(ls ../build/ios/ipa/*.ipa | head -n 1)"

@@ -173,3 +173,40 @@ describe("readRootVersion", () => {
     );
   });
 });
+
+describe("a pubspec.yaml version file", () => {
+  it("reads the build name without +N, undefined when missing, errors on invalid YAML", async () => {
+    const repo = initRepo();
+    const a = repo.commit("a", { "pubspec.yaml": "name: app\nversion: 2.0.0+17 # app\n" });
+    const b = repo.commit("b", { "pubspec.yaml": "name: app\n" });
+    const c = repo.commit("c", { "pubspec.yaml": "name: app\nversion: 2\n" });
+    const d = repo.commit("d", { "pubspec.yaml": "name: [app\n" });
+    const e = repo.commit("e", {
+      "pubspec.yaml": "name: app\ndependencies:\n  x:\n    version: ^1.0.0\n",
+    });
+    const git = new Git({ cwd: repo.dir });
+    expect(await readRootVersion(git, a, "pubspec.yaml")).toBe("2.0.0");
+    expect(await readRootVersion(git, b, "pubspec.yaml")).toBeUndefined();
+    expect(await readRootVersion(git, c, "pubspec.yaml")).toBeUndefined();
+    expect(await readRootVersion(git, e, "pubspec.yaml")).toBeUndefined();
+    await expect(readRootVersion(git, d, "pubspec.yaml")).rejects.toThrow(
+      new RegExp(`Could not parse pubspec.yaml at commit ${d.slice(0, 12)}`),
+    );
+  });
+
+  it("a commit that only changes +N is not a release commit", async () => {
+    const repo = initRepo();
+    const release = repo.commit("Release v1.1.0", {
+      "pubspec.yaml": "name: app\nversion: 1.1.0+1\n",
+    });
+    repo.commit("feature");
+    repo.commit("Bump the build number by hand", {
+      "pubspec.yaml": "name: app\nversion: 1.1.0+2\n",
+    });
+    const git = new Git({ cwd: repo.dir });
+    const read = versionReader(git, "pubspec.yaml");
+    expect(await findReleaseCommit(git, "HEAD", read)).toBe(release);
+    expect(await findReleaseCommit(git, "HEAD", read, { paths: ["pubspec.yaml"] })).toBe(release);
+    expect(await headIsReleaseCommit(git, read)).toBe(false);
+  });
+});

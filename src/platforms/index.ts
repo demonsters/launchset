@@ -13,7 +13,13 @@ import { readFile, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { expandFilePattern, resolveSourcePaths, type SourceFile } from "../config/load.ts";
 import { assertBuildNumberFits } from "../core/build-number.ts";
-import type { FileEntry, ResolvedConfig, ResolvedTarget } from "../core/config/schema.ts";
+import {
+  type FileEntry,
+  type ResolvedConfig,
+  type ResolvedTarget,
+  rootVersionHint,
+  versionFileFormat,
+} from "../core/config/schema.ts";
 import { releaseVerifyTag } from "../core/docker-tags.ts";
 import { LaunchsetError } from "../core/errors.ts";
 import type { Plan, TargetPlan } from "../core/types.ts";
@@ -26,6 +32,7 @@ import { jsonValue } from "./json.ts";
 import { npmLockfile } from "./npm-lockfile.ts";
 import { pbxproj } from "./pbxproj.ts";
 import { plist } from "./plist.ts";
+import { pubspec } from "./pubspec.ts";
 import { regexFile } from "./regex.ts";
 import type { FoundValue, StampValues, TextStamper } from "./types.ts";
 import { xcconfig } from "./xcconfig.ts";
@@ -110,6 +117,9 @@ function sourceBinding(target: ResolvedTarget, file: SourceFile): FileBinding {
         stamper: target.type === "ios" ? expoIos : expoAndroid,
         options: undefined,
       };
+    case "pubspec":
+      if (target.type !== "android" && target.type !== "ios") break;
+      return { ...base, stamper: pubspec, options: { platform: target.type } };
   }
   throw new Error(`internal: source format ${file.format} doesn't fit target ${target.name}`);
 }
@@ -202,7 +212,8 @@ export async function targetBindings(target: ResolvedTarget, root: string): Prom
 
 /**
  * The root version file and, for a `package.json`, a sibling `package-lock.json` /
- * `npm-shrinkwrap.json` (spec 6.6 "npm lockfile").
+ * `npm-shrinkwrap.json` (spec 6.6 "npm lockfile"). A `pubspec.yaml` version file also carries
+ * the build number in CI (its `+N`), so `flutter build` of any target sees the run's numbers.
  */
 export async function versionFileBindings(
   config: ResolvedConfig,
@@ -210,6 +221,20 @@ export async function versionFileBindings(
 ): Promise<FileBinding[]> {
   const file = config.version.file;
   const absolute = resolve(root, file);
+  if (versionFileFormat(file) === "pubspec") {
+    return [
+      {
+        path: file,
+        absolute,
+        field: "version.file",
+        stamper: pubspec,
+        options: undefined,
+        value: "version",
+        build: true,
+        ciOnly: false,
+      },
+    ];
+  }
   const bindings: FileBinding[] = [
     {
       path: file,
@@ -252,11 +277,14 @@ export async function readRootVersion(config: ResolvedConfig, root: string): Pro
       `version.file: can't read ${config.version.file} (${error.code ?? error.message})`,
     );
   });
-  const found = jsonValue.read(text, config.version.file, { key: "version" });
-  const value = found[0]?.value;
+  const found =
+    versionFileFormat(config.version.file) === "pubspec"
+      ? pubspec.read(text, config.version.file, undefined)
+      : jsonValue.read(text, config.version.file, { key: "version" });
+  const value = found.find((f) => f.field === "marketing")?.value;
   if (!value) {
     throw new LaunchsetError("no-root-version", `${config.version.file} has no "version"`, {
-      hint: 'Add a "version" field, e.g. "version": "0.1.0".',
+      hint: rootVersionHint(config.version.file),
     });
   }
   return value;
@@ -354,10 +382,18 @@ export async function stampForBuild(
   if (targetPlan.docker) values.imageTag = targetPlan.docker.verifyTag;
 
   const work: { binding: FileBinding; values: StampValues }[] = [];
+  const own = await targetBindings(target, root);
+  // A Flutter target whose pubspec.yaml is the version file writes that `version` itself: for
+  // iOS the plain version, so the root's full preview version must not go there. Only that
+  // binding counts: an extra `files` entry for another key in the same file doesn't.
+  const ownFiles = new Set(own.filter((b) => b.stamper === pubspec).map((b) => b.absolute));
   for (const binding of await versionFileBindings(config, root)) {
-    work.push({ binding, values: { marketing: plan.version } });
+    if (ownFiles.has(binding.absolute)) continue;
+    const rootValues: StampValues = { marketing: plan.version };
+    if (binding.build && build !== undefined) rootValues.build = build;
+    work.push({ binding, values: rootValues });
   }
-  for (const binding of await targetBindings(target, root)) {
+  for (const binding of own) {
     work.push({ binding, values: valuesFor(binding, values, true) });
   }
   return apply(work);

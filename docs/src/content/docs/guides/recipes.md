@@ -1,6 +1,6 @@
 ---
 title: Workflow recipes
-description: Copy-paste build and upload steps for Docker, Gradle, fastlane and xcodebuild.
+description: Copy-paste build and upload steps for Docker, Gradle, Flutter, fastlane and xcodebuild.
 ---
 
 launchset builds nothing. These recipes are the steps that go into the `build` job of `launchset-release.yml` (and `launchset-preview.yml`), between `verify` and `mark`. They use the outputs of the `stamp` step (`id: stamp`) and the `already-published` output of the `verify` step (`id: verify`).
@@ -243,6 +243,66 @@ end
 ```
 
 The same three secrets are used by `verify`. `key_content` takes the raw contents of the `.p8` file. A build uploaded to TestFlight can then be sent to external testers or submitted for App Store review in App Store Connect. `channel` helps you decide where it goes: you could upload `prerelease` builds and make them available to an external beta group with a second fastlane step.
+
+## Flutter
+
+For targets with `source: { kind: "flutter" }`. The `stamp` step has written the version and build number into the app's `pubspec.yaml`. Pass them to `flutter build` as well, so the build doesn't depend on what ran before it. See [Flutter](/targets/flutter/). An app with flavors adds `--flavor <name>` to the build, with one target per flavor: see [Flavors](/targets/flutter/#flavors).
+
+Android, with the upload from [fastlane supply](#android-upload-with-fastlane-supply) after it. The bundle lands in `build/app/outputs/bundle/release/app-release.aab` under the Flutter folder. fastlane runs in `android/`, where its `Gemfile` is, so pass `--aab ../build/app/outputs/bundle/release/app-release.aab`:
+
+```yaml
+- uses: actions/setup-java@v6
+  if: matrix.target == 'android' && steps.verify.outputs.already-published != 'true'
+  with:
+    distribution: temurin
+    java-version: "17"
+- uses: subosito/flutter-action@v2
+  if: matrix.target == 'android' && steps.verify.outputs.already-published != 'true'
+  with:
+    channel: stable
+    cache: true
+- name: Build the app bundle
+  if: matrix.target == 'android' && steps.verify.outputs.already-published != 'true'
+  working-directory: apps/mobile
+  run: flutter build appbundle --release --build-name "$BUILD_NAME" --build-number "$BUILD_NUMBER"
+  env:
+    BUILD_NAME: ${{ steps.stamp.outputs.marketing-version }}
+    BUILD_NUMBER: ${{ steps.stamp.outputs.build-number }}
+```
+
+Signing works as in [Android with Gradle](#android-with-gradle): the release `signingConfig` in `android/app/build.gradle.kts` reads the keystore.
+
+iOS runs on macOS, with the upload from [TestFlight with fastlane](#ios-upload-to-testflight-with-fastlane) after it. `flutter build ipa` archives and exports in one step, to `build/ios/ipa/`. fastlane runs in `ios/`, so pass `ipa:"$(ls ../build/ios/ipa/*.ipa | head -n 1)"`:
+
+```yaml
+- uses: subosito/flutter-action@v2
+  if: matrix.target == 'ios' && steps.verify.outputs.already-published != 'true'
+  with:
+    channel: stable
+    cache: true
+- name: Build the IPA
+  if: matrix.target == 'ios' && steps.verify.outputs.already-published != 'true'
+  working-directory: apps/mobile
+  run: |
+    flutter build ipa --release \
+      --export-options-plist=ios/ExportOptions.plist \
+      --build-name "$BUILD_NAME" \
+      --build-number "$BUILD_NUMBER"
+  env:
+    BUILD_NAME: ${{ steps.stamp.outputs.marketing-version }}
+    BUILD_NUMBER: ${{ steps.stamp.outputs.build-number }}
+```
+
+The `marketing-version` output of an `ios` target is always the plain `X.Y.Z`, also on previews.
+
+On GitLab, the job's script gets the same values from `launchset.sh`:
+
+```yaml
+- cd apps/mobile
+- flutter build appbundle --release --build-name "$LAUNCHSET_VERSION" --build-number "$LAUNCHSET_BUILD_NUMBER"
+```
+
+The generated `.gitlab/launchset-targets.yml` installs Flutter from its git repository in `before_script`. Pin a release there with `--branch <version>`.
 
 ## The verify step's environment
 

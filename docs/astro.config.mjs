@@ -75,6 +75,7 @@ export default defineConfig({
             "targets/react-native",
             "targets/capacitor",
             "targets/expo",
+            "targets/flutter",
             "targets/custom",
           ],
         },

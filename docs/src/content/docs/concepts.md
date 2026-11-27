@@ -7,7 +7,7 @@ launchset is built for repos where **one version** drives **many things**: a bac
 
 ## One version
 
-The `version` in the root `package.json` is the single source of truth. Every target gets that same version. When a release happens, every target is built at it.
+The `version` in the root `package.json` is the single source of truth. A repo with only a Flutter app uses its `pubspec.yaml` instead (see [Flutter](/targets/flutter/#a-repo-with-only-a-flutter-app)). Every target gets that same version. When a release happens, every target is built at it.
 
 There are no partial releases by design. A changeset never says "only the Android app". Every release builds every target. (There is one exception, [manual targets](/guides/manual-targets/), for things that can't be released on every version.)
 

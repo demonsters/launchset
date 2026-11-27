@@ -23,6 +23,7 @@ ios: {
 | `xcconfig` | `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` in a `.xcconfig` file. | Edits the single unconditional assignment. Conditional ones are left alone. |
 | `capacitor` | `<dir>/ios/App/App.xcodeproj`. | See [Capacitor](/targets/capacitor/). |
 | `expo` | `expo.version` and `expo.ios.buildNumber` in `app.json`. | See [Expo](/targets/expo/). |
+| `flutter` | `version` in `<dir>/pubspec.yaml`, which Flutter passes to Xcode. | See [Flutter](/targets/flutter/). |
 
 Bare React Native uses `xcodeproj`. See [React Native](/targets/react-native/).
 

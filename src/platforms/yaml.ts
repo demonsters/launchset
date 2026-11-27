@@ -22,7 +22,8 @@ export interface YamlValueOptions {
   key: string;
 }
 
-interface Located {
+/** A scalar's location: `start`/`end` cover its text, inside the quotes for a quoted scalar. */
+export interface LocatedScalar {
   start: number;
   end: number;
   quote: '"' | "'" | null;
@@ -43,7 +44,7 @@ function parse(text: string, file: string): Document.Parsed[] {
   return list;
 }
 
-function describe(text: string, file: string, key: string, scalar: Scalar): Located {
+function describe(text: string, file: string, key: string, scalar: Scalar): LocatedScalar {
   const range = scalar.range;
   const line = range ? lineOf(text, range[0]) : 1;
   const where = `"${key}" (line ${line})`;
@@ -97,7 +98,11 @@ function walk(doc: Document.Parsed, path: string[], file: string, key: string): 
   return node;
 }
 
-function locate(text: string, file: string, key: string): Located {
+/**
+ * Find the scalar at the dotted `key` (in exactly one document). Throws `StampError` when it is
+ * missing, ambiguous, a collection, an alias or anchor, a block scalar or multi-line.
+ */
+export function locateYamlScalar(text: string, file: string, key: string): LocatedScalar {
   const path = key.split(".");
   const hits: { doc: number; scalar: Scalar }[] = [];
   parse(text, file).forEach((doc, index) => {
@@ -133,7 +138,7 @@ function locate(text: string, file: string, key: string): Located {
 
 export const yamlValue: TextStamper<YamlValueOptions> = {
   read(text, file, options) {
-    const loc = locate(text, file, options.key);
+    const loc = locateYamlScalar(text, file, options.key);
     return [
       {
         field: "marketing",
@@ -146,7 +151,7 @@ export const yamlValue: TextStamper<YamlValueOptions> = {
 
   write(text, file, values, options) {
     if (values.marketing === undefined) return text;
-    const loc = locate(text, file, options.key);
+    const loc = locateYamlScalar(text, file, options.key);
     const version = values.marketing;
     if (!/^[0-9A-Za-z][0-9A-Za-z.+_-]*$/.test(version)) {
       throw new StampError(
