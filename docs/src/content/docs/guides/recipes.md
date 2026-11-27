@@ -246,7 +246,7 @@ The same three secrets are used by `verify`. `key_content` takes the raw content
 
 ## Flutter
 
-For targets with `source: { kind: "flutter" }`. The `stamp` step has written the version and build number into the app's `pubspec.yaml`. Pass them to `flutter build` as well, so the build doesn't depend on what ran before it. See [Flutter](/targets/flutter/).
+For targets with `source: { kind: "flutter" }`. The `stamp` step has written the version and build number into the app's `pubspec.yaml`. Pass them to `flutter build` as well, so the build doesn't depend on what ran before it. See [Flutter](/targets/flutter/). An app with flavors adds `--flavor <name>` to the build, with one target per flavor: see [Flavors](/targets/flutter/#flavors).
 
 Android, with the upload from [fastlane supply](#android-upload-with-fastlane-supply) after it. The bundle lands in `build/app/outputs/bundle/release/app-release.aab` under the Flutter folder. fastlane runs in `android/`, where its `Gemfile` is, so pass `--aab ../build/app/outputs/bundle/release/app-release.aab`:
 

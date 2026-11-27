@@ -132,6 +132,50 @@ Two things are specific to Flutter:
 - **Split APKs.** `flutter build apk --split-per-abi` adds `1000`, `2000`, `3000` or `4000` to the build number, one per ABI. The store then has numbers launchset didn't hand out, so `verify` can't spot an upload that already happened. With the `semver` strategy the added thousands also overlap the patch and attempt digits. Upload an app bundle instead (Google Play requires one for new apps).
 - **Date-based numbers.** Some Flutter apps use numbers like `+2024112701`. Those are close to Google Play's limit of 2,100,000,000. Moving such an app to launchset needs an `offset` above its highest number, which leaves little room before the limit. See [Where Android's limit comes from](/guides/build-numbers/#where-androids-limit-comes-from).
 
+## Flavors
+
+All flavors build from the same `pubspec.yaml`, so they get the same version and build number. Nothing about stamping changes. What differs per flavor is the build: the `--flavor` flag, often its own entry point with `-t`, its own package name or bundle ID, and its own store app.
+
+Make each flavor that goes to a store its own target. All of them point at the same folder:
+
+```ts
+targets: {
+  "android-prod": {
+    type: "android",
+    source: { kind: "flutter", dir: "apps/mobile" },
+    verify: ["store"],
+    store: { packageName: "com.acme.app" },
+  },
+  "android-staging": {
+    type: "android",
+    source: { kind: "flutter", dir: "apps/mobile" },
+    release: "manual",
+    verify: ["store"],
+    store: { packageName: "com.acme.app.staging" },
+  },
+},
+preview: { targets: ["android-staging"] },
+```
+
+Each target is its own job, with its own build number, store check and `release` setting. A flavor that never goes to a store, like a `dev` flavor, needs no target.
+
+In the example, every release ships `prod`. PR previews build only `staging`, and you can still ship `staging` by hand as a [manual target](/guides/manual-targets/). The `verify` step then checks the store app the build is uploaded to.
+
+The build step passes the flavor. With flavors, Gradle names the bundle after the flavor:
+
+```yaml
+- run: >
+    flutter build appbundle --release --flavor staging -t lib/main_staging.dart
+    --build-name "${{ steps.stamp.outputs.marketing-version }}"
+    --build-number "${{ steps.stamp.outputs.build-number }}"
+  if: matrix.target == 'android-staging' && steps.verify.outputs.already-published != 'true'
+  working-directory: apps/mobile
+```
+
+The bundle is then in `build/app/outputs/bundle/stagingRelease/app-staging-release.aab`. On iOS, `flutter build ipa --flavor staging` needs an Xcode scheme called `staging` with a `Release-staging` configuration. That configuration sets the bundle ID.
+
+Don't set `versionCode` or `versionName` in a Gradle `productFlavors` block. A flavor's value replaces Flutter's, so the stamped numbers would never reach that app. `versionNameSuffix` is fine: Android adds it to the version name, and the build number stays the same.
+
 ## Web and desktop
 
 - **Web**: a `web` target. Run `flutter build web` with `--build-name` and `--build-number`; Flutter writes them to `version.json`.
