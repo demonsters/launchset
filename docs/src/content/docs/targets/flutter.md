@@ -87,6 +87,21 @@ In CI, `stamp` writes the run's version and build number into this file for ever
 
 In a repo that also has an API or a web app with a root `package.json`, keep `package.json` as the version file. The app's `pubspec.yaml` is stamped as a target file.
 
+## `launchset init`
+
+`init` finds Flutter apps by their `pubspec.yaml`: an app depends on the Flutter SDK and has platform folders. Plugins, packages and their `example/` apps are skipped. It looks in the repo root, a pub workspace or melos, and up to four folders deep, so an app in `apps/mobile` of a JS monorepo is found too.
+
+For each app it proposes an `android` and an `ios` target with `kind: "flutter"`. In a repo without a `package.json` it proposes the app's `pubspec.yaml` as the version file (the `version.file` decision). A `pubspec.yaml` without a `version` gets one.
+
+It also tells you:
+
+- when the native projects don't read Flutter's numbers (see above);
+- when a workflow runs `flutter build` with its own `--build-number` or `--build-name`;
+- when Codemagic or Bitrise builds the repo, since launchset runs in GitHub Actions and GitLab CI;
+- when the `+N` is a date-based number close to Google Play's limit.
+
+It retires what would overwrite the stamped numbers: `cider bump` and `pubver`, `sed -i` or `yq -i` edits of the `pubspec.yaml` version, Dart scripts in `tool/` that rewrite it, fastlane version actions in `android/` and `ios/`, and `melos version`. See [Retire what conflicts](/guides/migrating/#retire-what-conflicts).
+
 ## Build
 
 Pass launchset's numbers to `flutter build` as flags. `stamp` already wrote them into `pubspec.yaml`, so the flags give the same values. They make the build independent of what ran before it, and they show the numbers in the log.

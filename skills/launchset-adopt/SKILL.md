@@ -61,6 +61,7 @@ The decision ids and values:
 | --- | --- | --- |
 | `host` | `github`, `gitlab` | The code host. Only listed when something points at GitLab (a GitLab remote, `.gitlab-ci.yml`). Check it: it decides which CI files init writes. |
 | `version` | plain `X.Y.Z` | The version the repo is on. |
+| `version.file` | a Flutter app's `pubspec.yaml`, or `package.json` | Only when the repo has no `package.json` and has a Flutter app. Default: the app's `pubspec.yaml` holds the version. `package.json` makes init create one that only holds the version. Ask when there are several Flutter apps. |
 | `tags.release` | template with `{version}` | The release tag format. Keep the existing one, for example `{version}` without a `v`. |
 | `target.<name>` | `auto`, `manual`, `none` (`custom`: declare a target init didn't detect) | How a detected platform is released. This includes custom targets from jobs that run on release tags and keep artifacts, deploy or publish: on GitLab named after the job (`package:windows` is `windows`), on GitHub after the workflow file (`desktop-linux.yml` is `desktop-linux`). Their tag trigger is retired, so without the target the build would stop running for releases. `--decide target.<name>=custom` adds a custom target nothing detected, for a project init finds nothing in. |
 | `gitlab.<name>.shell` | `sh`, `powershell` | GitLab custom targets from a job: the runner's shell. `powershell` when the job's scripts use PowerShell or it runs on a `windows`-tagged runner. |
@@ -83,7 +84,7 @@ launchset pushes its tags and creates GitHub Releases with a GitHub App token, w
 - **Tag-triggered workflows** (`on: push: tags: v*` and similar): they would fire again on launchset's release tag and build or publish twice.
 - **Changesets**: `changesets/action`, `changeset version|status|publish|tag` in workflows or `package.json` scripts, `@changesets/write`. launchset's release PR replaces them. Exception: when Changesets also publishes npm packages that have their own versions, it stays for those packages (see "Repos that also publish npm packages" below).
 - **Other release tools** (semantic-release, release-it, standard-version, release-please) and steps that create tags or GitHub Releases (`git tag`, `gh release create`): launchset's finalize creates `v<version>`.
-- **Scripts that write version or build numbers** (`MARKETING_VERSION`, `CURRENT_PROJECT_VERSION`, `versionCode`, `versionName`, fastlane version actions): they would overwrite the numbers stamped in CI.
+- **Scripts that write version or build numbers** (`MARKETING_VERSION`, `CURRENT_PROJECT_VERSION`, `versionCode`, `versionName`, fastlane version actions, and for Flutter `cider`, `pubver`, `sed -i` / `yq -i` on `pubspec.yaml` or a Dart script in `tool/` that rewrites its `version`): they would overwrite the numbers stamped in CI. `melos version` counts as another release tool.
 - **Docker pushes of `latest` on branch pushes**: launchset moves `latest` only when a release ships.
 - **On GitLab:** the same kinds of machinery in `.gitlab-ci.yml` and the local files it includes: jobs that run on tags (`$CI_COMMIT_TAG`), `glab release create`, the `release:` keyword, `npm publish`, Docker pushes of `latest` from branch pushes. Remote, project and template includes aren't scanned: read them yourself. For a tag job that something else starts too (`- when: manual` for a trial build, a branch rule), `disable` removes only its tag rule; a job that only other removed jobs need can go with them (its decision is only offered while those are disabled). A note says when `workflow: rules` let tag pipelines run: launchset's own tags start none (it pushes them with `-o ci.skip`), but explain that other tag pushes still do, and that the rule may only have served the release jobs being retired.
 - **Release instructions** in `CLAUDE.md`, `AGENTS.md` and the README (`npm version`, `git tag`, `changeset`): they describe the old process.
@@ -95,6 +96,7 @@ Also check, by reading the repo:
 - **Long-lived Changesets pre-mode branches** (`.changeset/pre.json` on a branch): propose a prerelease branch entry (`preview.branches: [{ branch: "next", prerelease: "beta" }]`) and, on that branch, `npx launchset init --convert-only`. `pre.json` is ignored with a warning.
 - **Deploy manifests that pin an image tag** (`imagePins[]`): ask per file. `image.<path>=stamp` makes the release PR update it to each release. `leave` keeps it as deploy state that is promoted by hand (for example a production overlay).
 - **Docker image names and tags**: keep what deploy tooling pulls (`v{version}`).
+- **Flutter apps** (`detection.flutterApps`): their targets use `source: { kind: "flutter", dir }` and stamp only `pubspec.yaml`. Show the human every warning note about native projects that don't read Flutter's numbers (`versionCode` not `flutter.versionCode`, `CFBundleVersion` not `$(FLUTTER_BUILD_NUMBER)`): without a fix, the stamped numbers never reach the app. Propose the fix the note names, and make it only after the human agrees. A note about Codemagic or Bitrise means the app is built outside GitHub Actions and GitLab CI: launchset can't run there, so ask whether the builds move or the apps become manual targets.
 
 ## Step 4: Native store pipelines
 
@@ -135,6 +137,7 @@ The generated workflows have commented examples where the team's build steps go.
 
 - Docker: the `docker/build-push-action` settings (`context`, `file`, `platforms`, build args). The tags and labels come from `steps.stamp.outputs.docker-tags` and `docker-labels`.
 - Android and iOS: Gradle or `xcodebuild`, signing, fastlane. iOS runs on macOS.
+- Flutter: `flutter build appbundle` / `flutter build ipa`, with `--build-name` and `--build-number` from the stamp step (the generated examples show how). Drop the old step's own `--build-number` (a run number, a date): a note names those lines.
 - Deploys, npm publishing and other steps.
 - Give every step `if: matrix.target == '<name>' && steps.verify.outputs.already-published != 'true'` in the release workflow.
 - Custom targets from a GitHub workflow that release tags started: init already copied that job's steps, commented out, under the target's `Build steps missing` step in `launchset-release.yml` (and `launchset-preview.yml`), each with the `if:`. The `actions/checkout` step is left out: launchset's checks out the release commit, so add what the old one set (`lfs: true`, the note says) to it. Uncomment the steps, check them, then remove the guard. Previews run them too.

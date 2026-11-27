@@ -1031,6 +1031,11 @@ const BUILD_SIGNALS: { platform: DetectedPlatform; pattern: RegExp; note: string
     note: "runs a Gradle assemble/bundle task",
   },
   { platform: "android", pattern: /\bfastlane\s+android\b/, note: "runs fastlane android" },
+  {
+    platform: "android",
+    pattern: /\bflutter\s+build\s+(?:apk|appbundle)\b/,
+    note: "runs flutter build for Android",
+  },
   { platform: "android", pattern: /upload-google-play/, note: "uploads to Google Play" },
   {
     platform: "android",
@@ -1043,6 +1048,11 @@ const BUILD_SIGNALS: { platform: DetectedPlatform; pattern: RegExp; note: string
     note: "runs xcodebuild archive",
   },
   { platform: "ios", pattern: /\bfastlane\s+ios\b/, note: "runs fastlane ios" },
+  {
+    platform: "ios",
+    pattern: /\bflutter\s+build\s+(?:ipa|ios)\b/,
+    note: "runs flutter build for iOS",
+  },
   {
     platform: "ios",
     pattern: /upload-testflight|xcrun\s+altool[^\n]*--upload/,

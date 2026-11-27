@@ -34,7 +34,8 @@ import {
 import { type Answers, resolveDecisions } from "./decisions.ts";
 import { type DetectContext, detect } from "./detect.ts";
 import { INIT_FLAGS } from "./flags.ts";
-import { absolute, readTextOrNull } from "./fs.ts";
+import { insertPubspecVersion } from "./flutter.ts";
+import { absolute, joinRel, readTextOrNull } from "./fs.ts";
 import { pickStage } from "./gitlab-edit.ts";
 import { gitlabStages, hasWorkflowRules } from "./gitlab-scan.ts";
 import {
@@ -416,7 +417,24 @@ async function writeAll(
   }
 
   // --- Root version file
-  if (ctx.packageJsonText === null) {
+  // A Flutter app's pubspec.yaml without a version gets one (the alignment below needs it).
+  const versionFile = answers["version.file"];
+  const pubspecs = new Set(
+    plan.targets.flatMap((t) =>
+      t.source?.kind === "flutter" ? [joinRel(String(t.source.dir), "pubspec.yaml")] : [],
+    ),
+  );
+  const pubspecVersionFile = versionFile !== undefined && versionFile !== "package.json";
+  if (pubspecVersionFile) pubspecs.add(versionFile);
+  for (const path of pubspecs) {
+    const text = (await readTextOrNull(absolute(root, path))) ?? "";
+    if (/^version:[ \t]*\S/m.test(text)) continue;
+    await writeFile(absolute(root, path), insertPubspecVersion(text, version));
+    changes.push({ path, action: "updated", summary: `added "version: ${version}+1"` });
+  }
+  if (pubspecVersionFile) {
+    // The pubspec.yaml holds the version: no package.json is needed.
+  } else if (ctx.packageJsonText === null) {
     const name = (d.packageJson?.name ?? root.split(/[\\/]/).at(-1) ?? "app")
       .toLowerCase()
       .replace(/[^a-z0-9._-]+/g, "-");

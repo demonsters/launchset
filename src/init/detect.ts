@@ -24,6 +24,12 @@ import type { FoundValue } from "../platforms/types.ts";
 import { xcconfig } from "../platforms/xcconfig.ts";
 import { findChangesets } from "./convert.ts";
 import {
+  detectFlutterApp,
+  externalCiNotes,
+  findFlutterApps,
+  flutterBuildFlagNotes,
+} from "./flutter.ts";
+import {
   absolute,
   baseName,
   dirOf,
@@ -552,7 +558,13 @@ async function detectIos(root: string, dir: string, capacitor: boolean, notes: N
 const EXPO_CONFIG_ADVICE =
   "app.config.js/ts is code, so launchset doesn't edit it. Read the version from package.json and the build number from process.env.LAUNCHSET_BUILD_NUMBER in it (launchset sets LAUNCHSET_VERSION, LAUNCHSET_BUILD_NUMBER and LAUNCHSET_CHANNEL as job outputs).";
 
-async function detectNative(root: string, dir: string, notes: Note[]): Promise<NativeFound> {
+async function detectNative(
+  root: string,
+  dir: string,
+  notes: Note[],
+  flutterApps: ReadonlySet<string>,
+): Promise<NativeFound> {
+  if (flutterApps.has(dir)) return { targets: await detectFlutterApp(root, dir, notes) };
   const targets: NativeFound["targets"] = [];
   const appJsonPath = joinRel(dir, "app.json");
   const appJson = await readJson(root, appJsonPath);
@@ -694,9 +706,19 @@ export async function detect(
   /** Target names taken so far (Docker first, then native, then web). */
   const used = new Set<string>();
   const targets = await detectDockerTargets(root, sources, used, notes);
-  const searchDirs = [...new Set([".", ...workspaces])];
-  const native = await detectNativeTargets(root, searchDirs, workflows, gitlab, used, notes);
+  const flutterApps = await findFlutterApps(root);
+  const searchDirs = [...new Set([".", ...workspaces, ...flutterApps])];
+  const native = await detectNativeTargets(
+    root,
+    searchDirs,
+    new Set(flutterApps),
+    workflows,
+    gitlab,
+    used,
+    notes,
+  );
   targets.push(...native.targets);
+  notes.push(...flutterBuildFlagNotes(native.ciFiles), ...(await externalCiNotes(root)));
   if (host.host === "github") {
     // Jobs that build a target found above aren't custom targets of their own (the other jobs
     // of their workflow still can be).
@@ -731,11 +753,14 @@ export async function detect(
   }
   const npm = npmTarget(pkg, workflows, gitlab, targets, used);
   if (npm) targets.push(npm);
-  if (pkg) targets.push(webTarget(targets, used));
+  // A Flutter-only repo has no package.json, but still gets the web target as the auto target
+  // of last resort (a config needs one) or for its Flutter web build.
+  if (pkg || flutterApps.length > 0) targets.push(webTarget(targets, used));
 
   const versions = await collectVersions(root, packageJson, targets, tags);
   const canonical = pickCanonical(versions);
   const buildNumbers = buildNumberInfo(targets, now);
+  notes.push(...nearLimitNotes(buildNumbers));
   const imagePins = await detectImagePins(
     root,
     targets,
@@ -757,6 +782,7 @@ export async function detect(
     root,
     git: gitInfo,
     workspaces,
+    flutterApps,
     versions,
     tags,
     canonical,
@@ -1094,6 +1120,7 @@ async function detectDockerTargets(
 async function detectNativeTargets(
   root: string,
   searchDirs: readonly string[],
+  flutterApps: ReadonlySet<string>,
   workflows: readonly Workflow[],
   gitlab: GitLabCi | null,
   used: Set<string>,
@@ -1104,7 +1131,9 @@ async function detectNativeTargets(
   signals: Map<string, ReturnType<typeof platformBuildSignals>>;
 }> {
   const native: NativeFound["targets"] = [];
-  for (const dir of searchDirs) native.push(...(await detectNative(root, dir, notes)).targets);
+  for (const dir of searchDirs) {
+    native.push(...(await detectNative(root, dir, notes, flutterApps)).targets);
+  }
   const signals = new Map<string, ReturnType<typeof platformBuildSignals>>();
   const ciFiles = [...workflows.map((w) => ({ path: w.path, text: w.text }))];
   if (gitlab && gitlab.files.length > 0) {
@@ -1433,6 +1462,28 @@ function buildNumberInfo(targets: readonly DetectedTarget[], now: Date): Detecti
   return buildNumbers;
 }
 
+/** Google Play's limit for `versionCode` (spec 6.3). */
+const PLAY_LIMIT = 2_100_000_000;
+
+/**
+ * A warning when the build numbers in the files are so high (date-based numbers like
+ * `2024112701`) that the offset leaves little room below Google Play's limit.
+ */
+function nearLimitNotes(b: Detection["buildNumbers"]): Note[] {
+  const h = b.highest;
+  if (!h || h.value < PLAY_LIMIT * 0.9) return [];
+  const room = PLAY_LIMIT - h.value;
+  const years = room / (365.25 * 24 * 3600);
+  return [
+    {
+      level: "warning",
+      path: h.path,
+      line: h.line,
+      message: `build number ${h.value} (${h.key}) is close to Google Play's limit of 2,100,000,000. New numbers must stay above it, so with the timestamp strategy in seconds there is room for about ${years < 1 ? "less than a year" : `${Math.floor(years)} year(s)`}; unit "minute" lasts about 60 times longer. A number that was never uploaded to a store doesn't need the offset: set it to 0.`,
+    },
+  ];
+}
+
 /** Release machinery: package scripts, script files, workflows, GitLab CI, Fastfiles, docs. */
 async function detectProjectMachinery(
   root: string,
@@ -1466,7 +1517,7 @@ async function detectProjectMachinery(
   for (const dir of input.searchDirs) {
     for (const p of await globRel(
       root,
-      ["{scripts,bin,tools}/**/*.{js,mjs,cjs,ts,mts,cts,sh,bash,rb,py}"],
+      ["{scripts,bin,tools,tool}/**/*.{js,mjs,cjs,ts,mts,cts,sh,bash,rb,py,dart}"],
       {
         base: dir,
         deep: 4,

@@ -223,6 +223,8 @@ export interface Detection {
   packageJson?: { path: string; name?: string; version?: string; line?: number };
   /** Workspace package directories (from `workspaces` / `pnpm-workspace.yaml`). */
   workspaces: string[];
+  /** Folders with a Flutter app (a `pubspec.yaml` that depends on the Flutter SDK). */
+  flutterApps: string[];
   versions: FoundVersion[];
   tags: FoundTag[];
   /** Proposed canonical version and why. */

@@ -1,0 +1,13 @@
+name: camera_plugin
+version: 2.0.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: com.acme.camera
+        pluginClass: CameraPlugin

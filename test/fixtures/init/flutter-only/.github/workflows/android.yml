@@ -1,0 +1,16 @@
+name: Android
+on:
+  push:
+    branches: [main]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Set the version
+        run: |
+          sed -i "s/^version: .*/version: 1.4.0+${{ github.run_number }}/" pubspec.yaml
+      - run: flutter build appbundle --release --build-number ${{ github.run_number }}

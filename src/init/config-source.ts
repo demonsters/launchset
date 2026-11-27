@@ -35,6 +35,14 @@ export function buildConfig(ctx: DetectContext, answers: Answers): ConfigPlan {
     "Options left out use their defaults: see the configuration reference in the launchset docs.",
   ]);
 
+  const versionFile = answers["version.file"];
+  if (versionFile !== undefined && versionFile !== "package.json") {
+    config.version = { file: versionFile };
+    comments.set("version", [
+      "The repo has no package.json: the Flutter app's pubspec.yaml holds the version.",
+    ]);
+  }
+
   const releaseTag = answers["tags.release"] ?? "v{version}";
   if (releaseTag !== "v{version}") {
     config.tags = { release: releaseTag };
@@ -96,6 +104,12 @@ export function buildConfig(ctx: DetectContext, answers: Answers): ConfigPlan {
       hints[t.name] = hint;
     } else if (t.source) {
       entry.source = t.source;
+      if (t.source.kind === "flutter") {
+        const dir = String(t.source.dir);
+        notes.push(
+          `Stamps the version in ${dir === "." ? "" : `${dir}/`}pubspec.yaml; Flutter passes it to ${t.type === "ios" ? "Xcode" : "Gradle"}.`,
+        );
+      }
     } else if (t.type === "custom" && t.gitlab) {
       const job = t.gitlab;
       notes.push(

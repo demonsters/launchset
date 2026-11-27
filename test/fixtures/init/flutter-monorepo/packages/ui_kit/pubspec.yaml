@@ -1,0 +1,8 @@
+name: ui_kit
+description: Shared widgets.
+version: 0.3.0
+publish_to: none
+
+dependencies:
+  flutter:
+    sdk: flutter

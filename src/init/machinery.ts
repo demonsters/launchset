@@ -194,6 +194,10 @@ export interface MachineryInput {
 const CHANGESET_COMMAND = /^changeset\s+(?:version|status|publish|tag|pre)\b/;
 const RELEASE_TOOL_COMMAND =
   /^(?:semantic-release|release-it|standard-version|release-please|commit-and-tag-version)\b/;
+/** A Dart tool run directly or through `dart run`, `dart pub global run` or `flutter pub run`. */
+const DART_RUN = String.raw`^(?:(?:dart|flutter)\s+(?:pub\s+(?:global\s+)?)?run\s+)?`;
+/** melos's `version` bumps the packages, writes their changelogs and creates tags. */
+const MELOS_VERSION = new RegExp(String.raw`${DART_RUN}melos\s+version\b`);
 /** `git` with its global options (`git -C dir`, `git -c k=v`). */
 const GIT = String.raw`^git\s+(?:-[Cc]\s+\S+\s+|--[\w-]+(?:=\S*)?\s+)*`;
 const TAG_COMMANDS: RegExp[] = [
@@ -245,6 +249,9 @@ const VERSION_KEY_READS = new RegExp(
 
 const VERSION_WRITE_COMMANDS = [
   /^agvtool\s+(?:new-version|new-marketing-version|next-version|bump)\b/,
+  // Flutter: cider and pubver rewrite the version in pubspec.yaml.
+  new RegExp(String.raw`${DART_RUN}cider\s+(?:bump|version|release)\b`),
+  new RegExp(String.raw`${DART_RUN}pubver\s+(?:bump|set)\b`),
   /^PlistBuddy\b.*\bSet[\s\u2423]*:?[\s\u2423]*(?:CFBundleVersion|CFBundleShortVersionString)\b/,
   // fastlane's version actions run from the command line (`fastlane run increment_build_number`),
   // unless they write launchset's numbers.
@@ -253,11 +260,30 @@ const VERSION_WRITE_COMMANDS = [
 ];
 /** `sed -i` / `perl -pi`: edits a file in place. */
 const IN_PLACE = /^(?:sed|perl)\b.*\s(?:-[A-Za-z]*i|--in-place)/;
+/** `yq -i`: edits a YAML file in place. */
+const YQ_IN_PLACE = /^yq\b.*\s(?:-[A-Za-z]*i|--inplace)\b/;
+/** A command that edits the `version` in a pubspec.yaml (sed, perl or yq in place). */
+function editsPubspecVersion(text: string): boolean {
+  return (
+    (IN_PLACE.test(text) || YQ_IN_PLACE.test(text)) &&
+    /\bpubspec\.ya?ml\b/.test(text) &&
+    /\bversion\b/.test(text)
+  );
+}
 const FILE_WRITE =
-  /\b(?:writeFile|writeFileSync|outputFile|outputFileSync|appendFile|appendFileSync)\b|\bfs\.write\b|File\.write|\.write_text\(|\.write\(|open\([^)]*["'][wa]/;
+  /\b(?:writeFile|writeFileSync|outputFile|outputFileSync|appendFile|appendFileSync|writeAsString|writeAsStringSync)\b|\bfs\.write\b|File\.write|\.write_text\(|\.write\(|open\([^)]*["'][wa]/;
 /** Lines that only print or log: what they mention isn't run. */
 const LOG_CALL =
   /\b(?:console\.\w+|print|println|puts|logger\.\w+|log\.\w+|logging\.\w+|core\.(?:info|notice|warning|error|debug)|UI\.\w+)\s*[(\s"'`]/;
+
+/**
+ * A line of a script that reads pubspec.yaml and replaces its `version:` line
+ * (`text.replaceFirst(RegExp(r'^version: .*'), …)`, `re.sub(r"version: …")`).
+ */
+function writesPubspecVersion(line: string): boolean {
+  if (LOG_CALL.test(line) || !/\^?version:/.test(line)) return false;
+  return /\.(?:replace\w*|g?sub!?)\s*\(|\bre\.sub\(/.test(line);
+}
 
 /** A line of a script (not shell) that writes a version key, not only reads or prints it. */
 function writesVersionKey(line: string): boolean {
@@ -334,13 +360,13 @@ const REASON: Record<MachineryKind, string> = {
   changesets:
     'runs Changesets, which opens its own release PR and bumps versions; launchset\'s release PR replaces it (keep it instead if it versions npm packages of their own: see "Alongside Changesets" in the docs)',
   "release-tool":
-    "runs another release tool (semantic-release, release-it, standard-version or release-please), which bumps versions and creates tags or releases; launchset does that now",
+    "runs another release tool (semantic-release, release-it, standard-version, release-please or melos version), which bumps versions and creates tags or releases; launchset does that now",
   "tag-creation":
     "creates release tags or GitHub Releases, which launchset's finalize creates (it would create v{version} before finalize)",
   "docker-latest":
     "moves the Docker latest tag on branch pushes; launchset moves latest only when a release ships",
   "version-writer":
-    "writes version or build numbers (MARKETING_VERSION, CURRENT_PROJECT_VERSION, versionCode, versionName), which would overwrite what launchset stamps in CI",
+    "writes version or build numbers (MARKETING_VERSION, CURRENT_PROJECT_VERSION, versionCode, versionName, the version in pubspec.yaml), which would overwrite what launchset stamps in CI",
   "changesets-write":
     "writes Changesets files (@changesets/write); launchset reads .launchset/ instead",
   "release-docs":
@@ -374,11 +400,12 @@ const KIND_ORDER: MachineryKind[] = [
 function simpleCommandKinds(text: string): MachineryKind[] {
   const kinds: MachineryKind[] = [];
   if (CHANGESET_COMMAND.test(text)) kinds.push("changesets");
-  if (RELEASE_TOOL_COMMAND.test(text)) kinds.push("release-tool");
+  if (RELEASE_TOOL_COMMAND.test(text) || MELOS_VERSION.test(text)) kinds.push("release-tool");
   if (TAG_COMMANDS.some((t) => t.test(text)) || bumpsVersion(text)) kinds.push("tag-creation");
   if (
     VERSION_WRITE_COMMANDS.some((p) => p.test(text)) ||
-    (IN_PLACE.test(text) && VERSION_KEYS.test(text))
+    (IN_PLACE.test(text) && VERSION_KEYS.test(text)) ||
+    editsPubspecVersion(text)
   ) {
     kinds.push("version-writer");
   }
@@ -395,7 +422,7 @@ export function commandKinds(full: string): MachineryKind[] {
 export function scriptLanguage(path: string | undefined, text: string): "shell" | "js" | "hash" {
   const ext = /\.([A-Za-z]+)$/.exec(path ?? "")?.[1]?.toLowerCase();
   if (ext === "sh" || ext === "bash" || ext === "zsh") return "shell";
-  if (ext && /^(?:js|mjs|cjs|ts|mts|cts|jsx|tsx)$/.test(ext)) return "js";
+  if (ext && /^(?:js|mjs|cjs|ts|mts|cts|jsx|tsx|dart)$/.test(ext)) return "js";
   if (ext === "py" || ext === "rb") return "hash";
   const shebang = /^#!\S*?(?:\/env(?:\s+-\S+)*)?\s*\/?(?:\S*\/)?([\w.-]+)/.exec(text);
   const program = shebang?.[1] ?? "";
@@ -495,6 +522,7 @@ export function scanScriptFile(text: string, path?: string): ScriptFileScan {
   } else {
     const code = codeLines(text, language);
     const writes = code.some((l) => FILE_WRITE.test(l.text));
+    const pubspecScript = /\bpubspec\.ya?ml\b/.test(text);
     for (const l of code) {
       if (l.text.trim() === "") continue;
       const kinds: MachineryKind[] = [];
@@ -503,7 +531,9 @@ export function scanScriptFile(text: string, path?: string): ScriptFileScan {
           if (pattern.test(l.text) && !kinds.includes(kind)) kinds.push(kind);
         }
       }
-      if (writes && writesVersionKey(l.text)) kinds.push("version-writer");
+      if (writes && (writesVersionKey(l.text) || (pubspecScript && writesPubspecVersion(l.text)))) {
+        kinds.push("version-writer");
+      }
       if (/@changesets\/write/.test(l.text)) kinds.push("changesets-write");
       for (const k of kinds) note(k, l.number);
       if (kinds.length > 0) lines.add(l.number);

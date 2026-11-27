@@ -1,0 +1,5 @@
+workflows:
+  ios-release:
+    name: iOS release
+    scripts:
+      - flutter build ipa --release

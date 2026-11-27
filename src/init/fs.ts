@@ -18,6 +18,8 @@ export const IGNORED_DIRS = [
   "**/vendor/**",
   "**/.next/**",
   "**/.turbo/**",
+  "**/.dart_tool/**",
+  "**/.symlinks/**",
 ];
 
 /** Files larger than this are skipped by the text scans. */

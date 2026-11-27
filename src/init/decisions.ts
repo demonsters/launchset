@@ -212,8 +212,9 @@ export function decisionSpecs(ctx: DetectContext, explicit: Answers = {}): Spec[
       // Tags are older releases: only files that disagree with the result need a look.
       const files = d.versions.filter((v) => v.source !== "tag");
       const root = files.find((v) => v.source === "root");
-      const differ =
-        root?.plain !== d.canonical.version || files.some((v) => v.plain !== d.canonical.version);
+      // Without a package.json, a Flutter app's pubspec.yaml is the version file.
+      const rootDiffers = root ? root.plain !== d.canonical.version : d.flutterApps.length === 0;
+      const differ = rootDiffers || files.some((v) => v.plain !== d.canonical.version);
       return {
         id: "version",
         question: "Which version is the repo on? Every target file is set to it.",
@@ -237,6 +238,36 @@ export function decisionSpecs(ctx: DetectContext, explicit: Answers = {}): Spec[
     validate: (value) =>
       isPlain(value) ? undefined : "expected a plain X.Y.Z version (no v prefix, no prerelease)",
   });
+
+  // Version file: a repo without package.json whose app is a Flutter app keeps the version in
+  // its pubspec.yaml rather than getting a package.json just for that.
+  const pubspecs = d.flutterApps.map((dir) =>
+    dir === "." ? "pubspec.yaml" : `${dir}/pubspec.yaml`,
+  );
+  if (ctx.packageJsonText === null && pubspecs.length > 0) {
+    specs.push({
+      id: "version.file",
+      build: () => ({
+        id: "version.file",
+        question:
+          "Which file holds the version? The repo has no package.json, and a Flutter app's pubspec.yaml can hold it.",
+        options: [
+          ...pubspecs.map((p) => ({
+            value: p,
+            label: `${p} (the Flutter app's version; its +N build number stays as it is)`,
+          })),
+          {
+            value: "package.json",
+            label: "package.json (init creates one that only holds the version)",
+          },
+        ],
+        default: pubspecs[0] as string,
+        evidence: pubspecs.map((p) => ({ path: p, note: "Flutter app" })),
+        ask: pubspecs.length > 1,
+      }),
+      validate: oneOf,
+    });
+  }
 
   // Release tag format
   specs.push({
