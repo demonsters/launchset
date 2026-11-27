@@ -246,7 +246,10 @@ export function githubJobTargets(
     skipJobs: ReadonlySet<WorkflowJob>;
     name: (base: string) => string;
     /** The step among `steps` that runs electron-builder without choosing to publish. */
-    electronBuilder?: (steps: readonly WorkflowStep[]) => ElectronBuilderUse | undefined;
+    electronBuilder?: (
+      steps: readonly WorkflowStep[],
+      env: Readonly<Record<string, string>>,
+    ) => ElectronBuilderUse | undefined;
   },
 ): { targets: DetectedTarget[]; notes: Note[] } {
   const targets: DetectedTarget[] = [];
@@ -305,7 +308,7 @@ export function githubJobTargets(
       const runsOn = runsOnOf(job);
       const extra = contextNotes(job, workflow.jobs);
       let steps = stepsText(workflow, job);
-      let source = { workflow, steps: job.steps };
+      let source = { workflow, steps: job.steps, env: { ...workflow.env, ...job.env } };
       if (job.uses) {
         const local = job.uses.startsWith("./") ? byPath.get(job.uses.slice(2)) : undefined;
         extra.push(
@@ -315,10 +318,14 @@ export function githubJobTargets(
         );
         if (local) {
           steps = local.jobs.map((j) => stepsText(local, j)).join("\n");
-          source = { workflow: local, steps: local.jobs.flatMap((j) => j.steps) };
+          source = {
+            workflow: local,
+            steps: local.jobs.flatMap((j) => j.steps),
+            env: Object.assign({}, local.env, ...local.jobs.map((j) => j.env)),
+          };
         }
       }
-      const electron = options.electronBuilder?.(source.steps);
+      const electron = options.electronBuilder?.(source.steps, source.env);
       if (electron) {
         extra.push(
           `Its ${electron.step.label} (${source.workflow.path}:${electron.step.line}) runs electron-builder (\`${electron.command}\`). In CI electron-builder publishes to GitHub Releases by itself, on branch pushes too, and fails without GH_TOKEN ("GitHub Personal Access Token is not set"): pass \`--publish never\` (launchset creates the GitHub Release), or set GH_TOKEN on purpose if electron-builder should upload.`,

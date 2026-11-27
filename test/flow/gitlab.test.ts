@@ -414,6 +414,24 @@ describe("release on GitLab", () => {
     ]);
   });
 
+  it("gitlab.tagPipelines: the baseline tag is still pushed with ci.skip", async () => {
+    const p = await project({
+      released: false,
+      config: {
+        baseline: "1.4.0",
+        gitlab: { tagPipelines: true },
+        targets: { web: { type: "web" } },
+      },
+    });
+    const sha = p.repo.head();
+    new FakeGitLab();
+    const result = await release(await gitlabContext(runnerCheckout(p, sha), pushEnv("main", sha)));
+    expect(result.data.notices[0]).toContain("Created the baseline tag `v1.4.0`");
+    expect(p.pushes().filter((l) => l.startsWith("refs/tags/"))).toEqual([
+      "refs/tags/v1.4.0 ci.skip",
+    ]);
+  });
+
   it("a superseded partial release: lowercase alert, created before the real release", async () => {
     const p = await project({
       config: { targets: { web: { type: "web" }, site: { type: "web" } } },

@@ -157,6 +157,8 @@ The release tag (`v1.4.0`) is created by **the first run of the release workflow
 Pushing a tag runs the tag-triggered workflows **of the commit the tag points to**, whenever you push it. HEAD before the migration still has the old release workflows (`on.push.tags: v*`), so a `v1.4.0` there starts them all: they can push images and move `latest`, publish to npm or the stores, or create a GitHub Release. Pushing it after the merge doesn't help, because the tag still points at the old commit. Leave it to the release workflow, whose commit no longer has those triggers.
 :::
 
+A tag workflow you chose to **keep** still runs on the tag the release workflow creates (init's steps name it). On GitLab the tag is pushed with `ci.skip`, so it starts no pipeline, even with `gitlab.tagPipelines`. And the release workflow only creates the tag when `baseline` is in the config committed at the commit it runs on: `launchset release` run locally before the migration is committed only says what it would do.
+
 This matters at merge time. When the PR that adds launchset **changes the root version** (because init raised it) and there is no release tag for that version, the merge is read as a release commit, and launchset builds every target for it. If that is what you want, because that version was never built: fine. If the version was already released, set a baseline (`--baseline`): the release workflow then creates the tag on that merge commit instead of building it.
 
 ## Retire what conflicts
@@ -259,7 +261,7 @@ Every push to the branch gets a `1.5.0-beta.N` version, a tag and a GitHub pre-r
 
 ### Previews of targets without build steps
 
-A target whose build steps aren't in the workflows yet gets a placeholder step, `Build steps missing (<target>)`, that fails on purpose, so a release can't mark it shipped while nothing builds it. init leaves those targets out of `preview.targets`, so the first preview doesn't fail on them, and says so in a comment. Add each one back once its build steps are in (or set `targets: "all"`):
+A target whose build steps aren't in the workflows yet gets a placeholder step, `Build steps missing (<target>)`, that fails on purpose, so a release can't mark it shipped while nothing builds it. init leaves those targets out of `preview.targets`, so the first preview doesn't fail on them, and says so in a comment. `launchset-preview.yml` still has their placeholder: add each target's build steps there too (and remove its placeholder), then add it back to `preview.targets` (or set `targets: "all"`). A target added back before that fails its preview, it doesn't pass with nothing built:
 
 ```ts
 // Previews build only the targets with build steps. android and ios have only the "build

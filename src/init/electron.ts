@@ -9,6 +9,7 @@
  */
 
 import { posix } from "node:path";
+import { normalizeRel } from "./fs.ts";
 import type { PackageScripts } from "./machinery.ts";
 import { simpleCommands } from "./shell.ts";
 import type { WorkflowStep } from "./workflow-scan.ts";
@@ -22,67 +23,141 @@ export interface ElectronBuilderUse {
 
 /** An `electron-builder` command (package runners are already dropped by `simpleCommands`). */
 const ELECTRON_BUILDER = /^electron-builder(?:\s|$)/;
-/** Chooses publishing explicitly: `--publish never`, `-p always`, `--publish=onTag`. */
-const PUBLISH_FLAG = /(?:^|\s)(?:--publish|-p)(?:[\s=]|$)/;
+/**
+ * Chooses publishing explicitly: `--publish never`, `-p always`, `--publish=onTag`, or the
+ * config override `-c.publish=null`.
+ */
+const PUBLISH_FLAG = /(?:^|\s)(?:(?:--publish|-p)(?:[\s=]|$)|(?:-c|--config)\.publish=)/;
+/** A token electron-builder publishes with: set on purpose, so it isn't "missing". */
+const TOKEN_VARIABLES = ["GH_TOKEN", "GITHUB_TOKEN"];
+const TOKEN_ASSIGNMENT = /(?:^|[\s;&|(])(?:export\s+)?(?:GH_TOKEN|GITHUB_TOKEN)=/m;
 
-/** Options of npm, pnpm, yarn and bun that take a value (`--filter app`, `-C dir`). */
-const OPTION_WITH_VALUE = /^(?:--filter|-F|-C|--dir|--prefix|-w|--workspace|--cwd)$/;
+/** Package-manager options that take a value (`--filter app`, `-C dir`); `-w` only for npm. */
+const OPTION_WITH_VALUE = /^(?:--filter|-F|-C|--dir|--prefix|--workspace|--cwd)$/;
+/** npm's own commands that run a script without `run`. */
+const NPM_SCRIPT_COMMANDS = new Set(["start", "test", "t", "stop", "restart"]);
+/** bun's own commands (anything else after `bun` is a script or a file). */
+const BUN_COMMANDS = new Set([
+  "install",
+  "i",
+  "add",
+  "a",
+  "remove",
+  "rm",
+  "update",
+  "upgrade",
+  "test",
+  "build",
+  "x",
+  "exec",
+  "create",
+  "init",
+  "link",
+  "unlink",
+  "pm",
+  "publish",
+  "outdated",
+  "patch",
+  "repl",
+]);
+
+/** Where a script is looked up: the package the command runs in, the workspace root, or any. */
+type Where = "here" | "root" | "any";
 
 /**
  * The script a package-manager command runs, and where to look it up: `pnpm build`,
- * `npm run build -w app`, `yarn workspace app build`, `pnpm --filter app build`. `any` is true
- * when it may run in another package (a filter or workspace option).
+ * `npm run build -w app`, `npm start`, `bun dist`, `yarn workspace app build`,
+ * `pnpm --filter app build`, `pnpm -w build`.
  */
 function scriptRun(
   words: readonly string[],
-): { name: string; args: string[]; any: boolean } | undefined {
+): { name: string; args: string[]; where: Where } | undefined {
   const [head, ...rest] = words;
   if (head === undefined || !/^(?:npm|pnpm|yarn|bun)$/.test(head)) return undefined;
-  let any = false;
+  let where: Where = "here";
   const left: string[] = [];
   for (let i = 0; i < rest.length; i++) {
     const w = rest[i] as string;
-    if (OPTION_WITH_VALUE.test(w)) {
-      any = true;
+    if (head === "pnpm" && (w === "-w" || w === "--workspace-root")) {
+      if (where === "here") where = "root";
+    } else if (OPTION_WITH_VALUE.test(w) || (head === "npm" && w === "-w")) {
+      where = "any";
       i++;
     } else if (
       /^--(?:filter|dir|prefix|workspace|cwd)=/.test(w) ||
       /^(?:-r|--recursive|--workspaces|-ws)$/.test(w)
     ) {
-      any = true;
+      where = "any";
     } else {
       left.push(w);
     }
   }
   if (head === "yarn" && left[0] === "workspace") {
-    any = true;
+    where = "any";
     left.splice(0, 2);
   }
   if (left[0] === "run" || left[0] === "run-script") left.shift();
-  else if (head === "npm" || head === "bun") return undefined; // `npm install`, `bun test`
+  else if (head === "npm" && !NPM_SCRIPT_COMMANDS.has(left[0] ?? "")) return undefined;
+  else if (head === "bun" && BUN_COMMANDS.has(left[0] ?? "")) return undefined;
   const [name, ...args] = left;
   if (name === undefined || name.startsWith("-")) return undefined;
-  return { name, args, any };
+  return { name, args, where };
+}
+
+/**
+ * The words without an env wrapper in front: `cross-env NODE_ENV=production x`,
+ * `dotenv -e .env -- x`, `env-cmd -f .env x`.
+ */
+function unwrap(words: readonly string[]): readonly string[] {
+  let w = words;
+  for (;;) {
+    const head = w[0];
+    if (head === "cross-env" || head === "cross-env-shell") {
+      w = w.slice(1);
+      while (w[0] !== undefined && /^[A-Za-z_][A-Za-z0-9_]*=/.test(w[0])) w = w.slice(1);
+    } else if (head === "dotenv" || head === "dotenv-cli" || head === "env-cmd") {
+      const end = w.indexOf("--");
+      if (end !== -1) {
+        w = w.slice(end + 1);
+      } else {
+        w = w.slice(1);
+        while (w[0]?.startsWith("-")) {
+          w = w.slice(/^(?:-[efcv]|--file|--environments|--path)$/.test(w[0]) ? 2 : 1);
+        }
+      }
+    } else {
+      return w;
+    }
+  }
 }
 
 /**
  * The electron-builder command `script` runs, following package scripts (up to three levels),
- * when it doesn't choose publishing itself. `dir` is the directory the script runs in.
+ * when it doesn't choose publishing itself and no token is set in it. `dir` is the directory the
+ * script runs in (a `cd` moves it).
  */
 function findIn(
   script: string,
-  dir: string,
+  start: string,
   packages: readonly PackageScripts[],
   depth: number,
 ): string | undefined {
-  for (const { words, text } of simpleCommands(script)) {
+  if (TOKEN_ASSIGNMENT.test(script)) return undefined;
+  let dir = start;
+  for (const command of simpleCommands(script)) {
+    const words = unwrap(command.words);
+    const text = words.join(" ");
+    if (words[0] === "cd" && words[1] !== undefined) {
+      dir = normalizeRel(posix.join(dir, normalizeRel(words[1])));
+      continue;
+    }
     if (ELECTRON_BUILDER.test(text)) return PUBLISH_FLAG.test(text) ? undefined : text;
     const run = scriptRun(words);
     if (run === undefined || depth >= 3) continue;
     // Arguments after the script name are passed on to it (`pnpm dist --publish never`).
-    if (run.args.some((a) => /^(?:--publish|-p)(?:=|$)/.test(a))) continue;
-    const own = packages.find((p) => p.dir === dir);
-    const candidates = run.any ? packages : own ? [own] : [];
+    if (PUBLISH_FLAG.test(run.args.join(" "))) continue;
+    const here = packages.find((p) => p.dir === (run.where === "root" ? "." : dir));
+    const candidates = run.where === "any" ? packages : here ? [here] : [];
     for (const p of candidates) {
       const body = p.scripts[run.name];
       if (body === undefined) continue;
@@ -97,16 +172,39 @@ function findIn(
   return undefined;
 }
 
-/** The first step that runs electron-builder without choosing whether it publishes. */
+/**
+ * The first step that runs electron-builder without choosing whether it publishes. `env` is
+ * the job's env: a token there (or in the step's) means publishing is set up on purpose.
+ */
 export function electronBuilderUse(
   steps: readonly WorkflowStep[],
   packages: readonly PackageScripts[],
+  env: Readonly<Record<string, string>> = {},
 ): ElectronBuilderUse | undefined {
   for (const step of steps) {
     if (!step.run) continue;
-    const dir = posix.normalize(step.runDirectory ?? ".").replace(/\/$/, "");
-    const found = findIn(step.run.value, dir, packages, 0);
+    if (TOKEN_VARIABLES.some((k) => k in env || k in step.env)) continue;
+    const found = findIn(step.run.value, normalizeRel(step.runDirectory ?? "."), packages, 0);
     if (found !== undefined) return { step, command: found };
   }
   return undefined;
+}
+
+/**
+ * Directories a step may run package scripts in besides the root and the workspaces: its
+ * `working-directory` and the targets of a plain `cd <dir>`.
+ */
+export function stepPackageDirs(steps: readonly WorkflowStep[]): string[] {
+  const dirs: string[] = [];
+  for (const step of steps) {
+    if (!step.run) continue;
+    const base = normalizeRel(step.runDirectory ?? ".");
+    dirs.push(base);
+    for (const { words } of simpleCommands(step.run.value)) {
+      if (words[0] === "cd" && words[1] !== undefined && !/[$*?~]/.test(words[1])) {
+        dirs.push(normalizeRel(posix.join(base, normalizeRel(words[1]))));
+      }
+    }
+  }
+  return [...new Set(dirs)].filter((d) => !d.startsWith("../") && d !== "..");
 }

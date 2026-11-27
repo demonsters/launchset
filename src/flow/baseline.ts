@@ -4,9 +4,11 @@
  * and plan as if it had been there all along.
  */
 
+import { readFile } from "node:fs/promises";
+import { basename } from "node:path";
 import { type BaselineAction, baselineAction, baselineNotice } from "../core/baseline.ts";
 import { LaunchsetError } from "../core/errors.ts";
-import { snapshotTags } from "../core/plan-common.ts";
+import { code, snapshotTags } from "../core/plan-common.ts";
 import type { FlowContext } from "./context.ts";
 import { lastReleaseTagOf, type ReleaseState } from "./gather.ts";
 import { ensureTag } from "./git-ops.ts";
@@ -19,8 +21,14 @@ export interface BaselineResult {
 
 /**
  * Apply `baseline` to a gathered release state. With `dryRun` (`launchset plan`) the tag isn't
- * created, but the plan is the one the release workflow will make. Tags pushed this way start
- * the workflows of HEAD's commit, where launchset's own workflows only run on branch pushes.
+ * created, but the plan is the one the release workflow will make. The tag is pushed with the
+ * host's skip-CI option (GitLab `ci.skip`, also with `gitlab.tagPipelines`). On GitHub it starts
+ * the tag workflows of HEAD's commit: launchset's own only run on branch pushes, but tag
+ * workflows the team kept run for it too.
+ *
+ * The tag is only created when the config in use is the one committed at HEAD: run locally right
+ * after `init`, before the migration is committed, HEAD is the commit before it, which still has
+ * the old tag workflows. Then it is planned like a dry run, with a warning.
  */
 export async function applyBaseline(
   context: FlowContext,
@@ -38,14 +46,26 @@ export async function applyBaseline(
   });
   if (action === undefined) return { state, notices: [], warnings: [] };
   if (action.kind === "skip") return { state, notices: [], warnings: [action.warning] };
-  if (!options.dryRun) {
+  const warnings: string[] = [];
+  let dryRun = options.dryRun ?? false;
+  if (!dryRun && !(await configCommitted(context, state.headSha))) {
+    dryRun = true;
+    warnings.push(
+      `\`baseline\` is ${action.version}, but the launchset config isn't committed at ${code(state.headSha.slice(0, 7))}, so ${code(action.tag)} isn't created here: a tag on a commit before the migration would start its tag-triggered workflows. Commit the config; the release workflow creates the tag after the merge.`,
+    );
+  }
+  if (!dryRun) {
     try {
-      await ensureTag(context, action.tag, state.headSha);
+      await ensureTag(context, action.tag, state.headSha, { skipCi: true });
     } catch (error) {
       // A run for another commit created it first: that tag is the baseline.
       if (!(error instanceof LaunchsetError && error.code === "tag-conflict") || !options.regather)
         throw error;
-      return { state: await options.regather(), notices: [], warnings: [] };
+      return {
+        state: await options.regather(),
+        notices: [`Another release run created the baseline tag ${code(action.tag)} first.`],
+        warnings: [],
+      };
     }
   }
   // The version is released at HEAD: nothing before HEAD is unreleased work anymore.
@@ -62,7 +82,17 @@ export async function applyBaseline(
       headIsReleaseCommit: false,
       releaseCommit: state.headSha,
     },
-    notices: [baselineNotice(action, state.headSha, options)],
-    warnings: [],
+    notices: [baselineNotice(action, state.headSha, { dryRun })],
+    warnings,
   };
+}
+
+/** True when the config file in use is committed at `sha` with the same content. */
+async function configCommitted(context: FlowContext, sha: string): Promise<boolean> {
+  const path = await context.git.toRepoPath(basename(context.configFile));
+  const [committed, current] = await Promise.all([
+    context.git.showFile(sha, path),
+    readFile(context.configFile, "utf8"),
+  ]);
+  return committed === current;
 }

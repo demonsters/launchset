@@ -6,6 +6,8 @@
 
 import { describe, expect, it } from "vitest";
 import { parse as parseYaml } from "yaml";
+import { loadConfig } from "../../src/config/load.ts";
+import { previewBuildTargets } from "../../src/core/config/schema.ts";
 import { type InitDetectJson, runInit } from "../../src/init/index.ts";
 import { options, read, repoFrom } from "./helpers.ts";
 
@@ -230,10 +232,14 @@ describe("previews of a repo with a copied job", () => {
   // fails on purpose: add it here once its build steps are in (or set targets: "all").
   preview: { targets: ["docker"] },
 `);
-    // The preview workflow doesn't build it, so the placeholder can't fail a preview.
+    // The preview workflow keeps its placeholder and copied steps: once it's added back to
+    // preview.targets, its preview fails until the steps are in, instead of building nothing.
     const preview = read(dir, ".github/workflows/launchset-preview.yml");
     expect(preview).toContain("Build and push docker");
-    expect(preview).not.toContain("Build steps missing (desktop-linux)");
+    expect(preview).toContain("- name: Build steps missing (desktop-linux)");
+    expect(preview).toContain("#   run: pnpm desktop:linux");
+    const { config } = await loadConfig(dir);
+    expect([...previewBuildTargets(config)]).toEqual(["docker"]);
     expect(result.manualSteps).toContain(
       'Previews build only docker: desktop-linux has only the "build steps missing" placeholder, which fails on purpose. Add it to preview.targets in launchset.config.ts once its build steps are in.',
     );
@@ -264,5 +270,175 @@ describe("baseline in a repo with tag-triggered workflows", () => {
       'After the merge, the first release workflow run on the base branch creates v1.0.1 at the merge commit (baseline: "1.0.1" in launchset.config.ts), so 1.0.1 counts as released without a build. Don\'t create or push v1.0.1 yourself: pushing a tag runs the workflows of the commit it points to, and on HEAD that would start .github/workflows/desktop-linux.yml, .github/workflows/docker-image.yml (they still run on tags there), which would build or publish 1.0.1 again. Once v1.0.1 exists you can remove baseline from the config.',
     );
     expect(result.manualSteps.some((s) => s.startsWith("After the merge"))).toBe(false);
+  });
+});
+
+/** The desktop workflow with `run` as its build step (after `pnpm install`). */
+const desktopRunning = (run: string, extra = "") =>
+  DESKTOP.replace("      - run: pnpm desktop:linux\n", `${run}\n${extra}`);
+
+/** The game repo with this desktop workflow and these extra files. */
+function desktopRepo(workflow: string, files: Record<string, string> = {}): string {
+  return repoFrom(
+    {
+      "package.json": `${JSON.stringify(
+        {
+          name: "game",
+          version: "0.17.0",
+          scripts: { "desktop:linux": "electron-builder --linux", dist: "electron-builder" },
+          devDependencies: { "electron-builder": "^26.0.0" },
+        },
+        null,
+        2,
+      )}\n`,
+      Dockerfile: "FROM nginx\n",
+      ".github/workflows/desktop-linux.yml": workflow,
+      ...files,
+    },
+    { tags: ["v0.17.0"], remote: "git@github.com:acme/game.git" },
+  );
+}
+
+async function electronHint(dir: string): Promise<string | undefined> {
+  const result = await runInit(options(dir, { yes: true }));
+  return result.manualSteps.find((s) => s.includes("run electron-builder"));
+}
+
+describe("electron-builder: more ways to run it", () => {
+  const desktopPackage = `${JSON.stringify({ name: "desktop", private: true, scripts: { dist: "cross-env NODE_ENV=production electron-builder --linux" } }, null, 2)}\n`;
+
+  it("sees it behind env wrappers, a cd, a working-directory outside the workspaces, pnpm -w and npm start", async () => {
+    const cases: [string, Record<string, string>, string][] = [
+      [
+        "      - run: npx cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --linux",
+        {},
+        "`electron-builder --linux`",
+      ],
+      [
+        "      - run: dotenv -e .env.ci -- electron-builder --linux",
+        {},
+        "`electron-builder --linux`",
+      ],
+      [
+        "      - run: cd desktop && pnpm dist",
+        { "desktop/package.json": desktopPackage },
+        "`pnpm dist -> electron-builder --linux`",
+      ],
+      [
+        "      - run: pnpm run dist\n        working-directory: ./desktop",
+        { "desktop/package.json": desktopPackage },
+        "`pnpm run dist -> electron-builder --linux`",
+      ],
+      [
+        "      - run: pnpm -w desktop:linux",
+        {},
+        "`pnpm -w desktop:linux -> electron-builder --linux`",
+      ],
+      [
+        "      - run: npm start",
+        {
+          "package.json": `${JSON.stringify({ name: "game", version: "0.17.0", scripts: { start: "electron-builder" } }, null, 2)}\n`,
+        },
+        "`npm start -> electron-builder`",
+      ],
+    ];
+    for (const [run, files, command] of cases) {
+      const hint = await electronHint(desktopRepo(desktopRunning(run), files));
+      expect(hint, run).toContain(command);
+    }
+  });
+
+  it("stays quiet when a token is set on purpose or the config turns publishing off", async () => {
+    const quiet = [
+      `      - run: pnpm desktop:linux\n        env:\n          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}`,
+      `      - run: GH_TOKEN=\${{ secrets.GITHUB_TOKEN }} pnpm desktop:linux`,
+      "      - run: electron-builder --linux -c.publish=null",
+      "      - run: pnpm desktop:linux -- --publish never",
+    ];
+    for (const run of quiet) {
+      expect(await electronHint(desktopRepo(desktopRunning(run))), run).toBeUndefined();
+    }
+    // A job-level token too.
+    const jobEnv = desktopRunning("      - run: pnpm desktop:linux").replace(
+      "    runs-on: ubuntu-latest\n",
+      `    runs-on: ubuntu-latest\n    env:\n      GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}\n`,
+    );
+    expect(await electronHint(desktopRepo(jobEnv))).toBeUndefined();
+  });
+
+  it("doesn't take other npm or bun commands for scripts", async () => {
+    for (const run of ["      - run: npm install electron-builder", "      - run: bun install"]) {
+      expect(await electronHint(desktopRepo(desktopRunning(run))), run).toBeUndefined();
+    }
+  });
+});
+
+describe("previews: kept files and nothing to preview", () => {
+  it("reads a kept preview workflow: a target with steps there stays in previews", async () => {
+    const kept = `name: Launchset preview
+on: { pull_request: { types: [labeled] } }
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build desktop
+        if: matrix.target == 'desktop-linux'
+        run: pnpm desktop:linux
+`;
+    const dir = repoFrom(
+      {
+        "package.json": `${JSON.stringify({ name: "game", version: "0.17.0" }, null, 2)}\n`,
+        Dockerfile: "FROM nginx\n",
+        ".github/workflows/desktop-linux.yml": DESKTOP,
+        ".github/workflows/docker-image.yml": DOCKER,
+        ".github/workflows/launchset-preview.yml": kept,
+      },
+      { tags: ["v0.17.0"], remote: "git@github.com:acme/game.git" },
+    );
+    const result = await runInit(options(dir, { yes: true }));
+    expect(read(dir, ".github/workflows/launchset-preview.yml")).toBe(kept);
+    // docker isn't in the kept file either: nothing builds it there.
+    expect(read(dir, "launchset.config.ts")).toContain('preview: { targets: ["desktop-linux"] },');
+    expect(result.manualSteps.join("\n")).toContain(
+      'Previews build only desktop-linux: docker has only the "build steps missing" placeholder',
+    );
+  });
+
+  it("previews nothing yet when every target only has the placeholder", async () => {
+    const dir = repoFrom(
+      { "package.json": `${JSON.stringify({ name: "site", version: "1.0.0" }, null, 2)}\n` },
+      { tags: ["v1.0.0"], remote: "git@github.com:acme/site.git" },
+    );
+    const result = await runInit(options(dir, { yes: true, decide: { "target.web": "auto" } }));
+    expect(read(dir, "launchset.config.ts")).toContain("preview: { targets: [] },");
+    const { config } = await loadConfig(dir);
+    expect([...previewBuildTargets(config)]).toEqual([]);
+    expect(result.manualSteps.join("\n")).toContain("Previews build no target yet: web has only");
+    // The placeholder stays in the preview workflow for when it's added back.
+    expect(read(dir, ".github/workflows/launchset-preview.yml")).toContain(
+      "- name: Build steps missing (web)",
+    );
+  });
+});
+
+describe("baseline with a kept tag workflow", () => {
+  it("says the kept workflow runs for the baseline tag too", async () => {
+    const dir = repoFrom(
+      {
+        "package.json": `${JSON.stringify({ name: "game", version: "1.0.1" }, null, 2)}\n`,
+        Dockerfile: "FROM nginx\n",
+        ".github/workflows/docker-image.yml": DOCKER,
+      },
+      { tags: ["v1.0.0"], remote: "git@github.com:acme/game.git" },
+    );
+    const json = await detect(dir);
+    const id = json.detection.machinery.find((m) => m.kinds.includes("tag-trigger"))?.id;
+    expect(id).toBeDefined();
+    const result = await runInit(
+      options(dir, { yes: true, baseline: true, decide: { [id as string]: "keep" } }),
+    );
+    expect(result.manualSteps.find((s) => s.startsWith("After the merge"))).toContain(
+      "You kept .github/workflows/docker-image.yml, which still runs on tags: it runs for v1.0.1 too when the release workflow creates it.",
+    );
   });
 });

@@ -4,11 +4,14 @@
  * create it at HEAD before the migration, where pushing it started the old tag workflows.
  */
 
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { release } from "../../src/flow/release.ts";
 import {
   CONFIG,
   changesetText,
+  ciClone,
   contextFor,
   FakeGitHub,
   pkg,
@@ -94,5 +97,67 @@ describe("release: baseline", () => {
     expect(result.data.warnings[0]).toContain(
       "`baseline` is 1.4.0, but launchset already shipped part of 1.4.0 (marker tags for `web`)",
     );
+  });
+
+  it("plans with the tag another run created first (the push lost the race)", async () => {
+    const project = setupProject({ released: false, config: WITH_BASELINE });
+    const older = project.push("Older work", { "a.txt": "a\n" });
+    const ci = ciClone(project);
+    const newer = project.push("Newer work", { "b.txt": "b\n" });
+    new FakeGitHub(project.remote);
+    // The run for the newer commit tags it first.
+    await release(await contextFor(project.repo));
+    expect(project.remoteTags().get("v1.4.0")).toBe(newer);
+    // The run for the older commit didn't see the tag yet (no fetch): its push is refused.
+    expect(ci.head()).toBe(older);
+    const result = await release(await contextFor(ci), { fetch: false });
+    expect(result.ok).toBe(true);
+    expect(result.data.notices).toContain(
+      "Another release run created the baseline tag `v1.4.0` first.",
+    );
+    expect(project.remoteTags().get("v1.4.0")).toBe(newer);
+    expect(ci.git("rev-parse", "v1.4.0^{commit}")).toBe(newer);
+  });
+
+  it("a dispatch creates it too: nothing to retry, and a manual target ships from it", async () => {
+    const project = setupProject({ released: false, config: WITH_BASELINE });
+    const head = project.repo.head();
+    new FakeGitHub(project.remote);
+    const retry = await release(
+      await contextFor(project.repo, {
+        event: { name: "workflow_dispatch", payload: { inputs: {} } },
+      }),
+    );
+    expect(project.remoteTags().get("v1.4.0")).toBe(head);
+    expect(retry.data.mode).toBe("none");
+    expect(retry.data.notices.join("\n")).toContain("there is nothing to retry");
+
+    const other = setupProject({ released: false, config: WITH_BASELINE });
+    new FakeGitHub(other.remote);
+    const ship = await release(
+      await contextFor(other.repo, {
+        event: { name: "workflow_dispatch", payload: { inputs: { target: "ios" } } },
+      }),
+    );
+    expect(other.remoteTags().get("v1.4.0")).toBe(other.repo.head());
+    expect(ship.data.mode).toBe("ship");
+    expect(ship.data.plan).toMatchObject({ version: "1.4.0", releaseSha: other.repo.head() });
+  });
+
+  it("isn't created while the config with the baseline isn't committed", async () => {
+    // Right after init, before the migration is committed: HEAD still has the old workflows.
+    const project = setupProject({ released: false });
+    writeFileSync(
+      join(project.repo.dir, "launchset.config.json"),
+      `${JSON.stringify(WITH_BASELINE, null, 2)}\n`,
+    );
+    new FakeGitHub(project.remote);
+    const result = await release(await contextFor(project.repo));
+    expect(result.data.warnings[0]).toContain(
+      "`baseline` is 1.4.0, but the launchset config isn't committed at",
+    );
+    expect(result.data.notices[0]).toContain("the release workflow creates `v1.4.0`");
+    expect(project.remoteTags().has("v1.4.0")).toBe(false);
+    expect(project.repo.git("tag", "--list", "v1.4.0")).toBe("");
   });
 });

@@ -20,9 +20,16 @@ import { joinWords } from "../core/plan-common.ts";
 import { renderTag } from "../core/tags.ts";
 import { REQUIRED_APP_PERMISSIONS } from "../forge/github/permissions.ts";
 import { stampForRelease, writeChanges } from "../platforms/index.ts";
+import { GITLAB_FILES } from "../templates/gitlab.ts";
 import { renderWorkflows } from "../templates/workflows.ts";
 import { installSkill } from "./agents.ts";
-import { buildConfig, CONFIG_FILE, guardedTargets, renderConfigSource } from "./config-source.ts";
+import {
+  buildConfig,
+  CONFIG_FILE,
+  guardedTargets,
+  type KeptTargetFile,
+  renderConfigSource,
+} from "./config-source.ts";
 import type { PlannedConversion } from "./convert.ts";
 import {
   DELETE_CHANGESET_HINT,
@@ -375,7 +382,8 @@ async function writeAll(
   ];
 
   // --- Plan everything first, so a problem stops init before anything is written.
-  const plan = buildConfig(ctx, answers);
+  const kept = await keptTargetFile(root, ctx, answers);
+  const plan = buildConfig(ctx, answers, kept ? { kept } : {});
   const resolved = resolveConfig(plan.config, { file: CONFIG_FILE });
   const configSource = renderConfigSource(plan);
   const conversions = await planConversion(root, d.changesets);
@@ -389,6 +397,7 @@ async function writeAll(
     : renderWorkflows({
         config: resolved,
         hints: plan.hints,
+        allPreviewSteps: true,
         ...(options.actionRef ? { actionRef: options.actionRef } : {}),
       });
   const readme = readPackageFile("templates", "launchset-readme.md");
@@ -563,7 +572,7 @@ async function writeAll(
   // --- Baseline: the release workflow creates the tag after the merge (see core/baseline.ts).
   const releaseTag = renderTag(resolved.tags.release, { version });
   if (resolved.baseline !== undefined) {
-    manualSteps.push(baselineStep(ctx, releaseTag, version));
+    manualSteps.push(baselineStep(ctx, answers, releaseTag, version, { github: !gitlab }));
   } else if (answers.baseline === "yes") {
     io.log(`${releaseTag} already exists; no baseline needed.`);
   } else if (!ctx.tagNames.includes(releaseTag)) {
@@ -626,7 +635,7 @@ async function writeAll(
     }
   }
   manualSteps.push(...retired.followUps);
-  const guarded = guardedTargets(ctx, plan.targets, gitlab !== undefined);
+  const guarded = guardedTargets(ctx, plan.targets, gitlab !== undefined, kept);
   if (resolved.preview.enabled && guarded.length > 0) {
     manualSteps.push(
       `Previews build ${resolved.preview.targets === "all" ? "every target" : resolved.preview.targets.length > 0 ? `only ${joinWords(resolved.preview.targets)}` : "no target yet"}: ${joinWords(guarded)} ${guarded.length === 1 ? "has" : "have"} only the "build steps missing" placeholder, which fails on purpose. Add ${guarded.length === 1 ? "it" : "them"} to preview.targets in ${CONFIG_FILE} once ${guarded.length === 1 ? "its" : "their"} build steps are in.`,
@@ -704,19 +713,54 @@ async function hasActionUpdater(root: string): Promise<boolean> {
 }
 
 /**
+ * The file with the preview build steps when init keeps the existing one (see
+ * {@link KeptTargetFile}): `launchset-preview.yml` answered `keep`, or the GitLab targets file
+ * not answered `overwrite`.
+ */
+async function keptTargetFile(
+  root: string,
+  ctx: DetectContext,
+  answers: Answers,
+): Promise<KeptTargetFile | undefined> {
+  const gitlab = ciOf(answers.host ?? ctx.host.host) === "gitlab-ci";
+  const path = gitlab ? GITLAB_FILES.targets : ".github/workflows/launchset-preview.yml";
+  const keep = gitlab
+    ? answers[`file.${path}`] !== "overwrite"
+    : answers[`file.${path}`] === "keep";
+  if (!keep) return undefined;
+  const text = await readTextOrNull(absolute(root, path));
+  return text === null ? undefined : { text };
+}
+
+/**
  * The "What's left to do" step for `baseline`: what happens after the merge, and why the tag
  * must not be created by hand (spec 11.1 step 5). Names the tag-triggered workflows a hand-made
  * tag at HEAD would start.
  */
-function baselineStep(ctx: DetectContext, tag: string, version: string): string {
-  const triggered = [
+function baselineStep(
+  ctx: DetectContext,
+  answers: Answers,
+  tag: string,
+  version: string,
+  options: { github: boolean },
+): string {
+  const tagJobs = ctx.machinery.filter((m) => m.item.kinds.includes("tag-trigger"));
+  const triggered = [...new Set(tagJobs.map((m) => m.item.path))];
+  const kept = [
     ...new Set(
-      ctx.machinery.filter((m) => m.item.kinds.includes("tag-trigger")).map((m) => m.item.path),
+      tagJobs
+        .filter((m) => (m.item.actions.length > 1 ? answers[m.item.id] : "keep") === "keep")
+        .map((m) => m.item.path),
     ),
   ];
   const why =
     triggered.length > 0
       ? `Don't create or push ${tag} yourself: pushing a tag runs the workflows of the commit it points to, and on HEAD that would start ${triggered.join(", ")} (they still run on tags there), which would build or publish ${version} again.`
       : `Don't create or push ${tag} yourself: pushing a tag runs the tag-triggered workflows of the commit it points to.`;
-  return `After the merge, the first release workflow run on the base branch creates ${tag} at the merge commit (baseline: "${version}" in ${CONFIG_FILE}), so ${version} counts as released without a build. ${why} Once ${tag} exists you can remove baseline from the config.`;
+  // On GitLab the tag is pushed with ci.skip; on GitHub kept tag workflows still run for it.
+  const keptNote =
+    options.github && kept.length > 0
+      ? ` You kept ${kept.join(", ")}, which still ${kept.length === 1 ? "runs" : "run"} on tags: ${kept.length === 1 ? "it runs" : "they run"} for ${tag} too when the release workflow creates it.`
+      : "";
+  return `After the merge, the first release workflow run on the base branch creates ${tag} at the merge commit (baseline: "${version}" in ${CONFIG_FILE}), so ${version} counts as released without a build. ${why}${keptNote} Once ${tag} exists you can remove baseline from the config.`;
 }

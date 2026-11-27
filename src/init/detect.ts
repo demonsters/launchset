@@ -23,7 +23,7 @@ import { plist } from "../platforms/plist.ts";
 import type { FoundValue } from "../platforms/types.ts";
 import { xcconfig } from "../platforms/xcconfig.ts";
 import { findChangesets } from "./convert.ts";
-import { electronBuilderUse } from "./electron.ts";
+import { electronBuilderUse, stepPackageDirs } from "./electron.ts";
 import {
   absolute,
   baseName,
@@ -709,6 +709,15 @@ export async function detect(
       const job = workflow.jobs.filter((j) => j.line <= (e.line ?? 0)).at(-1);
       for (const j of job ? [job] : workflow.jobs) skipJobs.add(j);
     }
+    // Steps may run scripts of a package outside the workspaces (`working-directory: desktop`).
+    const stepDirs = stepPackageDirs(workflows.flatMap((w) => w.jobs.flatMap((j) => j.steps)));
+    const electronPackages = [
+      ...packages,
+      ...(await readPackageScripts(
+        root,
+        stepDirs.filter((d) => !searchDirs.includes(d)),
+      )),
+    ];
     const fromJobs = githubJobTargets(workflows, {
       releaseTags: [...new Set([gitTagPrefix, "v"])].flatMap((p) => [
         `${p}1.2.3`,
@@ -716,7 +725,7 @@ export async function detect(
       ]),
       skipJobs,
       name: (base) => uniqueName(slug(base), used),
-      electronBuilder: (steps) => electronBuilderUse(steps, packages),
+      electronBuilder: (steps, env) => electronBuilderUse(steps, electronPackages, env),
     });
     targets.push(...fromJobs.targets);
     notes.push(...fromJobs.notes);
