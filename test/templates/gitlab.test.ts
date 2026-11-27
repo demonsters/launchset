@@ -1,6 +1,7 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: the tests compare shell ${VAR:-} expansions
 import picomatch from "picomatch";
 import { describe, expect, it } from "vitest";
+import { parse as parseYaml } from "yaml";
 import { type ResolvedConfig, resolveConfig } from "../../src/core/config/schema.ts";
 import { packageVersion } from "../../src/init/package-files.ts";
 import {
@@ -715,6 +716,22 @@ describe("Flutter targets in the targets file", () => {
     expect(targets.text).toContain('--package_name "com.acme.app"');
     for (const name of [".launchset-android", ".launchset-ios"]) {
       expect(job(targets.doc, name).script?.[0]).toMatch(/^echo "No build steps for .+"; exit 1$/);
+    }
+  });
+});
+
+describe("the commented cd line of a Flutter target", () => {
+  it("stays one YAML string once uncommented, whatever the folder is called", () => {
+    for (const dir of ["apps/mobile: test", "apps/mobile #2"]) {
+      const { targets } = render(
+        resolveConfig({
+          targets: { android: { type: "android", source: { kind: "flutter", dir } } },
+        }),
+      );
+      const line = targets.text.split("\n").find((l) => l.trimStart().startsWith('# - "cd '));
+      expect(line, dir).toBeDefined();
+      const item = (line as string).trimStart().replace(/^# /, "");
+      expect(parseYaml(item)).toEqual([`cd '${dir}'`]);
     }
   });
 });
