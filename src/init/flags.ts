@@ -55,7 +55,7 @@ export const INIT_FLAGS: readonly InitFlag[] = [
     negatable: true,
     decision: "baseline",
     description:
-      "Create the release tag for the canonical version at HEAD, so it counts as released.",
+      "Mark the canonical version as released (baseline in the config): the first release workflow run after the merge creates its release tag.",
   },
   {
     flag: "--skill",

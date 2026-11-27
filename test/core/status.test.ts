@@ -115,3 +115,43 @@ describe("status (11)", () => {
     expect(renderStatus(data)).toContain("#5  Bump x");
   });
 });
+
+describe("status: a pending baseline", () => {
+  const withBaseline = makeConfig({ baseline: "1.4.0" });
+  const input = (branch: string, version = "1.4.0", tagNames = ["v1.3.0"]) => ({
+    config: withBaseline,
+    branch,
+    version,
+    changesets: [],
+    mismatches: [],
+    tags: tags(withBaseline, tagNames),
+    commitsSinceRelease: [{ sha: "e".repeat(40), subject: "Set up launchset" }],
+  });
+
+  it("names the tag the release workflow creates, also on the migration branch", () => {
+    for (const branch of ["main", "adopt-launchset"]) {
+      const data = computeStatus(input(branch));
+      expect(data.baseline, branch).toEqual({ version: "1.4.0", tag: "v1.4.0" });
+      // The last release is still the tag that exists.
+      expect(data.lastRelease).toEqual({ version: "1.3.0", tag: "v1.3.0" });
+      // The commits so far are the baselined release, not unreleased work.
+      expect(data.commitsWithoutChangeset).toBeNull();
+      expect(renderStatus(data)).toContain(
+        "Baseline:      v1.4.0, not created yet: the first release workflow run on the base branch creates it, so 1.4.0 counts as released (don't push it by hand)",
+      );
+    }
+  });
+
+  it("is gone once the tag exists, for another version and on a maintenance branch", () => {
+    expect(computeStatus(input("main", "1.4.0", ["v1.3.0", "v1.4.0"])).baseline).toBeUndefined();
+    expect(computeStatus(input("main", "1.5.0")).baseline).toBeUndefined();
+    expect(computeStatus(input("release/1.4.x")).baseline).toBeUndefined();
+    expect(renderStatus(computeStatus(input("main", "1.5.0")))).not.toContain("Baseline:");
+  });
+
+  it("warns when launchset already shipped part of that version", () => {
+    const data = computeStatus(input("main", "1.4.0", ["v1.3.0", "launchset/web@1.4.0"]));
+    expect(data.baseline).toBeUndefined();
+    expect(data.warnings[0]).toContain("`baseline` is 1.4.0, but launchset already shipped part");
+  });
+});

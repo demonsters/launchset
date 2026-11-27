@@ -52,6 +52,12 @@ export async function setupApp(world: World, options: AppOptions = {}): Promise<
   ]);
   const init = await world.devCli(["init", "--yes", ...decide]);
   expect(init.code, `${init.stdout}\n${init.stderr}`).toBe(0);
+  // init leaves the targets with only the "build steps missing" placeholder out of previews; the
+  // scenarios build every target (the team has added their build steps), so previews build all.
+  const config = read(dev.dir, "launchset.config.ts");
+  const preview = /\n {2}\/\/ Previews build only[\s\S]*?\n {2}preview: \{ targets: \[[^\]]*\] \},/;
+  expect(config).toMatch(preview);
+  dev.write("launchset.config.ts", config.replace(preview, ""));
   dev.git("add", "--all");
   dev.git("commit", "--quiet", "--no-verify", "-m", "Set up launchset");
   dev.git("push", "--quiet", "origin", "main");

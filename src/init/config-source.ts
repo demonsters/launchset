@@ -5,11 +5,14 @@
 
 import { LaunchsetError } from "../core/errors.ts";
 import { ciOf } from "../core/hosts.ts";
+import { joinWords } from "../core/plan-common.ts";
+import { renderTag } from "../core/tags.ts";
 import type { WorkflowHint } from "../templates/workflows.ts";
 import type { Answers } from "./decisions.ts";
 import { parseImages, parseTagList } from "./decisions.ts";
 import type { DetectContext } from "./detect.ts";
-import { planTemplates, TEMPLATES_FILE } from "./gitlab-targets.ts";
+import { missingTargetJobs } from "./gitlab-edit.ts";
+import { planTemplates, prefillTargetJob, TEMPLATES_FILE } from "./gitlab-targets.ts";
 import type { DetectedTarget } from "./types.ts";
 
 export interface ConfigPlan {
@@ -25,7 +28,11 @@ export interface ConfigPlan {
 
 export const CONFIG_FILE = "launchset.config.ts";
 
-export function buildConfig(ctx: DetectContext, answers: Answers): ConfigPlan {
+export function buildConfig(
+  ctx: DetectContext,
+  answers: Answers,
+  options: { kept?: KeptTargetFile } = {},
+): ConfigPlan {
   const d = ctx.detection;
   const config: Record<string, unknown> = {};
   const comments = new Map<string, string[]>();
@@ -57,6 +64,18 @@ export function buildConfig(ctx: DetectContext, answers: Answers): ConfigPlan {
         ? `Existing build numbers go up to ${h.value} (${h.path}:${h.line}); the offset keeps new ones above them.`
         : "Keeps new build numbers above the existing ones.",
     ]);
+  }
+
+  const version = answers.version ?? d.canonical.version;
+  const baselineTag = renderTag(releaseTag, { version });
+  if (answers.baseline === "yes" && !ctx.tagNames.includes(baselineTag)) {
+    config.baseline = version;
+    comments.set(
+      "baseline",
+      wrap(
+        `${version} was released before launchset. The first release workflow run on the base branch after this file is merged creates ${baselineTag} at that commit, so ${version} counts as released and isn't built again. Don't create ${baselineTag} by hand: pushing a tag runs the tag-triggered workflows of the commit it points to, and before the merge those are the old release workflows. You can remove this line once ${baselineTag} exists.`,
+      ),
+    );
   }
 
   const targets: Record<string, unknown> = {};
@@ -193,7 +212,24 @@ export function buildConfig(ctx: DetectContext, answers: Answers): ConfigPlan {
     );
   }
   const host = answers.host ?? ctx.host.host;
-  if (ciOf(host) === "gitlab-ci" && ctx.gitlab) {
+  const gitlabCi = ciOf(host) === "gitlab-ci";
+  const guarded = guardedTargets(ctx, included, gitlabCi, options.kept);
+  if (guarded.length > 0) {
+    config.preview = {
+      targets: included.filter((t) => !guarded.includes(t.name)).map((t) => t.name),
+    };
+    const where = gitlabCi
+      ? ".gitlab/launchset-targets.yml"
+      : "launchset-release.yml and launchset-preview.yml";
+    const one = guarded.length === 1;
+    comments.set(
+      "preview",
+      wrap(
+        `Previews build only the targets with build steps. ${joinWords(guarded)} ${one ? "has" : "have"} only the "build steps missing" placeholder in ${where}, which fails on purpose: add ${one ? "it" : "them"} here once ${one ? "its" : "their"} build steps are in (or set targets: "all").`,
+      ),
+    );
+  }
+  if (gitlabCi && ctx.gitlab) {
     const plan = planTemplates(
       ctx.gitlab,
       included.filter((t) => t.gitlab),
@@ -211,6 +247,76 @@ export function buildConfig(ctx: DetectContext, answers: Answers): ConfigPlan {
   }
   config.targets = targets;
   return { config, comments, hints, targets: included };
+}
+
+/** `text` as comment lines of at most `width` characters. */
+function wrap(text: string, width = 88): string[] {
+  const lines: string[] = [];
+  let line = "";
+  for (const word of text.split(" ")) {
+    if (line !== "" && line.length + 1 + word.length > width) {
+      lines.push(line);
+      line = word;
+    } else {
+      line = line === "" ? word : `${line} ${word}`;
+    }
+  }
+  if (line !== "") lines.push(line);
+  return lines;
+}
+
+/**
+ * The file that holds the preview build steps when init keeps it instead of writing it: the
+ * existing `launchset-preview.yml` (GitHub, `file.<path>=keep`) or `.gitlab/launchset-targets.yml`
+ * (GitLab, where init only appends the jobs it lacks).
+ */
+export interface KeptTargetFile {
+  text: string;
+}
+
+/**
+ * Targets whose CI steps are only the "build steps missing" placeholder, which fails on purpose
+ * so a release can't mark them shipped while nothing builds them. In what init writes: every
+ * target except Docker, npm and (on GitLab) custom targets whose job init copied. In a file init
+ * keeps (`kept`): the targets whose placeholder is still in it, and on GitHub those it doesn't
+ * mention at all (nothing builds them there).
+ */
+export function guardedTargets(
+  ctx: DetectContext,
+  targets: readonly DetectedTarget[],
+  gitlab: boolean,
+  kept?: KeptTargetFile,
+): string[] {
+  const generated = (t: DetectedTarget): boolean => {
+    if (t.type === "docker") return false;
+    if (t.type === "custom" && t.npm) return false;
+    if (gitlab && t.type === "custom" && t.gitlab && ctx.gitlab) {
+      return prefillTargetJob(ctx.gitlab, t) === undefined;
+    }
+    return true;
+  };
+  if (kept === undefined) return targets.filter(generated).map((t) => t.name);
+  const text = kept.text;
+  if (gitlab) {
+    const missing = missingTargetJobs(
+      text,
+      targets.map((t) => t.name),
+    );
+    // Unreadable: init keeps it as is and asks for a fix; assume nothing builds the targets.
+    if (!Array.isArray(missing)) return targets.map((t) => t.name);
+    return targets
+      .filter((t) =>
+        missing.includes(t.name) ? generated(t) : text.includes(`No build steps for ${t.name} yet`),
+      )
+      .map((t) => t.name);
+  }
+  return targets
+    .filter(
+      (t) =>
+        text.includes(`Build steps missing (${t.name})`) ||
+        !(text.includes(`'${t.name}'`) || text.includes(`"${t.name}"`)),
+    )
+    .map((t) => t.name);
 }
 
 // ---------------------------------------------------------------------------

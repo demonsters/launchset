@@ -641,6 +641,21 @@ function shipBuild(plan: Plan): string {
   return build === null ? "" : `, build number ${build}`;
 }
 
+/** `decision` with more notices and warnings in front (from the flow), its summary rendered again. */
+export function withNotes(
+  decision: ReleaseDecision,
+  extra: { notices: readonly string[]; warnings: readonly string[] },
+): ReleaseDecision {
+  if (extra.notices.length === 0 && extra.warnings.length === 0) return decision;
+  const out: ReleaseDecision = {
+    ...decision,
+    notices: [...extra.notices, ...decision.notices],
+    warnings: [...extra.warnings, ...decision.warnings],
+  };
+  out.summary = renderReleaseSummary(out);
+  return out;
+}
+
 function renderReleaseSummary(decision: ReleaseDecision): string {
   const { plan } = decision;
   const paragraphs: string[] = [];

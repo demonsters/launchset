@@ -29,18 +29,35 @@ export type TagResult = "created" | "exists";
  * launchset reads them), and for release and prerelease tags unless `gitlab.tagPipelines` is
  * true. GitHub: none (its tag pushes stay as they were).
  */
-export function tagPushOptions(context: FlowContext, name: string): string[] {
+export function tagPushOptions(
+  context: FlowContext,
+  name: string,
+  options: TagPushChoice = {},
+): string[] {
   const skipCi = hostProfile(context.host).skipCiPushOption;
   if (!skipCi) return [];
+  if (options.skipCi) return [skipCi];
   const index = indexTags([name], { tags: context.config.tags, targets: context.config.targets });
   const internal = index.partials.size > 0 || index.markerTags.length > 0;
   if (internal || !gitlabSettings(context.config).tagPipelines) return [skipCi];
   return [];
 }
 
+export interface TagPushChoice {
+  /**
+   * Always push with the host's skip-CI option, also a release tag with `gitlab.tagPipelines`:
+   * the baseline tag marks a version the old machinery released, so nothing may run for it.
+   */
+  skipCi?: boolean;
+}
+
 /** {@link tagPushOptions} for `Git.pushTag`, warning when the remote doesn't take them. */
-export function tagPushOptionsFor(context: FlowContext, name: string): PushTagOptions {
-  const pushOptions = tagPushOptions(context, name);
+export function tagPushOptionsFor(
+  context: FlowContext,
+  name: string,
+  choice: TagPushChoice = {},
+): PushTagOptions {
+  const pushOptions = tagPushOptions(context, name, choice);
   return {
     pushOptions,
     onUnsupported: () =>
@@ -59,6 +76,7 @@ export async function ensureTag(
   context: FlowContext,
   name: string,
   sha: string,
+  choice: TagPushChoice = {},
 ): Promise<TagResult> {
   const { git } = context;
   const existing = await git.tryRevParse(`refs/tags/${name}`);
@@ -72,7 +90,7 @@ export async function ensureTag(
   try {
     // A tag that only exists locally must not linger: a later ship, mark or finalize would
     // take it for shipped. createAndPushTag removes it again when the push fails.
-    const options = tagPushOptionsFor(context, name);
+    const options = tagPushOptionsFor(context, name, choice);
     pushed =
       existing === undefined
         ? await git.createAndPushTag(name, sha, options)

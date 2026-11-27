@@ -631,7 +631,7 @@ export function decisionSpecs(ctx: DetectContext, explicit: Answers = {}): Spec[
     });
   }
 
-  // Baseline tag
+  // Baseline: `baseline` in the config; the release workflow creates the tag after the merge.
   specs.push({
     id: "baseline",
     build(answers) {
@@ -643,11 +643,12 @@ export function decisionSpecs(ctx: DetectContext, explicit: Answers = {}): Spec[
       } catch {
         tag = `v${version}`;
       }
-      const canTag = d.git.repo && d.git.head !== undefined;
       const exists = ctx.tagNames.includes(tag);
       const others = d.tags.filter(
         (t) => t.version === version && !t.prerelease && t.counted && t.tag !== tag,
       );
+      const after = `The first release workflow run on the base branch after the merge creates ${tag} (baseline in the config).`;
+      const canTag = d.git.repo && d.git.head !== undefined;
       const base = {
         id: "baseline",
         options: canTag
@@ -657,7 +658,7 @@ export function decisionSpecs(ctx: DetectContext, explicit: Answers = {}): Spec[
       if (exists) {
         return {
           ...base,
-          question: `${tag} already exists, so ${version} counts as released. Create a baseline tag?`,
+          question: `${tag} already exists, so ${version} counts as released. Set a baseline?`,
           default: "no",
           evidence: [{ path: tag, note: "release tag exists" }],
           ask: false,
@@ -666,7 +667,7 @@ export function decisionSpecs(ctx: DetectContext, explicit: Answers = {}): Spec[
       if (others.length > 0 && canTag) {
         return {
           ...base,
-          question: `Create ${tag} at HEAD, so ${version} counts as released (it's tagged as ${others.map((o) => o.tag).join(", ")})?`,
+          question: `Mark ${version} as released (it's tagged as ${others.map((o) => o.tag).join(", ")})? ${after}`,
           default: "yes",
           evidence: others.map((o) => ({
             path: o.tag,
@@ -677,7 +678,7 @@ export function decisionSpecs(ctx: DetectContext, explicit: Answers = {}): Spec[
       }
       return {
         ...base,
-        question: `Create ${tag} at HEAD, so ${version} counts as released? No tag marks ${version} as released: it may never have been built. With a baseline tag launchset never builds ${version}, and pinned images might not exist.`,
+        question: `Mark ${version} as released? No tag marks ${version} as released: it may never have been built. With a baseline launchset never builds ${version}, and pinned images might not exist. ${after}`,
         default: "no",
         evidence: [{ path: tag, note: `no tag marks ${version} as released` }],
         ask: canTag,
