@@ -11,6 +11,7 @@ import { z } from "zod";
 import { isMaintenanceBranch, matchBranch } from "../branches.ts";
 import { LaunchsetError } from "../errors.ts";
 import { type CiSystem, type ForgeHost, hostProfile } from "../hosts.ts";
+import { isPlainVersion } from "../versions.ts";
 
 export const TARGET_NAME = /^[a-z0-9][a-z0-9-]*$/;
 
@@ -466,6 +467,15 @@ export const configSchema = z.strictObject({
     })
     .prefault({}),
   buildNumber: buildNumberSchema.prefault({}),
+  /**
+   * The version that was released before launchset took over (init writes it). When its
+   * release tag doesn't exist, the release workflow on the base branch creates it at the commit
+   * it runs on, without building anything (spec 11.1 step 5).
+   */
+  baseline: z
+    .string()
+    .refine(isPlainVersion, { message: 'expected a plain version like "1.4.0"' })
+    .optional(),
   check: z.strictObject({ bots: z.array(nonEmpty).default(DEFAULT_BOTS) }).prefault({}),
   /** `false` disables previews and prerelease branches (needed for the `semver` strategy). */
   preview: z

@@ -23,6 +23,7 @@ import { plist } from "../platforms/plist.ts";
 import type { FoundValue } from "../platforms/types.ts";
 import { xcconfig } from "../platforms/xcconfig.ts";
 import { findChangesets } from "./convert.ts";
+import { electronBuilderUse, stepPackageDirs } from "./electron.ts";
 import {
   absolute,
   baseName,
@@ -695,6 +696,7 @@ export async function detect(
   const used = new Set<string>();
   const targets = await detectDockerTargets(root, sources, used, notes);
   const searchDirs = [...new Set([".", ...workspaces])];
+  const packages = await readPackageScripts(root, searchDirs);
   const native = await detectNativeTargets(root, searchDirs, workflows, gitlab, used, notes);
   targets.push(...native.targets);
   if (host.host === "github") {
@@ -707,6 +709,15 @@ export async function detect(
       const job = workflow.jobs.filter((j) => j.line <= (e.line ?? 0)).at(-1);
       for (const j of job ? [job] : workflow.jobs) skipJobs.add(j);
     }
+    // Steps may run scripts of a package outside the workspaces (`working-directory: desktop`).
+    const stepDirs = stepPackageDirs(workflows.flatMap((w) => w.jobs.flatMap((j) => j.steps)));
+    const electronPackages = [
+      ...packages,
+      ...(await readPackageScripts(
+        root,
+        stepDirs.filter((d) => !searchDirs.includes(d)),
+      )),
+    ];
     const fromJobs = githubJobTargets(workflows, {
       releaseTags: [...new Set([gitTagPrefix, "v"])].flatMap((p) => [
         `${p}1.2.3`,
@@ -714,6 +725,7 @@ export async function detect(
       ]),
       skipJobs,
       name: (base) => uniqueName(slug(base), used),
+      electronBuilder: (steps, env) => electronBuilderUse(steps, electronPackages, env),
     });
     targets.push(...fromJobs.targets);
     notes.push(...fromJobs.notes);
@@ -744,6 +756,7 @@ export async function detect(
   );
   const machinery = await detectProjectMachinery(root, {
     searchDirs,
+    packages,
     workflows,
     builds,
     gitlab,
@@ -801,7 +814,7 @@ export function tagPipelineNotes(ci: GitLabCi): Note[] {
     manual: true,
     path: rule.path,
     line: rule.line,
-    message: `workflow: rules start a pipeline for every tag push (- if: ${rule.condition}), which runs ${everyJob}. On GitLab launchset pushes all its tags (the markers launchset/<target>@<version>, partial tags, v<version> and prerelease tags) with git push -o ci.skip, so they start none (gitlab.tagPipelines: true in launchset.config lets the release and prerelease tags start one). Other tag pushes still do, e.g. init's baseline tag if you push it. If the rule was only there for the release jobs launchset replaces, remove it; init doesn't edit workflow:.`,
+    message: `workflow: rules start a pipeline for every tag push (- if: ${rule.condition}), which runs ${everyJob}. On GitLab launchset pushes all its tags (the markers launchset/<target>@<version>, partial tags, v<version> and prerelease tags) with git push -o ci.skip, so they start none (gitlab.tagPipelines: true in launchset.config lets the release and prerelease tags start one). Other tag pushes still do, e.g. a tag pushed by hand. If the rule was only there for the release jobs launchset replaces, remove it; init doesn't edit workflow:.`,
   }));
 }
 
@@ -827,7 +840,7 @@ async function detectGit(
   } else {
     notes.push({
       level: "warning",
-      message: "not a git repository: tags can't be read and no baseline tag can be created",
+      message: "not a git repository: tags can't be read and no baseline can be set",
     });
   }
   return { gitInfo, tagNames, ...(remoteUrl !== undefined ? { remoteUrl } : {}) };
@@ -1433,21 +1446,13 @@ function buildNumberInfo(targets: readonly DetectedTarget[], now: Date): Detecti
   return buildNumbers;
 }
 
-/** Release machinery: package scripts, script files, workflows, GitLab CI, Fastfiles, docs. */
-async function detectProjectMachinery(
+/** The scripts of the package.json in each of `dirs` (the root and the workspaces). */
+async function readPackageScripts(
   root: string,
-  input: {
-    searchDirs: readonly string[];
-    workflows: Workflow[];
-    builds: DockerBuild[];
-    gitlab: GitLabCi | null;
-    gitlabBuilds: GitLabDockerBuild[];
-    tags: readonly FoundTag[];
-    targets: readonly DetectedTarget[];
-  },
-): Promise<MachineryFinding[]> {
+  dirs: readonly string[],
+): Promise<PackageScripts[]> {
   const packages: PackageScripts[] = [];
-  for (const dir of input.searchDirs) {
+  for (const dir of dirs) {
     const path = joinRel(dir, "package.json");
     const p = await readJson(root, path);
     const scripts = p?.tree ? findNodeAtLocation(p.tree, ["scripts"]) : undefined;
@@ -1462,6 +1467,24 @@ async function detectProjectMachinery(
     }
     packages.push(entry);
   }
+  return packages;
+}
+
+/** Release machinery: package scripts, script files, workflows, GitLab CI, Fastfiles, docs. */
+async function detectProjectMachinery(
+  root: string,
+  input: {
+    searchDirs: readonly string[];
+    packages: PackageScripts[];
+    workflows: Workflow[];
+    builds: DockerBuild[];
+    gitlab: GitLabCi | null;
+    gitlabBuilds: GitLabDockerBuild[];
+    tags: readonly FoundTag[];
+    targets: readonly DetectedTarget[];
+  },
+): Promise<MachineryFinding[]> {
+  const packages = input.packages;
   const scriptCandidates = new Set(referencedScriptFiles(packages, input.workflows));
   for (const dir of input.searchDirs) {
     for (const p of await globRel(

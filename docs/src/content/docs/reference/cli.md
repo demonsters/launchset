@@ -127,10 +127,10 @@ Options:
   --json               Print JSON.
   --convert-only       Only convert .changeset/*.md files into .launchset/ (e.g. on a Changesets
                        pre-mode branch).
-  --baseline           Create the release tag for the canonical version at HEAD, so it counts as
-                       released.
-  --no-baseline        do not: Create the release tag for the canonical version at HEAD, so it
-                       counts as released.
+  --baseline           Mark the canonical version as released (baseline in the config): the first
+                       release workflow run after the merge creates its release tag.
+  --no-baseline        do not: Mark the canonical version as released (baseline in the config): the
+                       first release workflow run after the merge creates its release tag.
   --skill              Install the launchset agent skill and the AGENTS.md section.
   --no-skill           do not: Install the launchset agent skill and the AGENTS.md section.
   --hook               Add `launchset check --push` to the existing pre-push hook (simple-git-hooks,

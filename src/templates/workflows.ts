@@ -29,6 +29,13 @@ export interface WorkflowTemplateInput {
   actionRef?: string;
   /** Extra info init found per target, e.g. Dockerfile path and build context. */
   hints?: Record<string, WorkflowHint>;
+  /**
+   * Put every target's build steps (and "build steps missing" placeholder) into the preview
+   * workflow, not only those of `preview.targets`. init narrows `preview.targets` to the targets
+   * that have build steps; one added back later must still find its placeholder there, or its
+   * preview would pass without building anything.
+   */
+  allPreviewSteps?: boolean;
 }
 
 /** What init found out about how a target was built before (see {@link WorkflowTemplateInput}). */
@@ -578,7 +585,11 @@ export function renderWorkflows(input: WorkflowTemplateInput): RenderedFile[] {
   if (config.preview.enabled) {
     const label = exprString(config.preview.label);
     const prLabel = `(contains(github.event.pull_request.labels.*.name, ${label}) && (github.event.action != 'labeled' || github.event.label.name == ${label}))`;
-    const preview = renderBuildParts(input, previewTargets(config), "preview");
+    const preview = renderBuildParts(
+      input,
+      input.allPreviewSteps ? releaseTargets(config) : previewTargets(config),
+      "preview",
+    );
     files.push({
       path: ".github/workflows/launchset-preview.yml",
       content: fillTemplate(

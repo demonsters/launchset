@@ -7,7 +7,7 @@
 import { forgeWords } from "../core/forge-links.ts";
 import { actionOutputs } from "../core/outputs.ts";
 import type { ReleaseDecision, ReleaseEvent } from "../core/release.ts";
-import { planRelease } from "../core/release.ts";
+import { planRelease, withNotes } from "../core/release.ts";
 import {
   buildReleasePr,
   type ReleasePrContent,
@@ -17,6 +17,7 @@ import {
 import type { Plan } from "../core/types.ts";
 import { releaseBump } from "../core/versions.ts";
 import { planReleaseChanges, writePlannedChanges } from "./apply.ts";
+import { applyBaseline } from "./baseline.ts";
 import { type FlowContext, type FlowResult, requireForge } from "./context.ts";
 import {
   changelogOrigins,
@@ -82,12 +83,18 @@ export async function release(
   context: FlowContext,
   options: ReleaseOptions = {},
 ): Promise<FlowResult<ReleaseData>> {
-  const state = await gatherReleaseState(context, {
-    ...(options.branch ? { branch: options.branch } : {}),
-    ...(options.fetch !== undefined ? { fetch: options.fetch } : {}),
+  const gather = (fetch = options.fetch) =>
+    gatherReleaseState(context, {
+      ...(options.branch ? { branch: options.branch } : {}),
+      ...(fetch !== undefined ? { fetch } : {}),
+    });
+  const baseline = await applyBaseline(context, await gather(), {
+    dryRun: options.dryRun ?? false,
+    regather: () => gather(true),
   });
+  const state = baseline.state;
   const event = releaseEventFor(context, options);
-  const decision = planRelease(releaseInputFor(context, state, event));
+  const decision = withNotes(planRelease(releaseInputFor(context, state, event)), baseline);
   const { plan } = decision;
   // The release PR would consume (delete) changesets it can't read: refuse. Publish, ship and
   // retries build what was released before, so a broken file must not block them.

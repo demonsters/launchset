@@ -18,6 +18,7 @@
  */
 
 import { isMap, isScalar, isSeq, type Pair, type YAMLMap } from "yaml";
+import type { ElectronBuilderUse } from "./electron.ts";
 import { matchesFilter } from "./github-filter.ts";
 import { targetNameForJob } from "./gitlab-targets.ts";
 import { publishCommand } from "./machinery.ts";
@@ -244,6 +245,11 @@ export function githubJobTargets(
     releaseTags: string[];
     skipJobs: ReadonlySet<WorkflowJob>;
     name: (base: string) => string;
+    /** The step among `steps` that runs electron-builder without choosing to publish. */
+    electronBuilder?: (
+      steps: readonly WorkflowStep[],
+      env: Readonly<Record<string, string>>,
+    ) => ElectronBuilderUse | undefined;
   },
 ): { targets: DetectedTarget[]; notes: Note[] } {
   const targets: DetectedTarget[] = [];
@@ -302,6 +308,7 @@ export function githubJobTargets(
       const runsOn = runsOnOf(job);
       const extra = contextNotes(job, workflow.jobs);
       let steps = stepsText(workflow, job);
+      let source = { workflow, steps: job.steps, env: { ...workflow.env, ...job.env } };
       if (job.uses) {
         const local = job.uses.startsWith("./") ? byPath.get(job.uses.slice(2)) : undefined;
         extra.push(
@@ -309,7 +316,20 @@ export function githubJobTargets(
             ? `That job called the reusable workflow ${job.uses}: below are the steps of its jobs (with:/secrets: inputs become plain values or secrets here).`
             : `That job called the reusable workflow ${job.uses}: a step can't call a workflow, so copy its steps here.`,
         );
-        if (local) steps = local.jobs.map((j) => stepsText(local, j)).join("\n");
+        if (local) {
+          steps = local.jobs.map((j) => stepsText(local, j)).join("\n");
+          source = {
+            workflow: local,
+            steps: local.jobs.flatMap((j) => j.steps),
+            env: Object.assign({}, local.env, ...local.jobs.map((j) => j.env)),
+          };
+        }
+      }
+      const electron = options.electronBuilder?.(source.steps, source.env);
+      if (electron) {
+        extra.push(
+          `Its ${electron.step.label} (${source.workflow.path}:${electron.step.line}) runs electron-builder (\`${electron.command}\`). In CI electron-builder publishes to GitHub Releases by itself, on branch pushes too, and fails without GH_TOKEN ("GitHub Personal Access Token is not set"): pass \`--publish never\` (launchset creates the GitHub Release), or set GH_TOKEN on purpose if electron-builder should upload. Nothing to do if your electron-builder config already sets \`publish: null\`.`,
+        );
       }
       const github: DetectedGitHubJob = {
         job: job.id,
@@ -323,6 +343,15 @@ export function githubJobTargets(
             }
           : {}),
         ...(extra.length > 0 ? { notes: extra } : {}),
+        ...(electron
+          ? {
+              electronBuilder: {
+                path: source.workflow.path,
+                line: electron.step.line,
+                command: electron.command,
+              },
+            }
+          : {}),
       };
       const what = `${startedBy(mode)} and ${outputs.join(", ")}`;
       targets.push({
