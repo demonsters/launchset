@@ -14,8 +14,8 @@ There are two ways. Pick one:
 
 `init` reads the repo and writes nothing until you say so:
 
-- **Versions**: the root `package.json`, the `package.json` next to each Dockerfile, native marketing versions and existing tags (`v1.2.3`, `1.2.3`, `name@1.2.3`).
-- **Platforms**: Dockerfiles, Android (`build.gradle(.kts)`, `gradle.properties`), iOS (`*.xcodeproj`, `Info.plist`, `.xcconfig`), Capacitor and Expo (`app.json`).
+- **Versions**: the root `package.json`, the `package.json` next to each Dockerfile, native marketing versions, Flutter apps' `pubspec.yaml` and existing tags (`v1.2.3`, `1.2.3`, `name@1.2.3`).
+- **Platforms**: Dockerfiles, Android (`build.gradle(.kts)`, `gradle.properties`), iOS (`*.xcodeproj`, `Info.plist`, `.xcconfig`), Capacitor, Expo (`app.json`) and Flutter (`pubspec.yaml`, also outside your npm workspaces). See [Flutter](/targets/flutter/#launchset-init).
 - **How they are built today**: image names, `file`, `context` and tag patterns from `docker/build-push-action`, `docker/metadata-action` and `docker push` lines.
 - **Machinery that conflicts** with launchset. See [below](#retire-what-conflicts).
 - **Build numbers**: the highest `versionCode` or `CFBundleVersion` in your files.
@@ -170,10 +170,10 @@ launchset pushes its tags and creates GitHub Releases with an App token. Unlike 
 | A workflow triggered by `push.tags` that matches the release tag (`v*`, `v*.*.*`, `*.*.*`) | It fires again on launchset's tag, so its build or publish steps run a second time. |
 | A `release` trigger | It fires when `finalize` creates the GitHub Release. |
 | `changesets/action`, `changeset version\|status\|publish\|tag` in workflows or scripts | Changesets opens its own release PR and bumps versions. launchset's release PR replaces it. |
-| semantic-release, release-it, standard-version, release-please | They bump versions and create tags or releases. |
+| semantic-release, release-it, standard-version, release-please, `melos version` | They bump versions and create tags or releases. |
 | Steps and scripts that create tags or GitHub Releases (`git tag`, `gh release create`, `createRelease`) | `finalize` creates `v<version>`. A tag made earlier is wrong. |
 | Docker pushes of `latest` on branch pushes | launchset moves `latest` only when a release ships. |
-| Scripts that write `MARKETING_VERSION`, `CURRENT_PROJECT_VERSION`, `versionCode` or `versionName`, and fastlane version actions | They would overwrite the build numbers stamped in CI. |
+| Scripts that write `MARKETING_VERSION`, `CURRENT_PROJECT_VERSION`, `versionCode` or `versionName`, fastlane version actions, and steps or scripts that rewrite the `version` in `pubspec.yaml` (cider, pubver, `sed -i`, `yq -i`, a Dart script in `tool/`) | They would overwrite the build numbers stamped in CI. |
 | `@changesets/write` in scripts | launchset reads `.launchset/`. |
 | Release instructions in `CLAUDE.md`, `AGENTS.md` and `README` (`npm version`, `git tag`, `changeset`) | They describe the old process. |
 
@@ -217,7 +217,7 @@ Then **move the team's own build steps** into `launchset-release.yml`: the `dock
 
 ## Build numbers
 
-`init` reads the highest existing `versionCode` or `CFBundleVersion`. When it is higher than what the `timestamp` strategy gives now, it sets `buildNumber.offset` so new numbers stay higher. See [Build numbers](/guides/build-numbers/).
+`init` reads the highest existing `versionCode` or `CFBundleVersion` (for a Flutter app, the `+N` in `pubspec.yaml`). When it is higher than what the `timestamp` strategy gives now, it sets `buildNumber.offset` so new numbers stay higher. When it is close to Google Play's limit (date-based numbers like `2024112701`), init warns how much room is left. See [Build numbers](/guides/build-numbers/).
 
 ## An existing changelog
 

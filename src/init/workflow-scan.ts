@@ -1031,6 +1031,11 @@ const BUILD_SIGNALS: { platform: DetectedPlatform; pattern: RegExp; note: string
     note: "runs a Gradle assemble/bundle task",
   },
   { platform: "android", pattern: /\bfastlane\s+android\b/, note: "runs fastlane android" },
+  {
+    platform: "android",
+    pattern: /\bflutter\s+build\s+(?:apk|appbundle)\b/,
+    note: "runs flutter build for Android",
+  },
   { platform: "android", pattern: /upload-google-play/, note: "uploads to Google Play" },
   {
     platform: "android",
@@ -1045,6 +1050,11 @@ const BUILD_SIGNALS: { platform: DetectedPlatform; pattern: RegExp; note: string
   { platform: "ios", pattern: /\bfastlane\s+ios\b/, note: "runs fastlane ios" },
   {
     platform: "ios",
+    pattern: /\bflutter\s+build\s+(?:ipa|ios)\b/,
+    note: "runs flutter build for iOS",
+  },
+  {
+    platform: "ios",
     pattern: /upload-testflight|xcrun\s+altool[^\n]*--upload/,
     note: "uploads to TestFlight",
   },
@@ -1055,15 +1065,22 @@ const BUILD_SIGNALS: { platform: DetectedPlatform; pattern: RegExp; note: string
   },
 ];
 
-/** Lines of a CI file that build android or iOS apps. */
+/**
+ * Lines of a CI file that build android or iOS apps: the first per platform, or with `all`
+ * every line (one signal per platform and line).
+ */
 export function platformBuildSignals(
   text: string,
+  options: { all?: boolean } = {},
 ): { platform: DetectedPlatform; line: number; note: string }[] {
   const out: { platform: DetectedPlatform; line: number; note: string }[] = [];
   for (const line of linesOf(text)) {
     if (line.text.trimStart().startsWith("#")) continue;
     for (const signal of BUILD_SIGNALS) {
-      if (signal.pattern.test(line.text) && !out.some((o) => o.platform === signal.platform)) {
+      const seen = out.some(
+        (o) => o.platform === signal.platform && (!options.all || o.line === line.number),
+      );
+      if (signal.pattern.test(line.text) && !seen) {
         out.push({ platform: signal.platform, line: line.number, note: signal.note });
       }
     }

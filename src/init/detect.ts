@@ -10,6 +10,7 @@ import { CONFIG_FILE_NAMES } from "../config/load.ts";
 import { computeBuildNumber } from "../core/build-number.ts";
 import { type BuildNumberConfig, DEFAULT_DOCKER_TAGS } from "../core/config/schema.ts";
 import { FORGE_HOSTS, type ForgeHost } from "../core/forge-links.ts";
+import { escapeRegExp } from "../core/regex.ts";
 import { lineOf } from "../core/text.ts";
 import { remoteHost, serverUrlFromRemote } from "../flow/ci/index.ts";
 import { Git, parseRepoFromRemote } from "../git/index.ts";
@@ -24,6 +25,13 @@ import type { FoundValue } from "../platforms/types.ts";
 import { xcconfig } from "../platforms/xcconfig.ts";
 import { findChangesets } from "./convert.ts";
 import { electronBuilderUse, stepPackageDirs } from "./electron.ts";
+import {
+  detectFlutterApp,
+  externalCiNotes,
+  findFlutterApps,
+  flutterBuildFlagNotes,
+  pubspecValues,
+} from "./flutter.ts";
 import {
   absolute,
   baseName,
@@ -553,7 +561,13 @@ async function detectIos(root: string, dir: string, capacitor: boolean, notes: N
 const EXPO_CONFIG_ADVICE =
   "app.config.js/ts is code, so launchset doesn't edit it. Read the version from package.json and the build number from process.env.LAUNCHSET_BUILD_NUMBER in it (launchset sets LAUNCHSET_VERSION, LAUNCHSET_BUILD_NUMBER and LAUNCHSET_CHANNEL as job outputs).";
 
-async function detectNative(root: string, dir: string, notes: Note[]): Promise<NativeFound> {
+async function detectNative(
+  root: string,
+  dir: string,
+  notes: Note[],
+  flutterApps: ReadonlySet<string>,
+): Promise<NativeFound> {
+  if (flutterApps.has(dir)) return { targets: await detectFlutterApp(root, dir, notes) };
   const targets: NativeFound["targets"] = [];
   const appJsonPath = joinRel(dir, "app.json");
   const appJson = await readJson(root, appJsonPath);
@@ -695,10 +709,20 @@ export async function detect(
   /** Target names taken so far (Docker first, then native, then web). */
   const used = new Set<string>();
   const targets = await detectDockerTargets(root, sources, used, notes);
-  const searchDirs = [...new Set([".", ...workspaces])];
+  const flutterApps = await findFlutterApps(root);
+  const searchDirs = [...new Set([".", ...workspaces, ...flutterApps])];
   const packages = await readPackageScripts(root, searchDirs);
-  const native = await detectNativeTargets(root, searchDirs, workflows, gitlab, used, notes);
+  const native = await detectNativeTargets(
+    root,
+    searchDirs,
+    new Set(flutterApps),
+    workflows,
+    gitlab,
+    used,
+    notes,
+  );
   targets.push(...native.targets);
+  notes.push(...flutterBuildFlagNotes(native.ciFiles), ...(await externalCiNotes(root)));
   if (host.host === "github") {
     // Jobs that build a target found above aren't custom targets of their own (the other jobs
     // of their workflow still can be).
@@ -743,11 +767,17 @@ export async function detect(
   }
   const npm = npmTarget(pkg, workflows, gitlab, targets, used);
   if (npm) targets.push(npm);
-  if (pkg) targets.push(webTarget(targets, used));
+  // A Flutter-only repo has no package.json, but still gets the web target as the auto target
+  // of last resort (a config needs one) or for its Flutter web build.
+  if (pkg || flutterApps.length > 0) targets.push(webTarget(targets, used));
 
-  const versions = await collectVersions(root, packageJson, targets, tags);
+  // Every Flutter app's pubspec.yaml counts, also one no target stamps (a web-only app).
+  const pubspecFiles = await Promise.all(flutterApps.map((dir) => pubspecValues(root, dir)));
+  const versionFiles = [...targets.flatMap((t) => t.files), ...pubspecFiles];
+  const versions = await collectVersions(root, packageJson, targets, versionFiles, tags);
   const canonical = pickCanonical(versions);
-  const buildNumbers = buildNumberInfo(targets, now);
+  const buildNumbers = buildNumberInfo(versionFiles, now);
+  notes.push(...nearLimitNotes(buildNumbers));
   const imagePins = await detectImagePins(
     root,
     targets,
@@ -770,6 +800,7 @@ export async function detect(
     root,
     git: gitInfo,
     workspaces,
+    flutterApps,
     versions,
     tags,
     canonical,
@@ -1107,6 +1138,7 @@ async function detectDockerTargets(
 async function detectNativeTargets(
   root: string,
   searchDirs: readonly string[],
+  flutterApps: ReadonlySet<string>,
   workflows: readonly Workflow[],
   gitlab: GitLabCi | null,
   used: Set<string>,
@@ -1117,7 +1149,9 @@ async function detectNativeTargets(
   signals: Map<string, ReturnType<typeof platformBuildSignals>>;
 }> {
   const native: NativeFound["targets"] = [];
-  for (const dir of searchDirs) native.push(...(await detectNative(root, dir, notes)).targets);
+  for (const dir of searchDirs) {
+    native.push(...(await detectNative(root, dir, notes, flutterApps)).targets);
+  }
   const signals = new Map<string, ReturnType<typeof platformBuildSignals>>();
   const ciFiles = [...workflows.map((w) => ({ path: w.path, text: w.text }))];
   if (gitlab && gitlab.files.length > 0) {
@@ -1132,9 +1166,21 @@ async function detectNativeTargets(
   const targets: DetectedTarget[] = [];
   for (const t of native) {
     const builtBy: Evidence[] = [];
-    for (const [path, list] of signals) {
-      for (const s of list)
-        if (s.platform === t.type) builtBy.push({ path, line: s.line, note: s.note });
+    if (count(t.type) > 1) {
+      // Several apps of this type: a build counts for the app whose folder it runs in.
+      const dirs = native.filter((o) => o.type === t.type).map((o) => o.dir);
+      for (const f of ciFiles) {
+        for (const s of platformBuildSignals(f.text, { all: true })) {
+          if (s.platform === t.type && buildDir(f.text, s.line, dirs) === t.dir) {
+            builtBy.push({ path: f.path, line: s.line, note: `${s.note} in ${t.dir}` });
+          }
+        }
+      }
+    } else {
+      for (const [path, list] of signals) {
+        for (const s of list)
+          if (s.platform === t.type) builtBy.push({ path, line: s.line, note: s.note });
+      }
     }
     const name =
       count(t.type) > 1 ? `${slug(baseName(t.dir === "." ? "app" : t.dir))}-${t.type}` : t.type;
@@ -1150,7 +1196,70 @@ async function detectNativeTargets(
         : 'no workflow builds it, so it\'s shipped on demand (release: "manual")',
     });
   }
+  // A build of a type with several apps that names none of their folders: say so.
+  for (const type of ["android", "ios"] as const) {
+    if (count(type) < 2) continue;
+    const dirs = native.filter((o) => o.type === type).map((o) => o.dir);
+    for (const f of ciFiles) {
+      const s = platformBuildSignals(f.text, { all: true }).find(
+        (x) => x.platform === type && buildDir(f.text, x.line, dirs) === undefined,
+      );
+      if (!s) continue;
+      notes.push({
+        level: "info",
+        path: f.path,
+        line: s.line,
+        message: `${s.note}, but init can't tell for which of the ${type} apps (${dirs.join(", ")}): none of their folders is named near it, so it makes none of them "auto". Set release: "auto" on the one this workflow builds.`,
+      });
+    }
+  }
   return { targets, ciFiles, signals };
+}
+
+/** How far above a build line {@link buildDir} looks for the folder it runs in. */
+const BUILD_DIR_WINDOW = 30;
+
+/**
+ * The app folder a build on `line` (1-based) of a CI file runs in: one of `dirs` named in the
+ * rest of its step (`working-directory:` after `run:`), else the nearest one named on that line
+ * or above it (`cd apps/driver`), within {@link BUILD_DIR_WINDOW} lines. `undefined` when none
+ * is named there: the build stays unassigned.
+ */
+export function buildDir(text: string, line: number, dirs: readonly string[]): string | undefined {
+  const lines = text.split(/\r?\n/);
+  // The longest folder first, so apps/driver-legacy isn't read as apps/driver.
+  const named = dirs.filter((d) => d !== ".").sort((a, b) => b.length - a.length);
+  const patterns = named.map(
+    (d) =>
+      [d, new RegExp(String.raw`(?:^|[\s'"=:]|\./)${escapeRegExp(d)}(?=$|[\s'"/;&|)])`)] as const,
+  );
+  const dirIn = (l: string) =>
+    l.trimStart().startsWith("#") ? undefined : patterns.find(([, re]) => re.test(l))?.[0];
+  const indent = (l: string) => l.length - l.trimStart().length;
+
+  const at = lines[line - 1] ?? "";
+  let stepIndent = -1;
+  for (let i = line - 1; i >= 0; i--) {
+    const m = /^(\s*)- /.exec(lines[i] ?? "");
+    if (m && (m[1] as string).length <= indent(at)) {
+      stepIndent = (m[1] as string).length;
+      break;
+    }
+  }
+  if (stepIndent >= 0) {
+    for (let i = line; i < lines.length; i++) {
+      const l = lines[i] ?? "";
+      if (l.trim() === "") continue;
+      if (indent(l) <= stepIndent) break;
+      const hit = dirIn(l);
+      if (hit) return hit;
+    }
+  }
+  for (let i = line - 1; i >= Math.max(0, line - 1 - BUILD_DIR_WINDOW); i--) {
+    const hit = dirIn(lines[i] ?? "");
+    if (hit) return hit;
+  }
+  return undefined;
 }
 
 /** A command that publishes an npm package, or runs a tool that does (Changesets, semantic-release). */
@@ -1293,13 +1402,30 @@ function webTarget(targets: readonly DetectedTarget[], used: Set<string>): Detec
  * marketing versions (each place once), then the tags. Tags of other packages are marked
  * `counted: false` (on `tags` too).
  */
+/** A file and the version values found in it (a target's file or a Flutter app's pubspec.yaml). */
+type ValueFile = { path: string; values: readonly FoundValue[] };
+
 async function collectVersions(
   root: string,
   packageJson: Detection["packageJson"],
   targets: readonly DetectedTarget[],
+  files: readonly ValueFile[],
   tags: FoundTag[],
 ): Promise<FoundVersion[]> {
   const versions: FoundVersion[] = [];
+  const pushValues = (f: ValueFile) => {
+    for (const v of f.values) {
+      if (v.field !== "marketing") continue;
+      versions.push({
+        source: "native",
+        path: f.path,
+        line: v.line,
+        key: v.key,
+        value: v.value,
+        plain: plainVersion(v.value),
+      });
+    }
+  };
   if (packageJson?.version !== undefined) {
     const v: FoundVersion = {
       source: "root",
@@ -1326,20 +1452,10 @@ async function collectVersions(
         });
       }
     }
-    for (const f of t.files) {
-      for (const v of f.values) {
-        if (v.field !== "marketing") continue;
-        versions.push({
-          source: "native",
-          path: f.path,
-          line: v.line,
-          key: v.key,
-          value: v.value,
-          plain: plainVersion(v.value),
-        });
-      }
-    }
+    for (const f of t.files) pushValues(f);
   }
+  // Flutter apps' pubspec.yaml files no target carries (a web-only app); duplicates go below.
+  for (const f of files) pushValues(f);
   const seen = new Set<string>();
   const unique = versions.filter((v) => {
     const k = `${v.path}:${v.line}:${v.key}`;
@@ -1427,23 +1543,54 @@ export function offsetAbove(highest: number, settings: BuildNumberConfig, now: D
 }
 
 /** The timestamp strategy's number now, the highest committed build number and the offset. */
-function buildNumberInfo(targets: readonly DetectedTarget[], now: Date): Detection["buildNumbers"] {
+function buildNumberInfo(files: readonly ValueFile[], now: Date): Detection["buildNumbers"] {
   const strategyNow = computeBuildNumber(INIT_BUILD_NUMBER, { now }) as number;
   let highest: Detection["buildNumbers"]["highest"];
-  for (const t of targets) {
-    for (const f of t.files) {
-      for (const v of f.values) {
-        if (v.field !== "build" || !/^\d+$/.test(v.value)) continue;
-        const value = Number(v.value);
-        if (!highest || value > highest.value)
-          highest = { value, path: f.path, line: v.line, key: v.key };
-      }
+  for (const f of files) {
+    for (const v of f.values) {
+      if (v.field !== "build" || !/^\d+$/.test(v.value)) continue;
+      const value = Number(v.value);
+      if (!highest || value > highest.value)
+        highest = { value, path: f.path, line: v.line, key: v.key };
     }
   }
-  const offset = highest ? offsetAbove(highest.value, INIT_BUILD_NUMBER, now) : 0;
+  let offset = highest ? offsetAbove(highest.value, INIT_BUILD_NUMBER, now) : 0;
+  // Rounding the offset up must not push the first build number past Google Play's limit.
+  if (highest && strategyNow + offset > PLAY_LIMIT) {
+    const exact = Math.max(highest.value - strategyNow + 1, 0);
+    if (strategyNow + exact <= PLAY_LIMIT) offset = exact;
+  }
   const buildNumbers: Detection["buildNumbers"] = { strategyNow, offset };
   if (highest) buildNumbers.highest = highest;
   return buildNumbers;
+}
+
+/** Google Play's limit for `versionCode` (spec 6.3). */
+const PLAY_LIMIT = 2_100_000_000;
+
+/**
+ * A warning when the build numbers in the files are so high (date-based numbers like
+ * `2024112701`) that the offset leaves little room below Google Play's limit.
+ */
+function nearLimitNotes(b: Detection["buildNumbers"]): Note[] {
+  const h = b.highest;
+  if (!h || h.value < PLAY_LIMIT * 0.9) return [];
+  // Room from the first number launchset hands out (the timestamp now plus the offset).
+  const first = b.strategyNow + b.offset;
+  const room = PLAY_LIMIT - first;
+  const years = room / (365.25 * 24 * 3600);
+  const left =
+    room <= 0
+      ? `the first number launchset would hand out (${first}) is already above it`
+      : `there is room for about ${years < 1 ? "less than a year" : `${Math.floor(years)} year(s)`}`;
+  return [
+    {
+      level: "warning",
+      path: h.path,
+      line: h.line,
+      message: `build number ${h.value} (${h.key}) is close to Google Play's limit of 2,100,000,000. New numbers must stay above it, so with the timestamp strategy in seconds ${left}; unit "minute" lasts about 60 times longer. A number that was never uploaded to a store doesn't need the offset: set it to 0.`,
+    },
+  ];
 }
 
 /** The scripts of the package.json in each of `dirs` (the root and the workspaces). */
@@ -1489,7 +1636,7 @@ async function detectProjectMachinery(
   for (const dir of input.searchDirs) {
     for (const p of await globRel(
       root,
-      ["{scripts,bin,tools}/**/*.{js,mjs,cjs,ts,mts,cts,sh,bash,rb,py}"],
+      ["{scripts,bin,tools,tool}/**/*.{js,mjs,cjs,ts,mts,cts,sh,bash,rb,py,dart}"],
       {
         base: dir,
         deep: 4,

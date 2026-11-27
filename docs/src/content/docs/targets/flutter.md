@@ -65,6 +65,8 @@ defaultConfig {
 <string>$(FLUTTER_BUILD_NUMBER)</string>
 ```
 
+Xcode writes `$(MARKETING_VERSION)` and `$(CURRENT_PROJECT_VERSION)` into `Info.plist` when you change the version in its General tab. That still works if the Runner target sets those build settings to `$(FLUTTER_BUILD_NAME)` and `$(FLUTTER_BUILD_NUMBER)`.
+
 If your project sets literal numbers there instead, Flutter's numbers never reach the app. Change it back to the lines above. Or stamp the native files directly with `kind: "gradle"` and `kind: "xcodeproj"`, as for [React Native](/targets/react-native/).
 
 ## A repo with only a Flutter app
@@ -86,6 +88,21 @@ launchset reads the version without the `+N`. The release PR bumps it and keeps 
 In CI, `stamp` writes the run's version and build number into this file for every target. A Flutter web build (`type: "web"`) then gets them too, with no extra config.
 
 In a repo that also has an API or a web app with a root `package.json`, keep `package.json` as the version file. The app's `pubspec.yaml` is stamped as a target file.
+
+## `launchset init`
+
+`init` finds Flutter apps by their `pubspec.yaml`: an app depends on the Flutter SDK and has platform folders. Plugins, packages and their `example/` apps are skipped. It looks in the repo root, a pub workspace or melos, and up to four folders deep, so an app in `apps/mobile` of a JS monorepo is found too.
+
+For each app it proposes an `android` and an `ios` target with `kind: "flutter"`. A target is `auto` when a workflow builds it. With several apps, a `flutter build` counts for the app whose folder the step runs in (`working-directory` or `cd`). If init can't tell, it says so and leaves the app `manual`. In a repo without a `package.json` it proposes the app's `pubspec.yaml` as the version file (the `version.file` decision). A `pubspec.yaml` without a `version` gets one.
+
+It also tells you:
+
+- when the native projects don't read Flutter's numbers (see above);
+- when a workflow runs `flutter build` with its own `--build-number` or `--build-name`;
+- when Codemagic or Bitrise builds the repo, since launchset runs in GitHub Actions and GitLab CI;
+- when the `+N` is a date-based number close to Google Play's limit.
+
+It retires what would overwrite the stamped numbers: `cider bump` and `pubver`, `sed -i` or `yq -i` edits of the `pubspec.yaml` version, Dart scripts in `tool/` that rewrite it, fastlane version actions in `android/` and `ios/`, and `melos version`. Commands run through `fvm` count too. See [Retire what conflicts](/guides/migrating/#retire-what-conflicts).
 
 ## Build
 
@@ -157,7 +174,9 @@ The build step passes the flavor. With flavors, Gradle names the bundle after th
 
 The bundle is then in `build/app/outputs/bundle/stagingRelease/app-staging-release.aab`. On iOS, `flutter build ipa --flavor staging` needs an Xcode scheme called `staging` with a `Release-staging` configuration. That configuration sets the bundle ID.
 
-Don't set `versionCode` or `versionName` in a Gradle `productFlavors` block. A flavor's value replaces Flutter's, so the stamped numbers would never reach that app. `versionNameSuffix` is fine: Android adds it to the version name, and the build number stays the same.
+Don't set `versionCode` or `versionName` in a Gradle `productFlavors` block. A flavor's value replaces Flutter's, so the stamped numbers would never reach that app. `launchset init` warns about it. `versionNameSuffix` is fine: Android adds it to the version name, and the build number stays the same.
+
+`launchset init` doesn't detect flavors yet. It proposes one `android` and one `ios` target per app. Split them per flavor by hand, and add `--flavor` to the build steps.
 
 ## Web and desktop
 

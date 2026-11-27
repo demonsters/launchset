@@ -1,0 +1,11 @@
+name: Mobile
+on:
+  workflow_dispatch:
+jobs:
+  ios:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: dart pub global run melos version --yes
+      - run: flutter build ipa --release
+        working-directory: apps/mobile
