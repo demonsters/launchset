@@ -10,7 +10,7 @@ launchset sits between two kinds of tools, and borrows from both.
 
 launchset is built for one product with one version, shipped as several things at once, such as a Docker image, a web app, an Android app and an iOS app. It lives in your repo and your CI, and stops where your upload steps start.
 
-We built launchset for our own repos at <a href="https://demonsters.nl" target="_blank" rel="noopener">De Monsters</a> and keep using it either way. This page is here to help you pick the right tool, even when that isn't launchset. Comparisons were checked against each tool's own documentation in November 2026. If something is wrong or out of date, [open an issue](https://github.com/demonsters/launchset/issues/new/choose).
+Comparisons were checked against each tool's own documentation in November 2026. If something is wrong or out of date, [open an issue](https://github.com/demonsters/launchset/issues/new/choose).
 
 ## What launchset adds
 
@@ -37,7 +37,7 @@ We built launchset for our own repos at <a href="https://demonsters.nl" target="
 | **Prereleases** | Prerelease branches (experimental), no state file | Pre mode (`pre.json`) | Prerelease versioning | Prerelease branches |
 | **Hotfix branches** | `release/1.4.x`, with a changelog backport PR | No built-in support | Run it on the hotfix branch | Maintenance branches |
 | **CI** | GitHub Actions, GitLab CI | GitHub Action; the CLI runs anywhere | GitHub | Most CI services |
-| **Maturity** | New: 1.0 shipped in November 2026 | Widely used | Widely used, maintained by Google | Widely used |
+| **Maturity** | New: 1.0 shipped in November 2026, used at <a href="https://demonsters.nl" target="_blank" rel="noopener">De Monsters</a> | Widely used | Widely used, maintained by Google | Widely used |
 | **License** | MIT | MIT | Apache 2.0 | MIT |
 
 ## Mobile release management
