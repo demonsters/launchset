@@ -328,7 +328,7 @@ export function githubJobTargets(
       const electron = options.electronBuilder?.(source.steps, source.env);
       if (electron) {
         extra.push(
-          `Its ${electron.step.label} (${source.workflow.path}:${electron.step.line}) runs electron-builder (\`${electron.command}\`). In CI electron-builder publishes to GitHub Releases by itself, on branch pushes too, and fails without GH_TOKEN ("GitHub Personal Access Token is not set"): pass \`--publish never\` (launchset creates the GitHub Release), or set GH_TOKEN on purpose if electron-builder should upload.`,
+          `Its ${electron.step.label} (${source.workflow.path}:${electron.step.line}) runs electron-builder (\`${electron.command}\`). In CI electron-builder publishes to GitHub Releases by itself, on branch pushes too, and fails without GH_TOKEN ("GitHub Personal Access Token is not set"): pass \`--publish never\` (launchset creates the GitHub Release), or set GH_TOKEN on purpose if electron-builder should upload. Nothing to do if your electron-builder config already sets \`publish: null\`.`,
         );
       }
       const github: DetectedGitHubJob = {

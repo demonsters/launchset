@@ -614,7 +614,7 @@ async function writeAll(
       const e = t.github?.electronBuilder;
       if (!e) continue;
       manualSteps.push(
-        `${t.name}: the steps init copied from job "${t.github?.job}" run electron-builder (${at(e.path, e.line)}: \`${e.command}\`). In CI electron-builder publishes to GitHub Releases by itself, also on the branch pushes launchset builds releases from, and fails with "GitHub Personal Access Token is not set" without GH_TOKEN. Pass --publish never to it (launchset creates the GitHub Release), or set GH_TOKEN on purpose if electron-builder should upload the files.`,
+        `${t.name}: the steps init copied from job "${t.github?.job}" run electron-builder (${at(e.path, e.line)}: \`${e.command}\`). In CI electron-builder publishes to GitHub Releases by itself, also on the branch pushes launchset builds releases from, and fails with "GitHub Personal Access Token is not set" without GH_TOKEN. Pass --publish never to it (launchset creates the GitHub Release), or set GH_TOKEN on purpose if electron-builder should upload the files. Nothing to do if your electron-builder config already sets publish: null.`,
       );
     }
     if (resolved.preview.enabled) {

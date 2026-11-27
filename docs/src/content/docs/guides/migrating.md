@@ -151,7 +151,7 @@ A **baseline** marks the canonical version as released, so launchset never build
 - **Default yes** only when a tag in another format already marks that version as released (`1.4.0`, `app@1.4.0`).
 - **Otherwise no**, with a warning. The version may never have been built. With a baseline launchset never builds it, and pinned images might not exist.
 
-The release tag (`v1.4.0`) is created by **the first run of the release workflow on the base branch after the migration PR is merged**, at the commit it runs on. That run builds nothing for 1.4.0, and if changesets are pending it opens the release PR as usual. Nothing happens on other branches, for another version, or once the tag exists. After that you can remove `baseline` from the config.
+The release tag (`v1.4.0`) is created by **the first run of the release workflow on the base branch after the migration PR is merged**, at the commit it runs on. That run builds nothing for 1.4.0, and if changesets are pending it opens the release PR as usual. Nothing happens on other branches, for another version, or once the tag exists. After that you can remove `baseline` from the config. Until then `launchset status` shows the baseline as not created yet.
 
 :::caution[Don't create the baseline tag by hand]
 Pushing a tag runs the tag-triggered workflows **of the commit the tag points to**, whenever you push it. HEAD before the migration still has the old release workflows (`on.push.tags: v*`), so a `v1.4.0` there starts them all: they can push images and move `latest`, publish to npm or the stores, or create a GitHub Release. Pushing it after the merge doesn't help, because the tag still points at the old commit. Leave it to the release workflow, whose commit no longer has those triggers.
@@ -272,7 +272,7 @@ preview: { targets: ["docker"] },
 
 ### Copied steps that run electron-builder
 
-electron-builder publishes to GitHub Releases on its own in CI, on branch pushes too (`onTagOrDraft`), and fails without `GH_TOKEN` ("GitHub Personal Access Token is not set"). Steps copied from a tag job keep doing that in launchset's release workflow. When a copied step runs electron-builder, directly or through a `package.json` script, init says so in the copied steps and in the steps left to do. Pass `--publish never` (launchset creates the GitHub Release), or set `GH_TOKEN` on purpose if electron-builder should upload the files.
+electron-builder publishes to GitHub Releases on its own in CI, on branch pushes too (`onTagOrDraft`), and fails without `GH_TOKEN` ("GitHub Personal Access Token is not set"). Steps copied from a tag job keep doing that in launchset's release workflow. When a copied step runs electron-builder, directly or through a `package.json` script, init says so in the copied steps and in the steps left to do. Pass `--publish never` (launchset creates the GitHub Release), or set `GH_TOKEN` on purpose if electron-builder should upload the files. init only reads the command line: if your electron-builder config already sets `publish: null`, there's nothing to do.
 
 ## The adoption skill
 

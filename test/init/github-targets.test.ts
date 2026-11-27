@@ -192,7 +192,7 @@ describe("electron-builder in a copied job", () => {
     );
     expect(release).toContain("pass `--publish never` (launchset creates the GitHub Release)");
     expect(result.manualSteps).toContain(
-      'desktop-linux: the steps init copied from job "build" run electron-builder (.github/workflows/desktop-linux.yml:19: `pnpm desktop:linux -> electron-builder --linux --x64`). In CI electron-builder publishes to GitHub Releases by itself, also on the branch pushes launchset builds releases from, and fails with "GitHub Personal Access Token is not set" without GH_TOKEN. Pass --publish never to it (launchset creates the GitHub Release), or set GH_TOKEN on purpose if electron-builder should upload the files.',
+      'desktop-linux: the steps init copied from job "build" run electron-builder (.github/workflows/desktop-linux.yml:19: `pnpm desktop:linux -> electron-builder --linux --x64`). In CI electron-builder publishes to GitHub Releases by itself, also on the branch pushes launchset builds releases from, and fails with "GitHub Personal Access Token is not set" without GH_TOKEN. Pass --publish never to it (launchset creates the GitHub Release), or set GH_TOKEN on purpose if electron-builder should upload the files. Nothing to do if your electron-builder config already sets publish: null.',
     );
   });
 
