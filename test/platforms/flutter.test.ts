@@ -101,6 +101,29 @@ describe("a Flutter-only repo (version.file: pubspec.yaml)", () => {
     expect(await versionLine("pubspec.yaml")).toBe("version: 1.5.0-pr.12.3+219");
   });
 
+  it("CI: an extra files entry in pubspec.yaml doesn't stop the version file stamp", async () => {
+    await writeFile(
+      join(root, "pubspec.yaml"),
+      "name: app\nversion: 1.0.0+1\napp_version: 1.0.0\n",
+    );
+    const config = resolveConfig({
+      ...input,
+      targets: {
+        web: {
+          type: "web",
+          files: [{ path: "pubspec.yaml", kind: "yaml", key: "app_version" }],
+        },
+      },
+    });
+    const version = "1.5.0-pr.12.3";
+    await writeChanges(
+      await stampForBuild(config, root, { version }, plan("web", "web", version, 220)),
+    );
+    expect(await read("pubspec.yaml")).toBe(
+      "name: app\nversion: 1.5.0-pr.12.3+220\napp_version: 1.5.0-pr.12.3\n",
+    );
+  });
+
   it("the native projects are never touched", async () => {
     const before = await read("android/app/build.gradle.kts");
     const config = resolveConfig(input);

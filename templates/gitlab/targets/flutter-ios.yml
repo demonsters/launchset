@@ -27,7 +27,7 @@
     # only. Code signing: see "Code signing iOS Projects with fastlane" in the GitLab docs (the
     # runner's keychain isn't usable as is).
     #
-    # - cd @@flutter_dir@@
+    # - @@cd_flutter_dir@@
     # - flutter build ipa --release --export-options-plist=ios/ExportOptions.plist --build-name "$LAUNCHSET_VERSION" --build-number "$LAUNCHSET_BUILD_NUMBER"
     # Upload with a fastlane lane (see "Workflow recipes" in the launchset docs). As in Flutter's
     # fastlane guide, the Gemfile and fastlane/Fastfile are in ios/:

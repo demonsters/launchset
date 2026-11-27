@@ -383,9 +383,10 @@ export async function stampForBuild(
 
   const work: { binding: FileBinding; values: StampValues }[] = [];
   const own = await targetBindings(target, root);
-  // A target that stamps the version file itself (a Flutter app's pubspec.yaml) writes its own
-  // values: for iOS the plain version, so the root's full preview version must not go there.
-  const ownFiles = new Set(own.map((b) => b.absolute));
+  // A Flutter target whose pubspec.yaml is the version file writes that `version` itself: for
+  // iOS the plain version, so the root's full preview version must not go there. Only that
+  // binding counts: an extra `files` entry for another key in the same file doesn't.
+  const ownFiles = new Set(own.filter((b) => b.stamper === pubspec).map((b) => b.absolute));
   for (const binding of await versionFileBindings(config, root)) {
     if (ownFiles.has(binding.absolute)) continue;
     const rootValues: StampValues = { marketing: plan.version };

@@ -24,7 +24,7 @@
     # (ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD)
     # are CI/CD variables your Gradle config reads.
     #
-    # - cd @@flutter_dir@@
+    # - @@cd_flutter_dir@@
     # - flutter build appbundle --release --build-name "$LAUNCHSET_VERSION" --build-number "$LAUNCHSET_BUILD_NUMBER"
     # - case "$LAUNCHSET_CHANNEL" in release) PLAY_TRACK=production ;; prerelease) PLAY_TRACK=beta ;; *) PLAY_TRACK=internal ;; esac
     # - export SUPPLY_JSON_KEY_DATA="$LAUNCHSET_PLAY_SERVICE_ACCOUNT_JSON"

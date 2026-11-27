@@ -313,7 +313,8 @@ function targetJob(
       {
         ...common,
         android_image_tag: ANDROID_IMAGE_TAG,
-        flutter_dir: shellWord(flutter),
+        // A whole YAML item once uncommented: a folder with ": " or " #" stays one command.
+        cd_flutter_dir: yamlScalar(`cd ${shellWord(flutter)}`),
         pubspec: posix.join(flutter, "pubspec.yaml"),
         package_name:
           (target.type === "android" ? target.store?.packageName : undefined) ??
@@ -331,7 +332,7 @@ function targetJob(
         {
           ...common,
           android_image_tag: ANDROID_IMAGE_TAG,
-          android_dir: shellWord(androidDir(target)),
+          cd_android_dir: yamlScalar(`cd ${shellWord(androidDir(target))}`),
           package_name: target.store?.packageName ?? "<your.package.name>",
         },
         "targets/android.yml",

@@ -18,7 +18,7 @@
     # Signing secrets (ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS,
     # ANDROID_KEY_PASSWORD) are CI/CD variables your Gradle config reads.
     #
-    # - cd @@android_dir@@
+    # - @@cd_android_dir@@
     # - ./gradlew bundleRelease
     # - case "$LAUNCHSET_CHANNEL" in release) PLAY_TRACK=production ;; prerelease) PLAY_TRACK=beta ;; *) PLAY_TRACK=internal ;; esac
     # - export SUPPLY_JSON_KEY_DATA="$LAUNCHSET_PLAY_SERVICE_ACCOUNT_JSON"
