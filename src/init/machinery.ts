@@ -194,8 +194,8 @@ export interface MachineryInput {
 const CHANGESET_COMMAND = /^changeset\s+(?:version|status|publish|tag|pre)\b/;
 const RELEASE_TOOL_COMMAND =
   /^(?:semantic-release|release-it|standard-version|release-please|commit-and-tag-version)\b/;
-/** A Dart tool run directly or through `dart run`, `dart pub global run` or `flutter pub run`. */
-const DART_RUN = String.raw`^(?:(?:dart|flutter)\s+(?:pub\s+(?:global\s+)?)?run\s+)?`;
+/** A Dart tool run directly or through `dart run`, `dart pub global run` or `flutter pub run`, optionally behind `fvm` or `fvm exec`. */
+const DART_RUN = String.raw`^(?:fvm\s+(?:exec\s+)?)?(?:(?:dart|flutter)\s+(?:pub\s+(?:global\s+)?)?run\s+)?`;
 /** melos's `version` bumps the packages, writes their changelogs and creates tags. */
 const MELOS_VERSION = new RegExp(String.raw`${DART_RUN}melos\s+version\b`);
 /** `git` with its global options (`git -C dir`, `git -c k=v`). */

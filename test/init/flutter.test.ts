@@ -1,13 +1,16 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { parse } from "yaml";
 import {
   gradleWiringNotes,
   insertPubspecVersion,
   isFlutterAppPubspec,
   plistWiringNotes,
+  runnerBuildSettings,
 } from "../../src/init/flutter.ts";
 import { type InitDetectJson, runInit } from "../../src/init/index.ts";
+import { commandKinds } from "../../src/init/machinery.ts";
 import { collect, fixture, fixtureRepo, options, read, repoFrom, status } from "./helpers.ts";
 
 async function detectJson(dir: string): Promise<InitDetectJson> {
@@ -237,6 +240,13 @@ describe("init: Flutter edge cases", () => {
     expect(note?.message).toContain("room for about 2 year(s)");
   });
 
+  it("sees version tools run through fvm", () => {
+    expect(commandKinds("fvm dart run cider bump build")).toEqual(["version-writer"]);
+    expect(commandKinds("fvm flutter pub run cider bump patch")).toEqual(["version-writer"]);
+    expect(commandKinds("fvm exec melos version")).toEqual(["release-tool"]);
+    expect(commandKinds("fvm flutter build apk")).toEqual([]);
+  });
+
   it("flags cider, pubver and yq edits of pubspec.yaml in workflows", async () => {
     const dir = repoFrom({
       ...app("."),
@@ -288,6 +298,50 @@ describe("Flutter helpers", () => {
     expect(plistWiringNotes(APP_PLIST, "Info.plist")).toEqual([]);
   });
 
+  it("follows $(SETTING) in Info.plist to the Runner target's build settings", () => {
+    const config = (id: string, name: string, settings: string) =>
+      `\t\t${id} = {isa = XCBuildConfiguration; name = ${name}; buildSettings = {${settings}}; };`;
+    const pbx = [
+      "// !$*UTF8*$!",
+      "{",
+      "\tobjects = {",
+      "\t\tP1 = {isa = PBXProject; targets = (T1, T2); };",
+      "\t\tT1 = {isa = PBXNativeTarget; name = Runner; buildConfigurationList = L1; };",
+      "\t\tT2 = {isa = PBXNativeTarget; name = RunnerTests; buildConfigurationList = L2; };",
+      "\t\tL1 = {isa = XCConfigurationList; buildConfigurations = (C1, C2); };",
+      "\t\tL2 = {isa = XCConfigurationList; buildConfigurations = (C3); };",
+      config(
+        "C1",
+        "Debug",
+        'CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)"; MARKETING_VERSION = 1.0;',
+      ),
+      config(
+        "C2",
+        "Release",
+        'CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)"; MARKETING_VERSION = 1.0;',
+      ),
+      config("C3", "Debug", "CURRENT_PROJECT_VERSION = 1; MARKETING_VERSION = 1.0;"),
+      "\t};",
+      "\trootObject = P1;",
+      "}",
+    ].join("\n");
+    const plist = APP_PLIST.replace("$(FLUTTER_BUILD_NAME)", "$(MARKETING_VERSION)").replace(
+      "$(FLUTTER_BUILD_NUMBER)",
+      "$(CURRENT_PROJECT_VERSION)",
+    );
+    const settings = runnerBuildSettings(pbx, "project.pbxproj");
+    expect(settings.CURRENT_PROJECT_VERSION).toEqual(["$(FLUTTER_BUILD_NUMBER)"]);
+    const notes = plistWiringNotes(plist, "Info.plist", settings);
+    expect(notes.map((n) => n.message)).toEqual([
+      expect.stringMatching(
+        /^CFBundleShortVersionString is \$\(MARKETING_VERSION\) \(the Runner target sets MARKETING_VERSION to 1\.0\), not/,
+      ),
+    ]);
+    // Without the project the reference can't be followed: both get the warning.
+    expect(plistWiringNotes(plist, "Info.plist")).toHaveLength(2);
+    expect(runnerBuildSettings("not a project", "project.pbxproj")).toEqual({});
+  });
+
   it("inserts the version after description, else after name, else at the top, with the file's line endings", () => {
     expect(insertPubspecVersion("name: a\ndescription: b\n\ndependencies: {}\n", "1.0.0")).toBe(
       "name: a\ndescription: b\nversion: 1.0.0+1\n\ndependencies: {}\n",
@@ -297,5 +351,36 @@ describe("Flutter helpers", () => {
     );
     expect(insertPubspecVersion("name: a", "1.0.0")).toBe("name: a\nversion: 1.0.0+1\n");
     expect(insertPubspecVersion("flutter: {}\n", "1.0.0")).toBe("version: 1.0.0+1\nflutter: {}\n");
+  });
+
+  it("adds the version after a block scalar description, not inside the next map", () => {
+    for (const style of ["|", ">"]) {
+      const text = `name: a\ndescription: ${style}\n  An app.\nenvironment:\n  sdk: ^3.0.0\n`;
+      const next = insertPubspecVersion(text, "1.0.0");
+      expect(next).toBe(
+        `name: a\ndescription: ${style}\n  An app.\nversion: 1.0.0+1\nenvironment:\n  sdk: ^3.0.0\n`,
+      );
+      expect(parse(next)).toMatchObject({ version: "1.0.0+1", environment: { sdk: "^3.0.0" } });
+    }
+  });
+
+  it("fills in an empty version instead of adding a second one", () => {
+    expect(insertPubspecVersion("name: a\nversion:\nflutter: {}\n", "1.0.0")).toBe(
+      "name: a\nversion: 1.0.0+1\nflutter: {}\n",
+    );
+    expect(insertPubspecVersion("name: a\nversion: # set in CI\n", "1.0.0")).toBe(
+      "name: a\nversion: 1.0.0+1 # set in CI\n",
+    );
+    expect(insertPubspecVersion('name: a\nversion: ""\n', "1.0.0")).toBe(
+      "name: a\nversion: 1.0.0+1\n",
+    );
+    expect(insertPubspecVersion("name: a\nversion: ~\n", "1.0.0")).toBe(
+      "name: a\nversion: 1.0.0+1\n",
+    );
+  });
+
+  it("leaves a pubspec that has a version alone", () => {
+    const text = "name: a\nversion: 2.0.0 # no build number\n";
+    expect(insertPubspecVersion(text, "1.0.0")).toBe(text);
   });
 });

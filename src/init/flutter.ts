@@ -6,6 +6,7 @@
 
 import { isMap, isScalar, parseDocument, parse as parseYaml } from "yaml";
 import { detectEol } from "../core/text.ts";
+import { listNativeTargets } from "../platforms/pbxproj.ts";
 import { pubspec } from "../platforms/pubspec.ts";
 import type { FoundValue } from "../platforms/types.ts";
 import { absolute, globRel, isDirectory, isFile, joinRel, linesOf, readTextOrNull } from "./fs.ts";
@@ -140,18 +141,50 @@ const PLIST_KEYS = {
   CFBundleVersion: "$(FLUTTER_BUILD_NUMBER)",
 } as const;
 
-/** Warnings for Info.plist version values that don't come from Flutter. */
-export function plistWiringNotes(text: string, path: string): Note[] {
+/** Build settings of the Runner target, by name: each setting's values across configurations. */
+export type BuildSettings = Record<string, string[]>;
+
+/**
+ * The Runner target's version settings from `ios/Runner.xcodeproj/project.pbxproj`, for an
+ * Info.plist that reads them (`$(MARKETING_VERSION)`, `$(CURRENT_PROJECT_VERSION)`, as Xcode
+ * writes when the version is edited in its General tab). Empty when the project can't be read.
+ */
+export function runnerBuildSettings(text: string, path: string): BuildSettings {
+  try {
+    const runner = listNativeTargets(text, path).find((t) => t.name === "Runner");
+    if (!runner) return {};
+    return {
+      MARKETING_VERSION: runner.marketingVersions,
+      CURRENT_PROJECT_VERSION: runner.buildNumbers,
+    };
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Warnings for Info.plist version values that don't come from Flutter. A `$(SETTING)` value
+ * is fine when every configuration of the Runner target sets SETTING to Flutter's value.
+ */
+export function plistWiringNotes(text: string, path: string, settings: BuildSettings = {}): Note[] {
   const notes: Note[] = [];
   for (const [key, expected] of Object.entries(PLIST_KEYS)) {
     const m = new RegExp(`<key>${key}</key>\\s*<string>([^<]*)</string>`).exec(text);
     if (!m || m[1] === expected) continue;
+    const value = m[1] as string;
+    const setting = /^\$\((\w+)\)$/.exec(value)?.[1];
+    const resolved = setting === undefined ? undefined : settings[setting];
+    if (resolved && resolved.length > 0 && resolved.every((v) => v === expected)) continue;
+    const via =
+      resolved && resolved.length > 0
+        ? ` (the Runner target sets ${setting} to ${resolved.join(", ")})`
+        : "";
     const at = m.index + m[0].lastIndexOf("<string>");
     notes.push({
       level: "warning",
       path,
       line: text.slice(0, at).split("\n").length,
-      message: `${key} is ${m[1] || "empty"}, not ${expected}: the numbers launchset writes into pubspec.yaml never reach this app. Set it to ${expected} (as flutter create does), or stamp the Xcode project with source { kind: "xcodeproj" } instead.`,
+      message: `${key} is ${value || "empty"}${via}, not ${expected}: the numbers launchset writes into pubspec.yaml never reach this app. Set it to ${expected} (as flutter create does), or stamp the Xcode project with source { kind: "xcodeproj" } instead.`,
     });
   }
   return notes;
@@ -192,7 +225,12 @@ export async function detectFlutterApp(
     targets.push({ type: "ios", dir, source, files });
     const plistPath = joinRel(dir, "ios/Runner/Info.plist");
     const plistText = await readTextOrNull(absolute(root, plistPath));
-    if (plistText !== null) notes.push(...plistWiringNotes(plistText, plistPath));
+    if (plistText !== null) {
+      const pbxPath = joinRel(dir, "ios/Runner.xcodeproj/project.pbxproj");
+      const pbxText = await readTextOrNull(absolute(root, pbxPath));
+      const settings = pbxText === null ? {} : runnerBuildSettings(pbxText, pbxPath);
+      notes.push(...plistWiringNotes(plistText, plistPath, settings));
+    }
   }
   if (targets.length > 0) {
     notes.push({
@@ -225,22 +263,39 @@ export async function detectFlutterApp(
 }
 
 /**
- * `text` with a top-level `version: <version>+1` added (a pubspec without one): after the
- * top-level `description`, else after `name`, else at the top. Nothing else changes.
+ * `text` with a top-level `version: <version>+1` (a pubspec without one): an empty `version:`
+ * gets the value, else a new line goes after the top-level `description`, else after `name`,
+ * else at the top. Nothing else changes. A pubspec that has a version comes back unchanged.
  */
 export function insertPubspecVersion(text: string, version: string): string {
   const eol = detectEol(text);
-  const line = `version: ${version}+1`;
+  const value = `${version}+1`;
+  const line = `version: ${value}`;
   const doc = parseDocument(text);
-  if (isMap(doc.contents)) {
-    for (const key of ["description", "name"]) {
-      const pair = doc.contents.items.find((p) => isScalar(p.key) && p.key.value === key);
-      const end = pair && isScalar(pair.value) ? pair.value.range?.[1] : undefined;
-      if (end === undefined) continue;
-      const lineEnd = text.indexOf("\n", end);
-      if (lineEnd === -1) return `${text}${eol}${line}${eol}`;
-      return `${text.slice(0, lineEnd + 1)}${line}${eol}${text.slice(lineEnd + 1)}`;
-    }
+  if (!isMap(doc.contents)) return `${line}${eol}${text}`;
+  const pairs = doc.contents.items;
+  const existing = pairs.find((p) => isScalar(p.key) && p.key.value === "version");
+  if (existing) {
+    const node = existing.value;
+    const empty = node === null || (isScalar(node) && (node.value === null || node.value === ""));
+    const keyEnd = isScalar(existing.key) ? existing.key.range?.[1] : undefined;
+    if (!empty || keyEnd === undefined) return text;
+    // `version:`, `version: ""`, `version: ~` or `version: # comment`: fill in the value after
+    // the colon and keep a comment.
+    const colon = text.indexOf(":", keyEnd);
+    const range = isScalar(node) ? node.range : undefined;
+    const end = range && range[1] > range[0] ? range[1] : colon + 1;
+    return `${text.slice(0, colon + 1)} ${value}${text.slice(end)}`;
+  }
+  for (const key of ["description", "name"]) {
+    const pair = pairs.find((p) => isScalar(p.key) && p.key.value === key);
+    const end = pair && isScalar(pair.value) ? pair.value.range?.[1] : undefined;
+    if (end === undefined) continue;
+    // A block scalar (`description: |`) ends after its last newline: the line it ends on is
+    // the one with its last character.
+    const lineEnd = text.indexOf("\n", Math.max(end - 1, 0));
+    if (lineEnd === -1) return `${text}${eol}${line}${eol}`;
+    return `${text.slice(0, lineEnd + 1)}${line}${eol}${text.slice(lineEnd + 1)}`;
   }
   return `${line}${eol}${text}`;
 }

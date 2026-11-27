@@ -65,6 +65,8 @@ defaultConfig {
 <string>$(FLUTTER_BUILD_NUMBER)</string>
 ```
 
+Xcode writes `$(MARKETING_VERSION)` and `$(CURRENT_PROJECT_VERSION)` into `Info.plist` when you change the version in its General tab. That still works if the Runner target sets those build settings to `$(FLUTTER_BUILD_NAME)` and `$(FLUTTER_BUILD_NUMBER)`.
+
 If your project sets literal numbers there instead, Flutter's numbers never reach the app. Change it back to the lines above. Or stamp the native files directly with `kind: "gradle"` and `kind: "xcodeproj"`, as for [React Native](/targets/react-native/).
 
 ## A repo with only a Flutter app
@@ -100,7 +102,7 @@ It also tells you:
 - when Codemagic or Bitrise builds the repo, since launchset runs in GitHub Actions and GitLab CI;
 - when the `+N` is a date-based number close to Google Play's limit.
 
-It retires what would overwrite the stamped numbers: `cider bump` and `pubver`, `sed -i` or `yq -i` edits of the `pubspec.yaml` version, Dart scripts in `tool/` that rewrite it, fastlane version actions in `android/` and `ios/`, and `melos version`. See [Retire what conflicts](/guides/migrating/#retire-what-conflicts).
+It retires what would overwrite the stamped numbers: `cider bump` and `pubver`, `sed -i` or `yq -i` edits of the `pubspec.yaml` version, Dart scripts in `tool/` that rewrite it, fastlane version actions in `android/` and `ios/`, and `melos version`. Commands run through `fvm` count too. See [Retire what conflicts](/guides/migrating/#retire-what-conflicts).
 
 ## Build
 

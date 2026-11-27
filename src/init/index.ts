@@ -437,8 +437,9 @@ async function writeAll(
   if (pubspecVersionFile) pubspecs.add(versionFile);
   for (const path of pubspecs) {
     const text = (await readTextOrNull(absolute(root, path))) ?? "";
-    if (/^version:[ \t]*\S/m.test(text)) continue;
-    await writeFile(absolute(root, path), insertPubspecVersion(text, version));
+    const next = insertPubspecVersion(text, version);
+    if (next === text) continue;
+    await writeFile(absolute(root, path), next);
     changes.push({ path, action: "updated", summary: `added "version: ${version}+1"` });
   }
   if (pubspecVersionFile) {
