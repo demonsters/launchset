@@ -335,6 +335,19 @@ The child job needs no change to the parent file, so it reaches existing project
 child's job already did) and logs that the job should be removed. One loss: when GitLab can't
 create the child pipeline at all, no job reports on the MR (the trigger job fails, the MR shows
 it).
+
+The first labeled MR preview (launchset 1.1.2, GitLab.com 19.7) never got its child pipeline: the
+trigger job failed with `downstream_pipeline_creation_failed`, while the same child YAML started
+fine from a `LAUNCHSET_PREVIEW=true` pipeline on the branch. A job without `rules` gets GitLab's
+default `only: [branches, tags]`, and the child of an MR pipeline runs at the parent's ref,
+`refs/merge-requests/<iid>/head`, which is neither; so every job was filtered out. A scratch
+project showed it: of two trigger jobs in one MR pipeline, the child without `workflow:` was never
+created, the same child with `workflow: rules: [when: always]` was (both started in a branch
+pipeline). `workflow: rules` of any kind drop the `only` default. Fix: every generated child has
+that `workflow:` block. Rules on each job were rejected: the user's `.launchset-<target>` jobs
+must not set `rules`, and one `workflow:` covers the nothing-to-build child too. It reaches
+existing projects with a newer `LAUNCHSET_CLI`, like the comment job.
+
 ## More hosts (Forgejo, Gitea, Codeberg)
 
 Not planned yet, but the code no longer assumes exactly two hosts, or one CI system per host,
@@ -486,7 +499,9 @@ Settled from the docs (docs.gitlab.com, November 2026):
   `workflow: auto_cancel: on_new_commit: interruptible` in the generated `.gitlab-ci.yml`, and the
   recovery (Run pipeline without variables) in the comments.
 - A generated child can't use variables in `include` (documented): the child has a literal path.
-  Child pipelines run at the parent's project, ref and commit.
+  Child pipelines run at the parent's project, ref and commit. In an MR pipeline that ref is
+  `refs/merge-requests/<iid>/head` (or `/merge`), neither a branch nor a tag, so the child has
+  `workflow: rules: [when: always]` (see "GitLab.com trial").
 - `needs: pipeline: $PARENT_PIPELINE_ID, job:` fetches artifacts from a parent job that
   succeeded; `PARENT_PIPELINE_ID` is passed by the trigger job's `variables` (forwarded by
   default).
