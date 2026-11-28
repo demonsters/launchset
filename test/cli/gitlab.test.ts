@@ -52,7 +52,7 @@ describe("release --ci on GitLab", () => {
     expect(r.code).toBe(0);
     expect(r.stdout).toContain("mode: release-pr");
     const doc = child(ci.dir);
-    expect(Object.keys(doc)).toEqual(["launchset-nothing-to-build"]);
+    expect(Object.keys(doc)).toEqual(["workflow", "launchset-nothing-to-build"]);
     expect(JSON.stringify(doc)).toContain("The release MR for 1.5.0 is up to date");
     expect(r.stderr).toContain("section_start:");
     expect(r.stderr).toContain("launchset-nothing-to-build:");
@@ -78,6 +78,7 @@ describe("release --ci on GitLab", () => {
     expect(r.stdout).toContain("mode: publish");
     const doc = child(ci.dir, "out-child.yml");
     expect(Object.keys(doc)).toEqual([
+      "workflow",
       "include",
       ".launchset_cli",
       "build-web",
@@ -139,7 +140,7 @@ describe("preview-plan --ci and preview-comment on GitLab", () => {
     const planned = await cli(["preview-plan"], { cwd: ci.dir, env });
     expect(planned.code).toBe(0);
     const doc = child(ci.dir);
-    expect(Object.keys(doc)).toEqual(["launchset-nothing-to-build"]);
+    expect(Object.keys(doc)).toEqual(["workflow", "launchset-nothing-to-build"]);
     expect(JSON.stringify(doc)).toContain("have the `launchset:preview` label");
     expect(existsSync(join(ci.dir, "plan.json"))).toBe(false);
 
@@ -162,6 +163,7 @@ describe("preview-plan --ci and preview-comment on GitLab", () => {
     expect(r.code).toBe(0);
     const doc = child(ci.dir);
     expect(Object.keys(doc)).toEqual([
+      "workflow",
       "include",
       ".launchset_cli",
       "preview-web",
@@ -226,7 +228,7 @@ describe("plan --gitlab", () => {
     const r = await cli(["plan", "--gitlab", "-"], { cwd: f.dir });
     expect(r.code).toBe(0);
     const doc = parseGitLabYaml(r.stdout) as Record<string, unknown>;
-    expect(Object.keys(doc)).toEqual(["launchset-nothing-to-build"]);
+    expect(Object.keys(doc)).toEqual(["workflow", "launchset-nothing-to-build"]);
     expect(r.stdout).toContain("Nothing to release");
   });
 
@@ -241,6 +243,7 @@ describe("plan --gitlab", () => {
     expect(r.stderr).toContain("wrote the child pipeline to");
     const doc = child(f.dir);
     expect(Object.keys(doc)).toEqual([
+      "workflow",
       "include",
       ".launchset_cli",
       "build-ios",
@@ -267,6 +270,7 @@ describe("plan --gitlab", () => {
     });
     expect(preview.code).toBe(0);
     expect(Object.keys(child(f.dir, "p.yml"))).toEqual([
+      "workflow",
       "include",
       ".launchset_cli",
       "preview-docker-api",

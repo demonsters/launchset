@@ -187,6 +187,7 @@ The job has a shallow clone, so the MR head, the base branch or the tags are mis
 ### The child pipeline is empty or invalid
 
 - **`launchset-nothing-to-build`** is the only job: that is the correct result when there is nothing to build (the run only updated the release MR, `none` mode, a skipped preview). The job prints why.
+- **The trigger job fails only in MR pipelines** (`downstream_pipeline_creation_failed`, and there is no child pipeline), while a preview run with `LAUNCHSET_PREVIEW=true` on the same branch works: launchset 1.3.1 and earlier wrote a child pipeline without `workflow: rules`, so GitLab dropped all its jobs in an MR pipeline (an MR pipeline's ref is no branch). Set `LAUNCHSET_CLI` in `.gitlab/launchset.yml` to a newer launchset.
 - **The trigger job fails** with a pipeline configuration error: open `launchset-child.yml` in the plan job's log (a collapsed "Child pipeline" section) or its artifact. A typical cause is a `.launchset-<target>` job with `rules`, `when`, `needs` or `stage`: remove them. A child whose jobs are all ruled out fails to start. Reproduce it with `launchset plan --gitlab -`.
 - A target job fails right away with `No build steps for <target> yet`: the guard line in `.gitlab/launchset-targets.yml` is still there. Add the steps and delete it.
 

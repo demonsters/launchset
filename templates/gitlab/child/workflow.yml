@@ -1,0 +1,8 @@
+
+# Every job runs in MR pipelines too. A job without `rules` gets GitLab's default
+# `only: [branches, tags]`, and an MR pipeline's ref (refs/merge-requests/<iid>/head or /merge)
+# is neither, so without `workflow: rules` (which drop that default) GitLab can't create the
+# child pipeline of an MR pipeline.
+workflow:
+  rules:
+    - when: always

@@ -308,6 +308,7 @@ export function renderChildPipeline(input: ChildPipelineInput): string {
       },
       "child/header.yml",
     ),
+    template("workflow.yml"),
   ];
   if (builds.length > 0) {
     const includes = (input.includes ?? []).filter((path) => path !== targetsFile);
