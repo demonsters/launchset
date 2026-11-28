@@ -70,6 +70,8 @@ describe("PR check (9.2)", () => {
     );
     expect(result.ok).toBe(false);
     expect(result.failures.map((f) => f.code)).toEqual(["no-changeset"]);
+    expect(result.comment).toContain("### ⚠️ launchset: no changeset");
+    expect(result.comment).not.toContain("🚀");
     expect(result.comment).toContain("npx launchset add");
     expect(result.comment).toContain("bump: patch");
     expect(result.comment).toContain("launchset docs");
@@ -129,6 +131,7 @@ describe("PR check (9.2)", () => {
     expect(result.failures[0]?.code).toBe("invalid-changeset");
     expect(result.failures[0]?.message).toContain(".launchset/broken.md:2: invalid bump");
     expect(result.comment).toContain("**Problems:**");
+    expect(result.comment).toContain("### ⚠️ launchset:");
   });
 
   it("fails on minor changesets against a maintenance branch", () => {
