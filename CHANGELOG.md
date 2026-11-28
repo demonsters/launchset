@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.1 (2026-11-28)
+
+### Patch changes
+- The PR check comment starts with ⚠️ instead of 🚀 when the check fails, so a missing or broken changeset no longer looks like good news. Passing checks keep the 🚀. ([#42](https://github.com/demonsters/launchset/pull/42), @rene-demonsters)
+
 ## 1.3.0 (2026-11-27)
 
 ### Minor changes
